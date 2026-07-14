@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 10 — Forgot Password OTP flow + permission guards + trial-banner removal fully validated end-to-end. Backend 26/26 pytest cases pass. Frontend OTP 3-step UI, login with new password, and Admin/Installer permission gating all verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration10_otp_perms.py",
+    "/app/test_reports/pytest/iteration10_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "/app/backend/server.py is now 2886 lines — split into routers (auth, clients, inventory, complaints, employees) for maintainability. Raised in prior iterations.",
+    "OTP cleanup: db.password_reset_otps has TTL index on expires_at but expires_at is stored as ISO string — Mongo TTL only honours BSON Date type, so expired docs will NOT auto-delete. Consider storing expires_at as datetime (or run a periodic cleanup job).",
+    "Permission check ordering in update_client and create_inward etc.: Pydantic body validation runs BEFORE has_perm check, so a forbidden user posting a malformed body gets 422 (not 403). This leaks 'this endpoint exists' info to unauthorised users. Low priority but worth a guard pattern (e.g., move has_perm into a Depends() before body parsing).",
+    "Direct URL access to /inventory by an Installer (who has no data_management perms) still renders the Data Management page; sidebar nav correctly hides it. Buttons inside are properly hidden/disabled, so functional security holds, but the page header still loads with stats (60 products / 420 stock visible to Installer). Consider route-level guard in /app/frontend/src/App.js for stricter UX.",
+    "Login page admin-email-input also accepts the employee email (used during test as Installer login) — works because /api/auth/login resolves identifier across email/mobile/employee_id; not a bug, just worth noting that 'Admin' label is a misnomer on left form."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration10_otp_perms.py (NEW — 26 tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (26/26 pytest cases)",
+    "frontend": "100% (all critical OTP, permission, and trial-banner UI checks passed)"
+  },
+  "test_credentials": "Admin: bulk-test@solarix.com / Test@1234. Test-created users (Installer/Supervisor/Sales) use Test@1234 and are emailed with unique uuid suffixes per run; safe to ignore.",
+  "seed_data_creation": "Each run creates: ~1 Sales Executive (used for OTP UI flow, password gets reset to NewPass@2024), ~1 Installer (perm-installer-XXX@solarix.com), ~1 Supervisor (perm-supervisor-XXX@solarix.com), 1 client (TEST_PermClient_*), 1 inward (TEST_PermPanel + TEST_AdminPanel), 4-5 complaints (TEST_PermComplaint / TEST_InstallerComplaint / TEST_SupervisorComplaint). All TEST_ prefixed — safe to bulk-delete.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend OTP tests use pymongo (sync) to inject known OTPs directly into db.password_reset_otps with passlib bcrypt hashes. Frontend OTP flow uses the same pymongo trick inside the playwright script (works because the script runs locally and can connect to mongodb://localhost:27017). OtpInput cells are addressable as fp-otp-0..fp-otp-5. Resend email send to bulk-test@solarix.com WILL fail at Resend (sandbox sender restriction) but backend still returns 200 and the OTP doc is created — confirmed in tests. The test_full_reset_password_cycle test resets the admin password to a temp value mid-test and then resets it back to Test@1234, so admin creds remain valid across runs.",
+  "rca of the issue": "No live bugs to RCA. OTP flow + permission guards + trial banner removal all working as designed."
+}

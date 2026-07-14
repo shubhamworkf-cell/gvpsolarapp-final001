@@ -1,0 +1,43 @@
+{
+  "summary": "Sprint 6 (ERP-grade Data Management upgrade) backend tested end-to-end: 40 passed + 1 xfail (documented bug). Coverage: (1) /api/inventory/history now returns paginated object {rows,total,page,page_size,pages} — shape, default page_size=100, page<=1 clamping, page_size cap @500, page beyond pages -> empty rows but correct total/pages, full pagination walk asserts no row loss. (2) All new filters (challan, bill_number, user_id, status) verified individually + combined-AND with type/product/vendor/from_date/to_date/search. (3) history.csv still returns text/csv with ALL rows after history shape change. (4) bulk-delete: deletes inward+outward in one call with correct {deleted_inward, deleted_outward, total}; empty payload returns 0/0/0; non-existent ids return 0/0/0; multi-tenant safe (secondary cannot delete primary's rows). (5) next-challan: prefix-scoped max-suffix detection works on both inward (reference_number) and outward (outward_challan_no); noise rows with different prefix are ignored (max stays at 100 despite NOISE-*-9999); unknown prefix => next_number=1; no-prefix returns padded 4-digit; multi-tenant isolation OK. (6) check-challan: unique=True for unused, unique=False with existing doc for used, exclude_id allows current row to keep its challan, outward type works, multi-tenant isolation OK. (7) products/{id}/stats: full shape + numeric correctness — Pending outward correctly excluded from total_out & balance; last_*_date present as ISO date string; 404 for unknown product; 404 cross-tenant. (8) products/{id}/transactions: paginated object scoped to product name, all history filters honoured, 404 for unknown, 404 cross-tenant. (9) Sprint 5/4/2 smoke — /inventory/stats, /inventory/products, /inventory/defaults, /inventory/outward?status=Pending, /clients, /auth/me all healthy.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/inventory/history?bill_number=...",
+        "issue": "Outward branch of inv_history() does NOT apply the bill_number filter. Since outward rows have no bill_number field, supplying bill_number alone returns ALL outward rows (verified with garbage bill_number — 13 outward rows returned). Per the documented filter semantics, bill_number is inward-only and outward rows should be excluded when this filter is set. Fix: add `if bill_number: continue` in the outward loop (mirrors the existing `if status: continue` pattern in inward), OR check `if bill_number and bill_number.lower() not in (r.get('bill_number') or '').lower(): continue` (which will always skip since field is absent). UI workaround: callers must combine bill_number with type=inward."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_sprint6_data_management.py",
+    "/app/test_reports/pytest/sprint6_results.xml"
+  ],
+  "action_items": [
+    "Fix bill_number filter leak in /api/inventory/history: outward branch should also short-circuit (or filter) when bill_number is supplied so callers don't have to pass type=inward to get a clean result."
+  ],
+  "critical_code_review_comments": [
+    "server.py has grown to 2034 lines — Sprint 6 keeps adding to the Inventory section. Split inventory endpoints into backend/routes/inventory.py and material_requests.py NOW; this is overdue.",
+    "inv_history is still Python-side filtered AND now adds 5 more if-checks per row. With pagination at the Python layer too (slice after full scan), every page request streams every row from MongoDB. At scale this is O(N) per page request — push filters into a $match / aggregation pipeline and use $skip/$limit for pagination so DB returns only the page.",
+    "/api/inventory/history.csv calls inv_history(..., page_size=100000). 100k is a magic ceiling; if a tenant ever exceeds it the CSV silently truncates. Use the underlying find() directly with no pagination, OR loop with paging until exhausted.",
+    "bulk-delete has no max-size guardrail: a malicious caller can send 100k IDs and force a single $in delete. Cap inward_ids and outward_ids at e.g. 1000 each and return 400 otherwise.",
+    "next-challan iterates every inward/outward row in Python to extract trailing digits. For tenants with thousands of transactions this is wasteful. Consider storing a normalized `challan_number_int` field on insert, or use $regex + aggregation $max on a derived field.",
+    "next-challan does prefix.upper() comparison but the suggested string preserves the caller's original casing — fine, but if existing rows were saved with lowercased prefix, max_existing would still match (good). Confirm the casing contract in the docs.",
+    "check-challan returns the existing doc with only id/product/date — UI usually wants the row's type label, vendor/client name, status. Consider returning a slightly richer projection (already done in spirit, just sparse). Acceptable.",
+    "/products/{id}/stats uses $max on the `date` string field. Works because dates are ISO YYYY-MM-DD strings, but if any row's `date` is a Python datetime the lexical max will be wrong. Confirm date is always stored as string via Pydantic.",
+    "/products/{id}/transactions hard-codes page_size=10000 — for very large products this both bypasses the cap=500 limit (anti-DoS) and returns a huge payload. Should accept page/page_size from the caller and forward them.",
+    "inv_history filters by `product.upper() not in r.get('product')` — case-sensitive uppercase-on-left, raw-on-right. As long as products are stored uppercase (ensure_product does this) the equality is fine, but the substring semantics differ from vendor/client (case-insensitive). Document this asymmetry.",
+    "BulkDeleteIn allows both inward_ids and outward_ids to be None. Could tighten to require at least one of them non-empty and 400 otherwise — currently a fully-empty body returns 200 with total=0 (silently a no-op)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sprint6_data_management.py"
+  ],
+  "success_rate": {"backend": "100% (40/40 passing, 1 xfail for documented minor bug)", "frontend": "n/a (skipped per request)"},
+  "test_credentials": "bulk-test@solarix.com / Test@1234 (primary, admin). Secondary tenant registered live each session at test_sprint6_<uuid>@solarix-tests.com / Test@1234.",
+  "seed_data_creation": "All Sprint 6 test data prefixed TEST_S6_*. Per session: 1 product (TEST_S6_PROD_<tag>), 5 inward rows with prefix S6CH-<tag>-NNNN (suffix 3,7,10,25,100), 2 noise inward rows with NOISE-<tag>-NNNN (9999,4242), 3 outward rows with prefix S6OUT-<tag>-NNNN. Plus the bulk-delete test creates 2+2 short-lived rows under TEST_S6_BD_<tag>. Most rows persist after the run (harmless / useful for next iteration). One newly-registered secondary tenant per session.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Sprint 6 endpoints are all live and behaviour-stable. Primary tenant DB now has additional TEST_S6_* rows (~10 per run accumulating). One known minor bug: GET /api/inventory/history?bill_number=<x> without type=inward leaks outward rows (outward branch ignores bill_number filter). Captured as xfail in TestHistoryPagination.test_history_bill_number_filter_outward_leak_bug. The /api/auth/me endpoint returns {user:{...}, company:{...}} — extract the nested user. Pagination math is correct including the edge cases (page<1 clamp, page_size cap 500, page>pages -> empty rows but correct totals). CSV unchanged.",
+  "rca_of_the_issue": "bill_number filter leak — root cause: inv_history() has two parallel loops (inward branch, outward branch). The Sprint-6 patch added the bill_number filter only inside the inward branch (line ~1191). The outward branch (line ~1200-1212) was not updated, so outward rows are returned regardless of the bill_number value. Repro: GET /api/inventory/history?bill_number=GARBAGE_STRING — returns total=13 (all outward rows of primary tenant) instead of 0. Mitigation: in the outward loop, add `if bill_number: continue` (since outward has no bill_number field, any bill_number filter should exclude outward entirely), matching the existing `if status: continue` pattern used in the inward branch for outward-only filters."
+}

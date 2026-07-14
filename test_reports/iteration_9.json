@@ -1,0 +1,44 @@
+{
+  "summary": "Sprint 9 — Complaint Management module fully validated end-to-end (backend + frontend) and bill_number regression confirmed. 22/22 backend pytest cases pass. Frontend critical flows (create / detail / status change / resolve note-required / comments / audit / reassign / TaskPortal complaints tab / ClientDataDetail Raise Complaint) all work. No critical issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "RaiseComplaintDialog (lockedClient mode from ClientDataDetail)",
+        "issue": "When opened from /client-data/{id}, the cmp-client SelectTrigger is correctly disabled but the locked client's name is NOT rendered inside the trigger — it shows the placeholder 'No client' instead of the bound client's full_name. Submission still links the complaint to that client (backend confirms), but the user has no visual confirmation of which client the complaint will be filed under.",
+        "selector": "[data-testid='cmp-client']",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sprint9_complaints.py",
+    "/app/test_reports/pytest/sprint9_results.xml"
+  ],
+  "action_items": [
+    "(Optional / LOW) In RaiseComplaintDialog.js, when lockedClient prop is set, render the client name inside the disabled SelectTrigger (e.g. show {lockedClient.full_name} or seed the Select's value with lockedClient.id so SelectValue resolves correctly) for clearer UX."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py is 2661 lines — should be split into routers per domain (complaints, inventory, auth, clients) for maintainability. Already raised in earlier iterations.",
+    "complaint update_complaint sends a notification to the new assignee BEFORE the DB write completes (push_notification at line 2490 runs prior to db.complaints.update_one at 2504). Notification ordering currently OK because the listener reads from DB; consider reordering for atomicity / failure safety.",
+    "convert_complaint_to_task issues an HTTPException 400 for missing assigned_to even if also missing client_id — order check is currently client_id first then assigned_to, which is fine; documented and tested."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sprint9_complaints.py (NEW)"
+  ],
+  "success_rate": {
+    "backend": "100% (22/22)",
+    "frontend": "~95% (all critical flows verified; one minor lockedClient label nit)"
+  },
+  "test_credentials": "Admin: bulk-test@solarix.com / Test@1234 (Bulk Test EPC). Secondary tenant created dynamically per test run.",
+  "seed_data_creation": "Several TEST_S9_* / FLT_*/ PATCH_*/ CONV_*/ ESC_* complaints + one TEST_S9_BILL_* inward entry. ~25 complaints total created across the run. Safe to ignore or bulk-delete (all admin-raised).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test scaffold lives in /app/backend/tests/test_sprint9_complaints.py — uses motor for direct mongo backdating of complaint.created_at (escalation yellow/red). /api/auth/me returns {user, company} (not flat) — see admin_me fixture. Counter sequence in db.counters increments per (company_id, year, type='complaint'); secondary tenant verified to start at -0001. Frontend nav-complaints testid present (ALWAYS_VISIBLE includes 'complaints'). cmp-convert-task-btn is hidden once complaint already has converted_task_id (correct, not a bug).",
+  "rca of the issue": "No live bugs to RCA. Minor UI nit on lockedClient: RaiseComplaintDialog.js (line ~131) uses <Select value={form.client_id}><SelectTrigger data-testid='cmp-client' disabled={!!lockedClient}><SelectValue placeholder='No client' /></SelectTrigger>. When lockedClient is supplied via /client-data/{id}, the dialog initialises form.client_id = lockedClient.id but the client list (props.clients) may not yet contain that client's matching <SelectItem>, so SelectValue falls back to its placeholder. Mitigation: either inject the locked client into the clients[] array, or render a plain disabled Input showing lockedClient.full_name in lockedClient mode (skip the Select entirely)."
+}

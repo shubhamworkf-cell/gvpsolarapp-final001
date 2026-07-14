@@ -1,0 +1,36 @@
+{
+  "summary": "Solarix backend smoke test (26 endpoints exercised across 2 freshly-registered companies). 26/27 checks pass. Multi-tenant isolation, JWT (cookie + Bearer), client SOL-2026 IDs, 7-stage progress + auto Handover Complete, Emergent Object Storage upload/download with tenant isolation, employees, notifications, activity logs, and company profile all working. One real bug: employee login via employee_id fails because login lowercases the identifier but employee_id is stored uppercase.",
+  "tested_scope": ["backend", "auth", "integration"],
+  "passed": [
+    "POST /api/auth/register (Company A and Company B, 15-day trial, JWT in body+cookie)",
+    "POST /api/auth/login by email",
+    "GET /api/auth/me",
+    "POST /api/auth/logout",
+    "GET /api/company, PUT /api/company (Admin) with website update verified",
+    "POST /api/clients -> auto SOL-2026-0001, 7 stages initialized",
+    "GET /api/clients, GET /api/clients/stats (total/pending/completed/total_kw/subsidy)",
+    "GET /api/clients/{id}, PUT /api/clients/{id}",
+    "PATCH /api/clients/{id}/stages -> progress=100 and status auto-set to 'Handover Complete'",
+    "PATCH /api/clients/{id}/status, POST /api/clients/{id}/notes (user_name+ts), DELETE /api/clients/{id}",
+    "POST /api/employees -> EMP-2026-XXXXXX, default Installer perms",
+    "GET /api/employees, Non-admin employee POST /api/employees -> 403",
+    "GET /api/notifications (audience-scoped, is_read flag), POST /read and /mark-all-read",
+    "GET /api/activity-logs",
+    "POST /api/files/upload (PNG via Emergent Object Storage) and GET /api/files/{id}",
+    "Multi-tenant isolation: B sees 0 of A's clients; cross-company GET client/file returns 404"
+  ],
+  "failed": [
+    {
+      "area": "Employee Auth",
+      "issue": "POST /api/auth/login with identifier=employee_id always returns 401, even when password is correct. Repro: register company, create employee (server generates employee_id like 'EMP-2026-DB4B25'), then POST /api/auth/login with identifier='EMP-2026-DB4B25' OR 'emp-2026-db4b25' -> both 401 Invalid credentials.",
+      "evidence": "Root cause: server.py login() does `ident = data.identifier.lower().strip()` then queries `{\"employee_id\": ident}`. employee_id values are generated/stored uppercase (uuid4().hex[:6].upper()), so a lowercased identifier never matches the uppercase stored employee_id. Email/mobile login work fine because they are stored lowercase/digits.",
+      "priority": "HIGH"
+    }
+  ],
+  "action_items": [
+    "Fix employee_id login in /app/backend/server.py POST /api/auth/login: either (a) don't lowercase when matching employee_id (e.g., query with case-insensitive regex or add an upper() branch in the $or), or (b) store employee_id in lowercase, or (c) use a case-insensitive collation for the employee_id field."
+  ],
+  "success_rate": {"backend": "96%", "frontend": "not tested (backend-only request)"},
+  "retest_needed": true,
+  "full_testing_deferred": true
+}
