@@ -1,0 +1,178 @@
+{
+  "project_name": "Solarix",
+  "theme": "Light",
+  "archetype": "4 (Swiss & High-Contrast) / Soft Utility SaaS",
+  "instructions_to_main_agent": "Use .js extensions (JavaScript) exclusively. Do not use .tsx files. Follow all data-testid rules for every interactive element. Build a responsive, clean enterprise SaaS UI using React, Tailwind CSS, and Shadcn UI components. Rely heavily on the provided color palette, typography guidelines, and layout rules to ensure a HubSpot-like professional aesthetic.",
+  "design_philosophy": "Clean enterprise SaaS inspired by HubSpot. Prioritize role-aware hierarchy, top-left KPI priority, and functional color. Avoid heavy gradients and pure black/gray.",
+  "colors": {
+    "background": {
+      "app": "bg-slate-50",
+      "surface": "bg-white",
+      "glass": "bg-white/80 backdrop-blur-xl"
+    },
+    "primary": {
+      "default": "bg-blue-600",
+      "hover": "bg-blue-700",
+      "text": "text-blue-600",
+      "light": "bg-blue-50 text-blue-700"
+    },
+    "text": {
+      "primary": "text-slate-900",
+      "secondary": "text-slate-500",
+      "muted": "text-slate-400"
+    },
+    "border": "border-slate-200",
+    "status": {
+      "lead": "bg-slate-100 text-slate-700",
+      "survey_pending": "bg-amber-100 text-amber-700",
+      "quotation_sent": "bg-blue-100 text-blue-700",
+      "approved": "bg-emerald-100 text-emerald-700",
+      "installation_pending": "bg-orange-100 text-orange-700",
+      "installation_complete": "bg-teal-100 text-teal-700",
+      "handover_complete": "bg-green-100 text-green-700"
+    }
+  },
+  "typography": {
+    "font_family": {
+      "heading": "Outfit, sans-serif",
+      "body": "Figtree, sans-serif"
+    },
+    "hierarchy": {
+      "h1": "text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900",
+      "h2": "text-xl sm:text-2xl font-semibold tracking-tight text-slate-900",
+      "h3": "text-lg font-medium text-slate-900",
+      "body": "text-sm text-slate-600 leading-relaxed",
+      "label": "text-xs font-semibold uppercase tracking-wider text-slate-500"
+    }
+  },
+  "spacing_and_layout": {
+    "grid": "Control Room grid for Dashboard (grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6). Dense and compact data correlation.",
+    "spacing_scale": "Generous internal padding (p-6 or p-8) for cards to prevent text collision. Tight gaps (gap-4) between related metric components.",
+    "surfaces": "Cards: flat white bg, 1px subtle border (border-slate-200), rounded-xl, soft shadow-sm. No heavy gradients."
+  },
+  "components": {
+    "navigation": "Left Sidebar (collapsible) with deep navy (bg-slate-900 text-white) or clean white (bg-white border-r). Top header sticky with glassmorphism (bg-white/80 backdrop-blur-md) and z-50.",
+    "buttons": "Shadcn based. Primary: bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors. Secondary: bg-white border border-slate-200 text-slate-700 hover:bg-slate-50.",
+    "tables": "Shadcn Table. Left-aligned text, functional density. Use status badges for states.",
+    "forms": "Shadcn Form/Input/Select. Multi-section forms use Tabs or a vertical stepper. Labels left-aligned or top-aligned.",
+    "timeline": "Horizontal non-sequential stepper. Connected line, colored dots based on completion. Accessible via aria-labels."
+  },
+  "pages_and_features": {
+    "login": {
+      "layout": "Split-screen. Left: Admin/Company login (navy/blue background with trust messaging/image). Right: Employee login (white background, clean form).",
+      "test_ids": [
+        "admin-login-form",
+        "employee-login-form",
+        "login-submit-btn"
+      ]
+    },
+    "vendor_registration": {
+      "layout": "Centered card layout or 2-column if complex. Progressively disclosed fields.",
+      "fields": [
+        "Company details",
+        "GST",
+        "Business type (Select)",
+        "Logo Upload (Dropzone)"
+      ],
+      "test_ids": [
+        "vendor-registration-form",
+        "company-logo-upload",
+        "vendor-submit-btn"
+      ]
+    },
+    "dashboard": {
+      "layout": "Top band: 15-day free trial banner (bg-blue-50 text-blue-700). Next row: 5 Stat Cards (Total Clients, Pending Sites, Completed Sites, Total Installed KW, Subsidy Clients). Bottom: Recent Clients Table (last 10).",
+      "test_ids": [
+        "trial-banner",
+        "stat-card-total-clients",
+        "stat-card-pending",
+        "stat-card-completed",
+        "stat-card-kw",
+        "stat-card-subsidy",
+        "recent-clients-table"
+      ]
+    },
+    "company_profile": {
+      "layout": "Two column layout: Left profile details, Right document storage grid.",
+      "test_ids": [
+        "company-profile-form",
+        "document-upload-dropzone",
+        "save-profile-btn"
+      ]
+    },
+    "clients_crm": {
+      "layout": "Full page table. Search and filter bar at top. Columns: Name, Mobile, Consumer Number, Address, System KW, Phase Type, Subsidy, Status, Progress %, Last Updated. Actions: View/Edit/Delete dropdown.",
+      "test_ids": [
+        "clients-search-input",
+        "clients-data-table",
+        "client-action-menu"
+      ]
+    },
+    "new_client_form": {
+      "layout": "3-section tabbed layout. Client Details, System Details, Document Uploads.",
+      "test_ids": [
+        "new-client-form",
+        "tab-client-details",
+        "tab-system-details",
+        "tab-docs",
+        "save-client-btn"
+      ]
+    },
+    "client_details_view": {
+      "layout": "Header with client info and auto-generated ID (SOL-2026-XXXX). Center: 7-stage horizontal progress timeline. Bottom/Sidebar: Internal Notes with timestamps.",
+      "test_ids": [
+        "client-id-header",
+        "progress-timeline",
+        "add-note-button",
+        "notes-list"
+      ]
+    },
+    "team_management": {
+      "layout": "List of employees. 'Add Employee' modal with Role selector and Matrix of page-level access control (View/Create/Edit/Delete/Approve checkboxes).",
+      "test_ids": [
+        "add-employee-btn",
+        "role-permissions-matrix",
+        "save-employee-btn"
+      ]
+    },
+    "notification_center": {
+      "layout": "Popover from Bell icon in header. Unread badge. Grouped panels: Today, Yesterday, Older.",
+      "test_ids": [
+        "notification-bell",
+        "notification-popover",
+        "notification-item"
+      ]
+    }
+  },
+  "media": {
+    "solar_sites": [
+      {
+        "url": "https://images.unsplash.com/photo-1613665813446-82a78c468a1d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwxfHxzb2xhciUyMHBhbmVsJTIwaW5zdGFsbGF0aW9uJTIwcm9vZnxlbnwwfHx8fDE3ODE0MTM2MDR8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Black and white solar panels (can be used for hero/login background)"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1668097613572-40b7c11c8727?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwzfHxzb2xhciUyMHBhbmVsJTIwaW5zdGFsbGF0aW9uJTIwcm9vZnxlbnwwfHx8fDE3ODE0MTM2MDR8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Person working on a solar panel (Installation context)"
+      }
+    ],
+    "avatars": [
+      {
+        "url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc4MTM1MDE4Nnww&ixlib=rb-4.1.0&q=85",
+        "description": "Professional female headshot"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc4MTM1MDE4Nnww&ixlib=rb-4.1.0&q=85",
+        "description": "Professional male headshot"
+      }
+    ],
+    "logos": [
+      {
+        "url": "https://images.unsplash.com/photo-1638864616270-64041b699a50?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTJ8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBhYnN0cmFjdCUyMGNvbXBhbnklMjBsb2dvJTIwZ2VvbWV0cmljfGVufDB8fHx8MTc4MTQxMzYwNHww&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract geometric logo"
+      }
+    ]
+  },
+  "testing": {
+    "attributes": "ALL interactive and key informational elements MUST include a data-testid attribute formatted in kebab-case and role-based (e.g., login-form-submit-button). This is mandatory."
+  }
+}

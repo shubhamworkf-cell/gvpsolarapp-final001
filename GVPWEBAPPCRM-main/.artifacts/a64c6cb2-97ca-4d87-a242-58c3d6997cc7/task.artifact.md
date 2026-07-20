@@ -1,0 +1,11 @@
+- [x] Restore project files from backup
+- [x] Update IDE Gradle configuration
+- [x] Initialize Android SDK properties
+- [x] Perform Gradle Sync
+- [x] Build and verify debug APK
+- [/] Fix Backend Accessibility and IDE Modules
+    - [ ] Update frontend/.env with local IP
+    - [ ] Fix api.js localhost override
+    - [ ] Enable cleartext traffic in Manifest
+    - [ ] Repair .idea/modules.xml
+    - [ ] Restart backend on 0.0.0.0

@@ -1,0 +1,52 @@
+{
+  "summary": "Sprint 7 (AI Bulk Import — Outward) backend tested end-to-end via Claude Sonnet 4.5 streaming. 16/16 passed in 53s. Coverage: (1) POST /api/inventory/ai-extract-outward — CSV with 3 outward rows for Ramesh Kumar Patil: all rows returned with full OUTWARD schema (product UPPERCASE, size, quantity, unit ∈ allowed-set, date, outward_challan_no, client_name, project_name, status ∈ {Pending,Dispatched,Cancelled}, remarks, per-row confidence, per-field confidence dict). All 3 rows had client_id auto-resolved to 8993f5df-b3ec-47a5-9c13-7f3c4c349bf3. (2) PNG with multi-line dispatch challan text (PIL-rendered, real visual features per /app/image_testing.md) → outward rows extracted; client_id resolved when name matched. (3) XLSX with openpyxl → rows extracted with correct unit propagation (Mtr for cable, Nos for battery). (4) Empty body → 400. (5) No auth → 401. (6) >15MB payload → 413. (7) POST /api/inventory/bulk-outward — inserts 3 rows (skipping 3 invalid: empty product, qty=0, qty<0); each persisted with status='Dispatched' (default applied when missing AND when invalid value 'BOGUS' supplied), source='ai-bulk-import', import_batch label, reference_number copied from outward_challan_no, project_name fell back to client_name when empty. Verified via GET /api/inventory/outward. (8) Empty rows → 400. (9) Auto product creation: TEST_S7_NEWPROD_<TAG> created via bulk-outward; visible in /api/inventory/products. (10) Multi-tenant: secondary tenant extracting CSV with 'Ramesh Kumar Patil' does NOT get client_id=8993f5df... resolved — strict tenant isolation confirmed. (11) Inverse: unknown client_name ('Nonexistent Person <TAG>') leaves client_id empty. (12) Sprint 2 INWARD extractor (/api/inventory/ai-extract) still works — returns reference_number/source_name (NOT outward_challan_no/client_name) confirming the two prompts produce distinct schemas. (13) Sprint 6 smoke: paginated /history (shape with rows/total/page/page_size/pages), next-challan (prefix-scoped suffix detection), products/{id}/stats (total_in/total_out/balance), bulk-delete (no-op returns total=0).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/inventory/ai-extract-outward",
+        "issue": "After client_id resolution, the server sets row['project_id'] = by_name[nm] which assigns the CLIENT id to project_id (line 1500 server.py). This is logically wrong — project_id should remain empty or be resolved against a projects collection, not aliased to client_id. Downstream code paths that filter outward by project_id will incorrectly match the client uuid. Suggested fix: remove the `row['project_id'] = by_name[nm]` line entirely, or implement proper project resolution against db.projects."
+      },
+      {
+        "endpoint": "POST /api/inventory/ai-extract-outward",
+        "issue": "When the user supplies a file whose Content-Type is image/svg+xml or other non-PNG/JPEG/WEBP image (per /app/image_testing.md), the extractor still falls through to extract_outward_from_image with a PNG mime label. Not exercised here (no negative MIME tests) but worth adding upload MIME validation to match the playbook contract."
+      },
+      {
+        "endpoint": "POST /api/inventory/bulk-outward",
+        "issue": "No per-row max cap. A caller can post 10k+ rows in one request, triggering one insert_many that locks the collection and many ensure_product round-trips (one per row, sequential await). Cap rows at e.g. 500/request and 400 otherwise — same defence-in-depth note made for bulk-delete in iteration 6."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_sprint7_ai_outward.py",
+    "/app/test_reports/pytest/sprint7_results.xml"
+  ],
+  "action_items": [
+    "Fix project_id-aliased-to-client_id bug in /api/inventory/ai-extract-outward (server.py ~line 1500). project_id should NOT be set to the client uuid.",
+    "Optional: add explicit upload MIME validation to ai-extract-outward to reject SVG/BMP/HEIC etc. early instead of falling through to image branch.",
+    "Optional: cap bulk-outward rows length at e.g. 500/request (return 400 above)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 2137 lines — Sprint 7 added another ~100 lines to the Inventory section. The previously-raised refactor (split into backend/routes/inventory.py) is overdue and now blocks readability.",
+    "ai_inventory_extractor.py has near-duplicate code: extract_from_image/pdf/excel/upload and extract_outward_from_image/pdf/excel/upload are 95% identical, differing only in the system prompt and normalizer. Extract a single generic `extract(*, system_prompt, normalizer)` and have the two flows call it. ~150 lines of dead duplication today.",
+    "_normalize_outward_rows applies `.title()` to status, but Pydantic BulkOutwardIn does not — so a payload with status='dispatched' (lowercase) coming from a non-AI path will hit the `if status_val not in [...]` branch and be silently coerced to 'Dispatched'. Fine for AI flow, but document the case-insensitive contract on the model.",
+    "bulk-outward writes status default='Dispatched' but does NOT validate against actual stock balance — a Dispatched row for a product with 0 in-stock balance will succeed and create negative balance. Sprint 5's stock_validate logic should be reused here (or at least surface a warning).",
+    "ai-extract-outward swallows all extractor errors as 500 with `Extraction failed: {str(e)[:200]}`. The 200-char truncation hides traceback lines from the API consumer; backend logs via logger.exception are fine but consider a stable error_code in the body so frontend can branch on parse-error vs llm-rate-limit vs upload-format.",
+    "OUTWARD_SYSTEM_PROMPT example field_confidence inside the JSON example contains // comments. Most LLMs strip these, but Claude occasionally echoes them back. The current _parse_llm_json strips ``` fences but does NOT strip // line-comments — robust against the typical Claude 4.5 output, but add a comment-strip safety net.",
+    "extract_outward_from_excel uses df.head(500) cap. A 600-row outward register is silently truncated to 500 with no notes/warning in the response. Add a `truncated: true` flag in the response when raw_row_count > 500.",
+    "In bulk_outward(), `r.unit or 'Nos'` is passed to ensure_product but no validation against UNIT_OPTIONS at the model layer. A non-AI caller can send unit='Tonnes' and it will be stored. Add a validator on BulkOutwardRow.unit (and BulkOutwardRow.status).",
+    "Notification text 'Bulk Outward Import' duplicates with 'Bulk Inventory Import' (inward). For admin clarity differentiate, e.g., 'Bulk Inward Import' vs 'Bulk Outward Import' — currently inward says 'Bulk Inventory Import' which is ambiguous.",
+    "Test data prefix TEST_S7_* is now in the primary tenant DB and accumulates per session. Add a cleanup endpoint or fixture teardown (current tests don't clean up — same pattern as Sprint 6)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sprint7_ai_outward.py"
+  ],
+  "success_rate": {"backend": "100% (16/16 passing)", "frontend": "n/a (skipped per request)"},
+  "test_credentials": "bulk-test@solarix.com / Test@1234 (primary). Secondary tenant registered fresh per session at s7sec_<uuid>@solarix-tests.com / Test@1234.",
+  "seed_data_creation": "Per session (TAG = 6-char uuid hex upper): outward_entries → 3 from CSV-AI-extract (if main agent runs the round-trip; tests only call extract, NOT bulk-import the AI rows), 3 from TestBulkOutward (OUT-<TAG>-B1/B2/B3 with TEST_S7_PROD_<TAG>_{A,B,C}), 1 from TestAutoProductCreation (OUT-<TAG>-NP1 / TEST_S7_NEWPROD_<TAG>). products → up to 4 (TEST_S7_PROD_<TAG>_A/B/C, TEST_S7_NEWPROD_<TAG>). Plus PNG/XLSX/inward-CSV extractor calls are read-only (no DB writes). One newly-registered secondary tenant per run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Sprint 7 outward AI bulk import is live and behavior-stable on Claude Sonnet 4.5. Important schema fact verified by tests: the OUTWARD path returns `outward_challan_no` + `client_name` (NOT `reference_number`/`source_name`), AND simultaneously the INWARD endpoint (/api/inventory/ai-extract) keeps returning `reference_number`/`source_name`. The two prompts are correctly isolated. KNOWN MINOR BUG: ai-extract-outward sets row['project_id'] = client_id when client_name matches — must be fixed before any project-scoped filtering ships. Multi-tenant client_id resolution is correctly scoped to user.company_id (verified). Auth via Bearer token in Authorization header works for multipart uploads. AI calls take 5–25s each — keep timeouts ≥120s when invoking ai-extract-outward. Sprint 6 bill_number-filter-leak bug (xfail in test_sprint6) is still unresolved.",
+  "rca_of_the_issue": "project_id=client_id aliasing bug — root cause: server.py line ~1500 inside the client-resolution loop sets `row['project_id'] = by_name[nm]` alongside `row['client_id'] = by_name[nm]`. by_name maps client_name → client.id, so project_id ends up holding the client's UUID. Repro: POST /api/inventory/ai-extract-outward with a CSV that names a known client → inspect any row in the response: row.project_id == row.client_id == <client uuid>. Mitigation: delete that one line (or replace with project lookup against a projects collection). Until fixed, any UI that does `outward.filter(o => o.project_id === selectedProjectId)` will mis-match against client ids."
+}

@@ -1,0 +1,36 @@
+{
+  "summary": "Sprint 3 DOCX Template Engine: full backend pytest suite (24 tests) executed against the live preview URL — 24/24 PASSED (100%). Validated variable catalogue, .docx upload + placeholder extraction + auto-mapping (12/12 for annexure), 400/413/401 rejections, list/get/patch/delete, preview (12 fields resolve for 'Ramesh Kumar Patil', missing_count=0), generate→download→client attachment + stage flip, canonical overrides winning, raw_overrides accepted, multi-tenant isolation (second company gets 404 on list/get/patch/delete/preview/generate), and Sprint 2 smoke (clients/stats, inventory/stats, inventory/products, ai-extract auth-gated, bulk-inward empty validation).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/document-templates/{id}/preview", "issue": "raw_overrides only apply to placeholders that are NOT mapped to a canonical variable (per render_docx/compute_preview logic). For mapped placeholders (e.g. 'address'), the canonical `overrides` channel must be used. Behavior is correct but undocumented — a clarifying note in the API or accepting raw_overrides for mapped placeholders too would reduce caller confusion. The review_request asked to validate raw_overrides winning for 'address' which is auto-mapped, so the intended channel is `overrides`."},
+      {"endpoint": "POST /api/document-templates", "issue": "Empty multipart upload returns 422 from FastAPI's UploadFile validator before the empty-content check at line 1062 can run; minor — current behavior still rejects."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_sprint3_docx_templates.py",
+    "/app/test_reports/pytest/sprint3_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Document that raw_overrides only override unmapped placeholders — mapped placeholders should use canonical `overrides`. Or allow raw_overrides to take precedence over mapping in render_docx/compute_preview if that's the desired UX.",
+    "(Optional) Tighten upload_template empty-file path: validate size > 0 before FastAPI consumes the request, or surface 400 consistently."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 1236 lines — approaching the 700-line guideline; consider splitting Sprint 3 endpoints into a dedicated router module (e.g. routers/document_templates.py).",
+    "All Sprint 3 endpoints correctly scope by company_id (multi-tenant safe), use async, exclude `_id` via projection, validate doc_type against DOC_TYPES, and return uuid string ids — good practices observed.",
+    "render_docx run-aware substitution handles Word's run splitting and whitespace-tolerant patterns correctly, verified via python-docx round-trip in test_generate_and_download_and_attach.",
+    "Storage paths are namespaced by APP_NAME/company_id/templates|generated/{uuid} — good isolation.",
+    "GET /api/files/{file_id} accepts token via cookie, ?auth= query, OR Bearer header — flexible; verified all three paths in tests."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sprint3_docx_templates.py (new)"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "n/a (backend-only run)"},
+  "test_credentials": "bulk-test@solarix.com / Test@1234 (existing Bulk Test EPC admin; client 'Ramesh Kumar Patil' already seeded with consumer 182456789012, 5kW WAAREE 540Wp ×10, GROWATT 5KW inverter)",
+  "seed_data_creation": "Test fixtures upload throwaway annexure templates prefixed 'TEST_' and tear them down via DELETE in the fixture finalizer. The pre-existing 'Annexure I' template and 'Ramesh Kumar Patil' client are preserved.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Sprint 3 backend is GREEN end-to-end. Reusable test file at /app/backend/tests/test_sprint3_docx_templates.py uses session-scoped fixtures (primary_token, secondary_token, ramesh_client_id, uploaded_template). Sprint 2 smoke is bundled in the same file (TestSprint2Smoke class). For frontend testing of the template-engine UI, use BASE_URL from frontend/.env and the same admin credentials; the 'Annexure I' template + 'Ramesh Kumar Patil' client are ready in the bulk-test company for an end-to-end demo flow.",
+  "rca of the issue": "No bugs found. One nuance worth noting: raw_overrides is keyed by raw placeholder string and only applied when the placeholder is NOT mapped to a canonical variable. The test asserted both channels and confirmed canonical `overrides[\"address\"]` correctly overrides the auto-resolved client address in preview AND in the generated .docx (verified by parsing with python-docx and searching for 'Custom Override Address')."
+}

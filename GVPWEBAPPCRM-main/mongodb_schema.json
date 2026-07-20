@@ -1,0 +1,1745 @@
+{
+  "tasks": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "e27a311f-3cfb-482b-9463-d3d5752b0b2b"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "client_id": {
+      "types": [
+        "str"
+      ],
+      "example": "64f86f5c-b604-4a45-9305-250239cf7e8d"
+    },
+    "client_name": {
+      "types": [
+        "str"
+      ],
+      "example": "TaskClient 5F44BD"
+    },
+    "sol_id": {
+      "types": [
+        "str"
+      ],
+      "example": "SOL-2026-0008"
+    },
+    "task_type": {
+      "types": [
+        "str"
+      ],
+      "example": "Complaint: CONV_OK_44D7E3"
+    },
+    "assigned_to": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "assigned_to_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Admin 5F44BD"
+    },
+    "assigned_by": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "assigned_by_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Admin 5F44BD"
+    },
+    "deadline": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "priority": {
+      "types": [
+        "str"
+      ],
+      "example": "Urgent"
+    },
+    "remarks": {
+      "types": [
+        "str"
+      ],
+      "example": "Auto-created from complaint #CMP-2026-0015. Category: Installation Issue.\n\n"
+    },
+    "status": {
+      "types": [
+        "str"
+      ],
+      "example": "pending"
+    },
+    "submission": {
+      "types": [
+        "NoneType"
+      ],
+      "example": "None"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:44.883048+00:00"
+    },
+    "updated_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:44.883048+00:00"
+    },
+    "complaint_id": {
+      "types": [
+        "str"
+      ],
+      "example": "41814f2f-b071-46a8-bbf8-c8eccaadeb76"
+    },
+    "complaint_no": {
+      "types": [
+        "str"
+      ],
+      "example": "CMP-2026-0015"
+    }
+  },
+  "complaint_audit": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "fbe60e58-863a-4cd9-8a08-f41de3cd7a13"
+    },
+    "complaint_id": {
+      "types": [
+        "str"
+      ],
+      "example": "640d31bd-bbf0-499b-8961-90ec1c06f58f"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "user_id": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "user_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Admin 5F44BD"
+    },
+    "action": {
+      "types": [
+        "str"
+      ],
+      "example": "Created"
+    },
+    "details": {
+      "types": [
+        "str"
+      ],
+      "example": "CMP-2026-0013 \u00b7 Service Issue \u00b7 Low \u2192 Admin"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:44.770691+00:00"
+    }
+  },
+  "complaints": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "41814f2f-b071-46a8-bbf8-c8eccaadeb76"
+    },
+    "complaint_no": {
+      "types": [
+        "str"
+      ],
+      "example": "CMP-2026-0015"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "title": {
+      "types": [
+        "str"
+      ],
+      "example": "CONV_OK_44D7E3"
+    },
+    "category": {
+      "types": [
+        "str"
+      ],
+      "example": "Installation Issue"
+    },
+    "priority": {
+      "types": [
+        "str"
+      ],
+      "example": "High"
+    },
+    "description": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "client_id": {
+      "types": [
+        "str"
+      ],
+      "example": "64f86f5c-b604-4a45-9305-250239cf7e8d"
+    },
+    "client_name": {
+      "types": [
+        "str"
+      ],
+      "example": "TaskClient 5F44BD"
+    },
+    "project_id": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "project_name": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "send_to_target": {
+      "types": [
+        "str"
+      ],
+      "example": "Specific User"
+    },
+    "assigned_to": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "assigned_to_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Admin 5F44BD"
+    },
+    "status": {
+      "types": [
+        "str"
+      ],
+      "example": "Assigned"
+    },
+    "attachments": {
+      "types": [
+        "list"
+      ],
+      "example": "[]"
+    },
+    "resolution_note": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "resolution_attachments": {
+      "types": [
+        "list"
+      ],
+      "example": "[]"
+    },
+    "raised_by": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "raised_by_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Admin 5F44BD"
+    },
+    "raised_by_role": {
+      "types": [
+        "str"
+      ],
+      "example": "Admin"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:44.841706+00:00"
+    },
+    "updated_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:44.884076+00:00"
+    },
+    "resolved_at": {
+      "types": [
+        "NoneType",
+        "str"
+      ],
+      "example": "None"
+    },
+    "converted_task_id": {
+      "types": [
+        "str"
+      ],
+      "example": "e27a311f-3cfb-482b-9463-d3d5752b0b2b"
+    }
+  },
+  "inward_entries": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "5694855f-3ad5-4377-bd3b-aa65213fe014"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "product": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST_S6_PROD_697957"
+    },
+    "size": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "quantity": {
+      "types": [
+        "float"
+      ],
+      "example": "1.0"
+    },
+    "unit": {
+      "types": [
+        "str"
+      ],
+      "example": "Nos"
+    },
+    "reference_number": {
+      "types": [
+        "str"
+      ],
+      "example": "NOISE-697957-9999"
+    },
+    "reference_type": {
+      "types": [
+        "str"
+      ],
+      "example": "Challan Number"
+    },
+    "bill_number": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "source_type": {
+      "types": [
+        "str"
+      ],
+      "example": "Supplier"
+    },
+    "source_name": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST_S6_VND_697957"
+    },
+    "date": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:29.750887+00:00"
+    },
+    "remarks": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "attachment_file_id": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "attachment_filename": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "source": {
+      "types": [
+        "str"
+      ],
+      "example": "manual"
+    },
+    "created_by": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "created_by_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Test Admin"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:29.750887+00:00"
+    },
+    "import_batch": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST_S5_BULK_acc788"
+    },
+    "updated_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:27.910580+00:00"
+    }
+  },
+  "notifications": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "3369f3f8-5c60-4311-9daf-270a8b134c91"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "audience": {
+      "types": [
+        "str"
+      ],
+      "example": "admin"
+    },
+    "to_user_id": {
+      "types": [
+        "NoneType",
+        "str"
+      ],
+      "example": "None"
+    },
+    "title": {
+      "types": [
+        "str"
+      ],
+      "example": "New Ticket TKT-2026-0001"
+    },
+    "body": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST Ticket ce1fff for TEST_Sprint4_Client_82b70a [High]"
+    },
+    "read_by": {
+      "types": [
+        "list"
+      ],
+      "example": "[]"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:25.883391+00:00"
+    }
+  },
+  "outward_entries": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "cc50ff12-bbe6-446c-9084-c5441ba6d2dd"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "product": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST_S8_PROD_BOS"
+    },
+    "size": {
+      "types": [
+        "str"
+      ],
+      "example": "4SQMM"
+    },
+    "quantity": {
+      "types": [
+        "float"
+      ],
+      "example": "2.0"
+    },
+    "unit": {
+      "types": [
+        "str"
+      ],
+      "example": "Nos"
+    },
+    "client_id": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "client_name": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST_CLIENT_STRIP_5F44BD"
+    },
+    "project_id": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "project_name": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST_CLIENT_STRIP_5F44BD"
+    },
+    "outward_challan_no": {
+      "types": [
+        "str"
+      ],
+      "example": "4599"
+    },
+    "reference_number": {
+      "types": [
+        "str"
+      ],
+      "example": "4599"
+    },
+    "reference_type": {
+      "types": [
+        "str"
+      ],
+      "example": "Challan Number"
+    },
+    "date": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-01-16"
+    },
+    "remarks": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "status": {
+      "types": [
+        "str"
+      ],
+      "example": "Dispatched"
+    },
+    "attachment_file_id": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "attachment_filename": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "source": {
+      "types": [
+        "str"
+      ],
+      "example": "ai-bulk-import"
+    },
+    "created_by": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "created_by_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Admin 5F44BD"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:43.184033+00:00"
+    },
+    "updated_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:28.581604+00:00"
+    },
+    "material_request_id": {
+      "types": [
+        "str"
+      ],
+      "example": "205b5a26-23ab-4e45-84ea-59b3b60891e2"
+    },
+    "delivery_photo_file_id": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "challan_photo_file_id": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "import_batch": {
+      "types": [
+        "str"
+      ],
+      "example": "S8_TEST_OUT_5F44BD"
+    }
+  },
+  "counters": {
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "4850a74a-5741-4e4a-8257-5c6c0c36043f"
+    },
+    "year": {
+      "types": [
+        "int"
+      ],
+      "example": "2026"
+    },
+    "seq": {
+      "types": [
+        "int"
+      ],
+      "example": "1"
+    },
+    "type": {
+      "types": [
+        "str"
+      ],
+      "example": "complaint"
+    }
+  },
+  "activity_logs": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "ff2e5782-8a80-44f9-9ebb-fcabe89e7848"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "user_id": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "user_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Test Admin"
+    },
+    "action": {
+      "types": [
+        "str"
+      ],
+      "example": "AI Inventory Extract"
+    },
+    "target": {
+      "types": [
+        "str"
+      ],
+      "example": "inward.csv \u2192 3 rows (Challan)"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:21.511273+00:00"
+    }
+  },
+  "complaint_comments": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "3093976c-256f-440c-8533-3cd86b8bed9e"
+    },
+    "complaint_id": {
+      "types": [
+        "str"
+      ],
+      "example": "61bb1aa0-c242-4ab8-93b4-2885c10e2ed7"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "user_id": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "user_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Admin 5F44BD"
+    },
+    "user_role": {
+      "types": [
+        "str"
+      ],
+      "example": "Admin"
+    },
+    "text": {
+      "types": [
+        "str"
+      ],
+      "example": "Second comment"
+    },
+    "attachments": {
+      "types": [
+        "list"
+      ],
+      "example": "[]"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:44.712979+00:00"
+    }
+  },
+  "files": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "2e93615d-2964-4bb6-bdd1-9afdc57223e9"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "uploader_id": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "storage_path": {
+      "types": [
+        "str"
+      ],
+      "example": "solarix/ee7212c2-0300-4d41-8fe0-2640316bee13/generated/2e93615d-2964-4bb6-bdd1-9afdc57223e9.docx"
+    },
+    "original_filename": {
+      "types": [
+        "str"
+      ],
+      "example": "Ramesh-Kumar-Patil-TEST_Annexure_3d889d.docx"
+    },
+    "content_type": {
+      "types": [
+        "str"
+      ],
+      "example": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+    "size": {
+      "types": [
+        "int"
+      ],
+      "example": "49662"
+    },
+    "category": {
+      "types": [
+        "str"
+      ],
+      "example": "generated"
+    },
+    "is_deleted": {
+      "types": [
+        "bool"
+      ],
+      "example": "False"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:24.887049+00:00"
+    }
+  },
+  "service_tickets": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "cb49a264-c044-4f9b-a10a-f5fd805a00b4"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "ticket_no": {
+      "types": [
+        "str"
+      ],
+      "example": "TKT-2026-0002"
+    },
+    "client_id": {
+      "types": [
+        "str"
+      ],
+      "example": "c93f7290-2500-4a11-83cd-2a3d02d819be"
+    },
+    "client_name": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST_Sprint4_Client_82b70a"
+    },
+    "client_mobile": {
+      "types": [
+        "str"
+      ],
+      "example": "9988776655"
+    },
+    "title": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST attach ticket"
+    },
+    "issue_type": {
+      "types": [
+        "str"
+      ],
+      "example": "Other"
+    },
+    "description": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "priority": {
+      "types": [
+        "str"
+      ],
+      "example": "Low"
+    },
+    "status": {
+      "types": [
+        "str"
+      ],
+      "example": "Open"
+    },
+    "assigned_to": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "assigned_to_name": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "attachments": {
+      "types": [
+        "list"
+      ],
+      "example": "[{'file_id': 'f1', 'filename': 'a.png', 'content_type': 'image/png'}, {'file_id': 'f2', 'filename': 'b.png', 'content_type': 'image/png'}]"
+    },
+    "timeline": {
+      "types": [
+        "list"
+      ],
+      "example": "[{'ts': '2026-06-26T12:00:26.163223+00:00', 'user_id': '46a164a4-feaa-4d7f-96af-48ea558858ba', 'user_name': 'Bulk Test Admin', 'action': 'Ticket Created', 'from_status': '', 'to_status': 'Open', 'note"
+    },
+    "resolution": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "created_by": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "created_by_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Test Admin"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:26.163223+00:00"
+    },
+    "updated_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:26.178008+00:00"
+    },
+    "resolved_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:26.122613+00:00"
+    },
+    "closed_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:26.138997+00:00"
+    }
+  },
+  "password_reset_otps": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "674f33b4-b386-45d5-b114-1e052eb427a9"
+    },
+    "email": {
+      "types": [
+        "str"
+      ],
+      "example": "bulk-test@solarix.com"
+    },
+    "user_id": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "code_hash": {
+      "types": [
+        "str"
+      ],
+      "example": "$2b$12$WWFbgC18nBZ0pVb0SgsPEumnDsR8QUUBcNx7flQWQCg52sdSGBr2a"
+    },
+    "attempts": {
+      "types": [
+        "int"
+      ],
+      "example": "0"
+    },
+    "expires_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:10:16.943041+00:00"
+    },
+    "used": {
+      "types": [
+        "bool"
+      ],
+      "example": "True"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:16.943041+00:00"
+    }
+  },
+  "inventory_defaults": {
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "inward": {
+      "types": [
+        "dict"
+      ],
+      "example": "{'unit': 'Nos', 'source_type': 'Supplier'}"
+    },
+    "outward": {
+      "types": [
+        "dict"
+      ],
+      "example": "{'unit': 'Kg'}"
+    },
+    "updated_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:28.944691+00:00"
+    },
+    "updated_by": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "updated_by_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Test Admin"
+    }
+  },
+  "material_requests": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "205b5a26-23ab-4e45-84ea-59b3b60891e2"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "client_id": {
+      "types": [
+        "str"
+      ],
+      "example": "35a8d17c-4c09-4349-a32b-2d11e4f6def7"
+    },
+    "client_name": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST_S5_Client_e182b2"
+    },
+    "sol_id": {
+      "types": [
+        "str"
+      ],
+      "example": "SOL-2026-0007"
+    },
+    "requested_by": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "requested_by_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Test Admin"
+    },
+    "items": {
+      "types": [
+        "list"
+      ],
+      "example": "[{'product': 'TEST_S5_MR_ff342e', 'quantity': 4.0, 'unit': 'Nos', 'approved_quantity': 4.0, 'pending_quantity': 0.0}]"
+    },
+    "remarks": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "status": {
+      "types": [
+        "str"
+      ],
+      "example": "approved"
+    },
+    "approval": {
+      "types": [
+        "dict"
+      ],
+      "example": "{'by': 'Bulk Test Admin', 'by_id': '46a164a4-feaa-4d7f-96af-48ea558858ba', 'at': '2026-06-26T12:00:28.551464+00:00', 'remarks': '', 'delivery_photo_file_id': '', 'challan_photo_file_id': ''}"
+    },
+    "delivery": {
+      "types": [
+        "dict"
+      ],
+      "example": "{'challan_number': 'CHL-135a1a', 'vehicle_number': 'MH12AB1234', 'driver_name': 'Test Driver', 'delivery_date': '2026-06-26T12:00:28.551464+00:00', 'delivery_photo_file_id': '', 'challan_photo_file_id"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:28.528806+00:00"
+    },
+    "updated_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:28.551464+00:00"
+    }
+  },
+  "clients": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "64f86f5c-b604-4a45-9305-250239cf7e8d"
+    },
+    "sol_id": {
+      "types": [
+        "str"
+      ],
+      "example": "SOL-2026-0008"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "created_by": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "full_name": {
+      "types": [
+        "str"
+      ],
+      "example": "TaskClient 5F44BD"
+    },
+    "mobile": {
+      "types": [
+        "str"
+      ],
+      "example": "9100100100"
+    },
+    "alt_mobile": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "consumer_number": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "address": {
+      "types": [
+        "str"
+      ],
+      "example": "Test Addr"
+    },
+    "city": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "state": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "pincode": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "aadhaar": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "system_kw": {
+      "types": [
+        "float",
+        "int"
+      ],
+      "example": "0"
+    },
+    "panel_make": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "panel_wattage": {
+      "types": [
+        "float",
+        "int"
+      ],
+      "example": "0"
+    },
+    "num_panels": {
+      "types": [
+        "int"
+      ],
+      "example": "0"
+    },
+    "inverter_make": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "inverter_capacity": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "inverter_serial": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "phase_type": {
+      "types": [
+        "str"
+      ],
+      "example": "Single Phase"
+    },
+    "subsidy_eligible": {
+      "types": [
+        "bool"
+      ],
+      "example": "False"
+    },
+    "status": {
+      "types": [
+        "str"
+      ],
+      "example": "Lead"
+    },
+    "stages": {
+      "types": [
+        "dict"
+      ],
+      "example": "{'Onboarding': False, 'Survey': False, 'Quotation': False, 'Material Delivery': False, 'Installation': False, 'Verification': False, 'Handover': False}"
+    },
+    "documents": {
+      "types": [
+        "list"
+      ],
+      "example": "[]"
+    },
+    "progress": {
+      "types": [
+        "int"
+      ],
+      "example": "0"
+    },
+    "notes": {
+      "types": [
+        "list"
+      ],
+      "example": "[]"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:43.004255+00:00"
+    },
+    "updated_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:43.004802+00:00"
+    }
+  },
+  "products": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "b5e2f64c-d28e-4e26-aa46-18949cd59ba3"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "name": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST_S5_MT_671954"
+    },
+    "size": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "category": {
+      "types": [
+        "str"
+      ],
+      "example": "Solar"
+    },
+    "unit": {
+      "types": [
+        "str"
+      ],
+      "example": "Nos"
+    },
+    "min_stock": {
+      "types": [
+        "float"
+      ],
+      "example": "0.0"
+    },
+    "status": {
+      "types": [
+        "str"
+      ],
+      "example": "Active"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:28.876718+00:00"
+    },
+    "updated_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:27.685398+00:00"
+    }
+  },
+  "companies": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "4850a74a-5741-4e4a-8257-5c6c0c36043f"
+    },
+    "company_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Sec9 Co 44D7E3"
+    },
+    "owner_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Sec9 Owner"
+    },
+    "mobile": {
+      "types": [
+        "str"
+      ],
+      "example": "9000099000"
+    },
+    "alt_mobile": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "email": {
+      "types": [
+        "str"
+      ],
+      "example": "s9sec_89b31e92@solarix-tests.com"
+    },
+    "gst_number": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "address": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "city": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "state": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "pincode": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "business_type": {
+      "types": [
+        "str"
+      ],
+      "example": "Solar EPC"
+    },
+    "website": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "support_number": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "logo_file_id": {
+      "types": [
+        "NoneType"
+      ],
+      "example": "None"
+    },
+    "documents": {
+      "types": [
+        "dict"
+      ],
+      "example": "{}"
+    },
+    "trial_start": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:43.792075+00:00"
+    },
+    "trial_end": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-07-11T12:00:43.792075+00:00"
+    },
+    "plan": {
+      "types": [
+        "str"
+      ],
+      "example": "trial"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:43.792075+00:00"
+    }
+  },
+  "password_reset_tokens": {
+    "token": {
+      "types": [
+        "str"
+      ],
+      "example": "I-sHX9a2CyL2jHsC_1ST3NQ41xiPMeVmPrIf65BSZlo"
+    },
+    "email": {
+      "types": [
+        "str"
+      ],
+      "example": "bulk-test@solarix.com"
+    },
+    "user_id": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "expires_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:10:17.198581+00:00"
+    },
+    "used": {
+      "types": [
+        "bool"
+      ],
+      "example": "True"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:17.198581+00:00"
+    }
+  },
+  "inverter_monitoring": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "eb68f3d3-c71d-41b2-bd85-3a627ec40b23"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "ee7212c2-0300-4d41-8fe0-2640316bee13"
+    },
+    "client_id": {
+      "types": [
+        "str"
+      ],
+      "example": "c93f7290-2500-4a11-83cd-2a3d02d819be"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:25.778573+00:00"
+    },
+    "created_by": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "created_by_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Test Admin"
+    },
+    "portal_name": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "app_name": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "portal_url": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "plant_id": {
+      "types": [
+        "str"
+      ],
+      "example": "TEST_PLANT_001"
+    },
+    "username": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "password": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "inverter_status": {
+      "types": [
+        "str"
+      ],
+      "example": "Online"
+    },
+    "notes": {
+      "types": [
+        "str"
+      ],
+      "example": ""
+    },
+    "updated_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:25.827812+00:00"
+    },
+    "updated_by": {
+      "types": [
+        "str"
+      ],
+      "example": "46a164a4-feaa-4d7f-96af-48ea558858ba"
+    },
+    "updated_by_name": {
+      "types": [
+        "str"
+      ],
+      "example": "Bulk Test Admin"
+    }
+  },
+  "users": {
+    "id": {
+      "types": [
+        "str"
+      ],
+      "example": "8e3d4803-6139-42fb-a36f-079d0acedca7"
+    },
+    "company_id": {
+      "types": [
+        "str"
+      ],
+      "example": "4850a74a-5741-4e4a-8257-5c6c0c36043f"
+    },
+    "name": {
+      "types": [
+        "str"
+      ],
+      "example": "Sec9 Owner"
+    },
+    "email": {
+      "types": [
+        "str"
+      ],
+      "example": "s9sec_89b31e92@solarix-tests.com"
+    },
+    "mobile": {
+      "types": [
+        "str"
+      ],
+      "example": "9000099000"
+    },
+    "password_hash": {
+      "types": [
+        "str"
+      ],
+      "example": "$2b$12$ydjrsB8jcnmUPxQGcQdIi.KuizbwW1E/GTjW5zRkm9QdLvI.DW5o2"
+    },
+    "role": {
+      "types": [
+        "str"
+      ],
+      "example": "Admin"
+    },
+    "user_type": {
+      "types": [
+        "str"
+      ],
+      "example": "owner"
+    },
+    "status": {
+      "types": [
+        "str"
+      ],
+      "example": "Active"
+    },
+    "permissions": {
+      "types": [
+        "dict"
+      ],
+      "example": "{'dashboard': {'view': True, 'create': True, 'edit': True, 'delete': True, 'approve': True}, 'clients': {'view': True, 'create': True, 'edit': True, 'delete': True, 'approve': True}, 'documents': {'vi"
+    },
+    "created_at": {
+      "types": [
+        "str"
+      ],
+      "example": "2026-06-26T12:00:44.221379+00:00"
+    },
+    "profile_photo_file_id": {
+      "types": [
+        "str"
+      ],
+      "example": "photo_5F44BD"
+    },
+    "employee_id": {
+      "types": [
+        "str"
+      ],
+      "example": "EMP-2026-E7CBC5"
+    }
+  },
+  "document_templates": {}
+}
