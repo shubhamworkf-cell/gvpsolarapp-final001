@@ -19,7 +19,7 @@ load_dotenv(ROOT_DIR / '.env')
 import os
 import sys
 
-PRESERVE_ADMIN = False  # Set to True to keep the first admin user+company for login
+PRESERVE_ADMIN = True  # Set to True to keep GVP Solar / Giriraj Dhoot admin user+company
 
 supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_KEY")
@@ -107,16 +107,21 @@ admin_company_id = None
 admin_user_id = None
 
 if PRESERVE_ADMIN:
-    # Find the first admin company and user
+    # Find Giriraj Dhoot / GVP Solar company and user
     try:
-        comp_res = client.table("companies").select("id").limit(1).execute()
+        comp_res = client.table("companies").select("id").ilike("company_name", "%GVP Solar%").limit(1).execute()
+        if not comp_res.data:
+            comp_res = client.table("companies").select("id").limit(1).execute()
         if comp_res.data and isinstance(comp_res.data[0], dict):
             admin_company_id = comp_res.data[0].get("id")
-            print(f"Preserving company: {admin_company_id}")
-        user_res = client.table("users").select("id").eq("role", "Admin").limit(1).execute()
+            print(f"Preserving GVP Solar company: {admin_company_id}")
+
+        user_res = client.table("users").select("id").ilike("name", "%Giriraj%").limit(1).execute()
+        if not user_res.data:
+            user_res = client.table("users").select("id").eq("role", "Admin").limit(1).execute()
         if user_res.data and isinstance(user_res.data[0], dict):
             admin_user_id = user_res.data[0].get("id")
-            print(f"Preserving user: {admin_user_id}")
+            print(f"Preserving Giriraj Dhoot user: {admin_user_id}")
     except Exception as e:
         print(f"Warning: Could not find admin to preserve: {e}")
 
