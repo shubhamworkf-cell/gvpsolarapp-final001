@@ -390,8 +390,14 @@ class CursorAdapter:
             elif skip > 0:
                 builder = builder.range(skip, 1000000)
 
-        res = builder.execute()
-        data = res.data or []
+        try:
+            res = builder.execute()
+            data = res.data or []
+        except Exception as e:
+            err_str = str(e).lower()
+            if "pgrst205" in err_str or "does not exist" in err_str or "schema cache" in err_str:
+                return []
+            raise e
         
         deserialized_data = []
         for doc in data:
@@ -801,16 +807,28 @@ class CollectionAdapter:
         return UpdateResult(len(res.data), len(res.data))
 
     async def delete_one(self, filter):
-        builder = supabase.table(self.table_name).delete()
-        builder = self._apply_filters(builder, filter)
-        res = builder.execute()
-        return DeleteResult(len(res.data))
+        try:
+            builder = supabase.table(self.table_name).delete()
+            builder = self._apply_filters(builder, filter)
+            res = builder.execute()
+            return DeleteResult(len(res.data) if res.data else 0)
+        except Exception as e:
+            err_str = str(e).lower()
+            if "pgrst205" in err_str or "does not exist" in err_str or "schema cache" in err_str:
+                return DeleteResult(0)
+            raise e
 
     async def delete_many(self, filter):
-        builder = supabase.table(self.table_name).delete()
-        builder = self._apply_filters(builder, filter)
-        res = builder.execute()
-        return DeleteResult(len(res.data))
+        try:
+            builder = supabase.table(self.table_name).delete()
+            builder = self._apply_filters(builder, filter)
+            res = builder.execute()
+            return DeleteResult(len(res.data) if res.data else 0)
+        except Exception as e:
+            err_str = str(e).lower()
+            if "pgrst205" in err_str or "does not exist" in err_str or "schema cache" in err_str:
+                return DeleteResult(0)
+            raise e
 
     async def count_documents(self, filter=None):
         builder = supabase.table(self.table_name).select("*", count="exact")
