@@ -55,6 +55,41 @@ let webpackConfig = {
       if (config.enableHealthCheck && healthPluginInstance) {
         webpackConfig.plugins.push(healthPluginInstance);
       }
+
+      // Optimize production chunk splitting
+      if (webpackConfig.mode === "production") {
+        webpackConfig.optimization = {
+          ...webpackConfig.optimization,
+          splitChunks: {
+            chunks: "all",
+            maxInitialRequests: 25,
+            minSize: 20000,
+            cacheGroups: {
+              default: false,
+              vendors: false,
+              framework: {
+                name: "framework",
+                test: /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/,
+                priority: 40,
+                chunks: "all",
+              },
+              lib: {
+                test: /[\\/]node_modules[\\/](@tanstack|axios|date-fns|dayjs|lodash)[\\/]/,
+                name: "commons",
+                priority: 30,
+                chunks: "all",
+              },
+              ui: {
+                test: /[\\/]node_modules[\\/](@radix-ui|lucide-react|framer-motion|recharts)[\\/]/,
+                name: "ui-vendor",
+                priority: 20,
+                chunks: "all",
+              },
+            },
+          },
+        };
+      }
+
       return webpackConfig;
     },
   },

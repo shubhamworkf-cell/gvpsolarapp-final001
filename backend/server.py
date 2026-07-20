@@ -21,6 +21,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Form, Query
 from fastapi.responses import Response as FastAPIResponse
 from starlette.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, EmailStr
 import pdf_generator
 from email_service import send_email, render_otp_email, render_password_changed_email
@@ -73,11 +74,12 @@ supabase_key = os.environ.get('SUPABASE_KEY')
 # Optional explicit service-role key for privileged RPCs (DO NOT commit this value)
 supabase_service_key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
 
+_shared_timeout = httpx.Timeout(30.0, connect=10.0)
+_shared_transport = httpx.HTTPTransport(retries=3)
+
 def get_supabase_client(token: Optional[str] = None, use_service_key: bool = False) -> Client:
-    # 30 second timeouts, 3 retry transport for network resilience
-    timeout = httpx.Timeout(30.0, connect=10.0)
-    transport = httpx.HTTPTransport(retries=3)
-    httpx_client = httpx.Client(timeout=timeout, transport=transport)
+    # Use shared transport connection pool for network resilience and TCP reuse
+    httpx_client = httpx.Client(timeout=_shared_timeout, transport=_shared_transport)
     
     headers = {}
     if token:
@@ -7240,3 +7242,4 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)

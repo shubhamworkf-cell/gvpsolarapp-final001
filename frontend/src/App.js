@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, lazy, Suspense } from "react";
 import "@/App.css";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
@@ -6,31 +6,43 @@ dayjs.extend(relativeTime);
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "sonner";
-import Login from "@/pages/Login";
-import Register from "@/pages/Register";
 import Layout from "@/components/Layout";
-import Dashboard from "@/pages/Dashboard";
-import Clients from "@/pages/Clients";
-import ClientNew from "@/pages/ClientNew";
-import ClientDetail from "@/pages/ClientDetail";
-import Team from "@/pages/Team";
-import Profile from "@/pages/Profile";
-import Notifications from "@/pages/Notifications";
-import ActivityLog from "@/pages/ActivityLog";
-import ProjectExecution from "@/pages/ProjectExecution";
-import TaskPortal from "@/pages/TaskPortal";
-import Inventory from "@/pages/Inventory";
-import DocumentTemplates from "@/pages/DocumentTemplates";
-import Quotation from "@/pages/Quotation";
-import TaxInvoice from "@/pages/TaxInvoice";
-import DeliveryBill from "@/pages/DeliveryBill";
-import SalesDocuments from "@/pages/SalesDocuments";
-import ClientData from "@/pages/ClientData";
-import ClientDataDetail from "@/pages/ClientDataDetail";
-import Complaints from "@/pages/Complaints";
-import ComplaintDetail from "@/pages/ComplaintDetail";
-import ForgotPassword from "@/pages/ForgotPassword";
-import Reports from "@/pages/Reports";
+
+// Eager load Login for instant auth rendering
+import Login from "@/pages/Login";
+
+// Lazy load secondary pages for route code-splitting
+const Register = lazy(() => import("@/pages/Register"));
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const Clients = lazy(() => import("@/pages/Clients"));
+const ClientNew = lazy(() => import("@/pages/ClientNew"));
+const ClientDetail = lazy(() => import("@/pages/ClientDetail"));
+const Team = lazy(() => import("@/pages/Team"));
+const Profile = lazy(() => import("@/pages/Profile"));
+const Notifications = lazy(() => import("@/pages/Notifications"));
+const ActivityLog = lazy(() => import("@/pages/ActivityLog"));
+const ProjectExecution = lazy(() => import("@/pages/ProjectExecution"));
+const TaskPortal = lazy(() => import("@/pages/TaskPortal"));
+const Inventory = lazy(() => import("@/pages/Inventory"));
+const DocumentTemplates = lazy(() => import("@/pages/DocumentTemplates"));
+const Quotation = lazy(() => import("@/pages/Quotation"));
+const TaxInvoice = lazy(() => import("@/pages/TaxInvoice"));
+const DeliveryBill = lazy(() => import("@/pages/DeliveryBill"));
+const SalesDocuments = lazy(() => import("@/pages/SalesDocuments"));
+const ClientData = lazy(() => import("@/pages/ClientData"));
+const ClientDataDetail = lazy(() => import("@/pages/ClientDataDetail"));
+const Complaints = lazy(() => import("@/pages/Complaints"));
+const ComplaintDetail = lazy(() => import("@/pages/ComplaintDetail"));
+const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
+const Reports = lazy(() => import("@/pages/Reports"));
+
+function PageFallback() {
+  return (
+    <div className="flex items-center justify-center min-h-[40vh] p-8 text-slate-400 text-sm font-medium">
+      Loading...
+    </div>
+  );
+}
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -93,7 +105,7 @@ function MainTabShell({ activeTab }) {
   }, [activeTab]);
 
   return (
-    <>
+    <Suspense fallback={<PageFallback />}>
       <div style={{ display: activeTab === "dashboard" ? "block" : "none" }}>
         {visited.dashboard && <Dashboard />}
       </div>
@@ -115,7 +127,7 @@ function MainTabShell({ activeTab }) {
       <div style={{ display: activeTab === "reports" ? "block" : "none" }}>
         {visited.reports && <Reports />}
       </div>
-    </>
+    </Suspense>
   );
 }
 
@@ -124,33 +136,35 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Toaster position="top-right" richColors />
-        <Routes>
-          <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
-          <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
-          <Route path="/forgot-password" element={<PublicOnly><ForgotPassword /></PublicOnly>} />
-          <Route path="/dashboard" element={<Protected><MainTabShell activeTab="dashboard" /></Protected>} />
-          <Route path="/clients" element={<Protected><MainTabShell activeTab="clients" /></Protected>} />
-          <Route path="/clients/new" element={<Protected><ClientNew /></Protected>} />
-          <Route path="/clients/:id" element={<Protected><ClientDetail /></Protected>} />
-          <Route path="/team" element={<Protected><Team /></Protected>} />
-          <Route path="/profile" element={<Protected><Profile /></Protected>} />
-          <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
-          <Route path="/activity" element={<Protected><ActivityLog /></Protected>} />
-          <Route path="/projects" element={<Protected><MainTabShell activeTab="projects" /></Protected>} />
-          <Route path="/tasks" element={<Protected><MainTabShell activeTab="tasks" /></Protected>} />
-          <Route path="/inventory" element={<Protected><MainTabShell activeTab="inventory" /></Protected>} />
-          <Route path="/templates" element={<Protected><DocumentTemplates /></Protected>} />
-          <Route path="/quotation" element={<Protected><PermissionRoute page="sales_documents"><Quotation /></PermissionRoute></Protected>} />
-          <Route path="/tax-invoice" element={<Protected><PermissionRoute page="sales_documents"><TaxInvoice /></PermissionRoute></Protected>} />
-          <Route path="/delivery-bill" element={<Protected><PermissionRoute page="sales_documents"><DeliveryBill /></PermissionRoute></Protected>} />
-          <Route path="/sales-documents" element={<Protected><PermissionRoute page="sales_documents"><SalesDocuments /></PermissionRoute></Protected>} />
-          <Route path="/reports" element={<Protected><MainTabShell activeTab="reports" /></Protected>} />
-          <Route path="/client-data" element={<Protected><MainTabShell activeTab="client-data" /></Protected>} />
-          <Route path="/client-data/:id" element={<Protected><ClientDataDetail /></Protected>} />
-          <Route path="/complaints" element={<Protected><Complaints /></Protected>} />
-          <Route path="/complaints/:id" element={<Protected><ComplaintDetail /></Protected>} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
+            <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
+            <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
+            <Route path="/forgot-password" element={<PublicOnly><ForgotPassword /></PublicOnly>} />
+            <Route path="/dashboard" element={<Protected><MainTabShell activeTab="dashboard" /></Protected>} />
+            <Route path="/clients" element={<Protected><MainTabShell activeTab="clients" /></Protected>} />
+            <Route path="/clients/new" element={<Protected><ClientNew /></Protected>} />
+            <Route path="/clients/:id" element={<Protected><ClientDetail /></Protected>} />
+            <Route path="/team" element={<Protected><Team /></Protected>} />
+            <Route path="/profile" element={<Protected><Profile /></Protected>} />
+            <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
+            <Route path="/activity" element={<Protected><ActivityLog /></Protected>} />
+            <Route path="/projects" element={<Protected><MainTabShell activeTab="projects" /></Protected>} />
+            <Route path="/tasks" element={<Protected><MainTabShell activeTab="tasks" /></Protected>} />
+            <Route path="/inventory" element={<Protected><MainTabShell activeTab="inventory" /></Protected>} />
+            <Route path="/templates" element={<Protected><DocumentTemplates /></Protected>} />
+            <Route path="/quotation" element={<Protected><PermissionRoute page="sales_documents"><Quotation /></PermissionRoute></Protected>} />
+            <Route path="/tax-invoice" element={<Protected><PermissionRoute page="sales_documents"><TaxInvoice /></PermissionRoute></Protected>} />
+            <Route path="/delivery-bill" element={<Protected><PermissionRoute page="sales_documents"><DeliveryBill /></PermissionRoute></Protected>} />
+            <Route path="/sales-documents" element={<Protected><PermissionRoute page="sales_documents"><SalesDocuments /></PermissionRoute></Protected>} />
+            <Route path="/reports" element={<Protected><MainTabShell activeTab="reports" /></Protected>} />
+            <Route path="/client-data" element={<Protected><MainTabShell activeTab="client-data" /></Protected>} />
+            <Route path="/client-data/:id" element={<Protected><ClientDataDetail /></Protected>} />
+            <Route path="/complaints" element={<Protected><Complaints /></Protected>} />
+            <Route path="/complaints/:id" element={<Protected><ComplaintDetail /></Protected>} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );
