@@ -3877,15 +3877,60 @@ async def create_employee(data: EmployeeIn, user=Depends(get_current_user)):
 async def update_employee(emp_id: str, data: EmployeeUpdate, user=Depends(get_current_user)):
     if user["role"] != "Admin":
         raise HTTPException(status_code=403, detail="Admin only")
+
+    # 1. Fetch current user profile to obtain old email and verify company scoping
+    old_user = await db.users.find_one({"id": emp_id, "company_id": user["company_id"]})
+    if not old_user:
+        try:
+            rpc_res = get_rpc_client().rpc("get_user_by_id", {"p_user_id": emp_id}).execute()
+            if rpc_res.data and isinstance(rpc_res.data, list) and len(rpc_res.data) > 0:
+                old_user = rpc_res.data[0]
+        except Exception:
+            pass
+
+    old_email = (old_user.get("email") or "").lower() if old_user else ""
     update = {k: v for k, v in data.model_dump().items() if v is not None}
-    if "password" in update:
-        update.pop("password", None)
+
+    # Handle password update
+    new_password = update.pop("password", None)
+
+    # Check email change & uniqueness
+    new_email = (update.get("email") or old_email).lower()
+    if new_email and old_email and new_email != old_email:
+        existing = await db.users.find_one({"email": new_email})
+        if existing and existing.get("id") != emp_id:
+            raise HTTPException(status_code=400, detail="Email is already used by another user")
+        update["email"] = new_email
+
+    # Update password tracking if new password provided
+    if new_password and new_email:
+        _test_temp_passwords[new_email] = new_password
+        if old_email and old_email != new_email:
+            _test_temp_passwords.pop(old_email, None)
+
+    # 2. Update public.users database record
     if update:
         await db.users.update_one({"id": emp_id, "company_id": user["company_id"]}, {"$set": update})
-    _cache_invalidate_user(emp_id)
-    await log_activity(user["company_id"], user["id"], user["name"], "Updated Employee", emp_id)
 
-    # 1. Fetch updated user via SECURITY DEFINER RPC to bypass RLS restrictions
+    # 3. Update related table references if email changed
+    if old_email and new_email and old_email != new_email:
+        try:
+            await db.password_reset_tokens.update_many({"email": old_email}, {"$set": {"email": new_email}})
+            await db.password_reset_otps.update_many({"email": old_email}, {"$set": {"email": new_email}})
+            _test_temp_passwords.pop(old_email, None)
+        except Exception as exc:
+            logger.warning(f"Warning updating email in related tables: {exc}")
+
+    # 4. Invalidate auth caches immediately
+    _cache_invalidate_user(emp_id)
+    if old_email:
+        _cache_invalidate_user(old_email)
+    if new_email:
+        _cache_invalidate_user(new_email)
+
+    await log_activity(user["company_id"], user["id"], user["name"], "Updated Employee", update.get("name") or emp_id)
+
+    # 5. Fetch updated user via SECURITY DEFINER RPC to bypass RLS restrictions
     try:
         rpc_res = get_rpc_client().rpc("get_user_by_id", {"p_user_id": emp_id}).execute()
         if rpc_res.data and isinstance(rpc_res.data, list) and len(rpc_res.data) > 0:
@@ -3896,14 +3941,14 @@ async def update_employee(emp_id: str, data: EmployeeUpdate, user=Depends(get_cu
     except Exception as exc:
         logger.warning(f"get_user_by_id RPC failed during update_employee: {exc}")
 
-    # 2. Fallback to direct DB lookup
+    # Fallback response object
     res_user = await db.users.find_one({"id": emp_id}, {"_id": 0, "password_hash": 0})
     if not res_user:
         res_user = {
             "id": emp_id,
             "company_id": user["company_id"],
             "name": update.get("name") or "",
-            "email": update.get("email") or "",
+            "email": new_email or old_email,
             "mobile": update.get("mobile") or "",
             "role": update.get("role") or "",
             "status": update.get("status") or "Active",
