@@ -1,0 +1,32 @@
+# Exclude frontend, node_modules, and dev files from Vercel deployment bundles
+frontend/node_modules/
+frontend/build/
+node_modules/
+
+# Python Virtual environments & cache
+.venv/
+venv/
+env/
+backend/.venv/
+backend/venv/
+__pycache__/
+backend/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+
+# Local storage, logs, backups, temporary files & test reports
+backend/local_storage/
+uploads/
+logs/
+*.log
+*.tmp
+*.bak
+*.keystore
+test_reports/
+memory/
+.DS_Store
+.git/
+.gitignore
