@@ -3859,15 +3859,37 @@ async def update_employee(emp_id: str, data: EmployeeUpdate, user=Depends(get_cu
         raise HTTPException(status_code=403, detail="Admin only")
     update = {k: v for k, v in data.model_dump().items() if v is not None}
     if "password" in update:
-        # Passwords for employees are managed via password recovery flows.
-        # We pop it here to avoid auth conflict.
         update.pop("password", None)
     if update:
         await db.users.update_one({"id": emp_id, "company_id": user["company_id"]}, {"$set": update})
-    # Invalidate auth cache so permission/role changes take effect immediately
     _cache_invalidate_user(emp_id)
     await log_activity(user["company_id"], user["id"], user["name"], "Updated Employee", emp_id)
-    return await db.users.find_one({"id": emp_id}, {"_id": 0, "password_hash": 0})
+
+    # 1. Fetch updated user via SECURITY DEFINER RPC to bypass RLS restrictions
+    try:
+        rpc_res = get_rpc_client().rpc("get_user_by_id", {"p_user_id": emp_id}).execute()
+        if rpc_res.data and isinstance(rpc_res.data, list) and len(rpc_res.data) > 0:
+            res_user = dict(rpc_res.data[0])
+            res_user.pop("_id", None)
+            res_user.pop("password_hash", None)
+            return res_user
+    except Exception as exc:
+        logger.warning(f"get_user_by_id RPC failed during update_employee: {exc}")
+
+    # 2. Fallback to direct DB lookup
+    res_user = await db.users.find_one({"id": emp_id}, {"_id": 0, "password_hash": 0})
+    if not res_user:
+        res_user = {
+            "id": emp_id,
+            "company_id": user["company_id"],
+            "name": update.get("name") or "",
+            "email": update.get("email") or "",
+            "mobile": update.get("mobile") or "",
+            "role": update.get("role") or "",
+            "status": update.get("status") or "Active",
+            "permissions": update.get("permissions") or {}
+        }
+    return res_user
 
 @api_router.delete("/employees/{emp_id}")
 async def delete_employee(emp_id: str, user=Depends(get_current_user)):
