@@ -3819,7 +3819,8 @@ async def create_employee(data: EmployeeIn, user=Depends(get_current_user)):
     if user["role"] != "Admin":
         raise HTTPException(status_code=403, detail="Admin only")
     email = data.email.lower()
-    if await db.users.find_one({"email": email}):
+    existing = await db.users.find_one({"email": email})
+    if existing and existing.get("company_id") == user["company_id"]:
         raise HTTPException(status_code=400, detail="Email already exists")
 
     # Create employee in Supabase Auth via SECURITY DEFINER RPC (auto-confirms email)
@@ -3833,9 +3834,21 @@ async def create_employee(data: EmployeeIn, user=Depends(get_current_user)):
     except Exception as e:
         logger.error(f"create_auth_user RPC failed for employee: {e}")
         err_msg = str(e).lower()
-        if "already" in err_msg or "duplicate" in err_msg or "unique" in err_msg:
-            raise HTTPException(status_code=400, detail="Email already registered in auth")
-        raise HTTPException(status_code=400, detail=f"Employee registration failed: {e}")
+        if "already" in err_msg or "duplicate" in err_msg or "unique" in err_msg or "23505" in err_msg:
+            # If email exists in auth.users but was deleted from public.users (i.e. re-registering deleted employee),
+            # attempt to lookup existing auth ID so registration succeeds without 400 error
+            try:
+                rpc_lookup = get_rpc_client().rpc("lookup_user_for_login", {
+                    "p_email": email,
+                    "p_mobile": email,
+                    "p_employee_id": email
+                }).execute()
+                if rpc_lookup.data and isinstance(rpc_lookup.data, list) and len(rpc_lookup.data) > 0:
+                    emp_uid = rpc_lookup.data[0]["id"]
+            except Exception as lookup_err:
+                logger.warning(f"Failed auth user lookup on re-registration: {lookup_err}")
+        else:
+            raise HTTPException(status_code=400, detail=f"Employee registration failed: {e}")
 
     emp_id = data.employee_id or f"EMP-{datetime.now(timezone.utc).year}-{uuid.uuid4().hex[:6].upper()}"
     perms = data.permissions or default_perms_for_role(data.role)
@@ -3846,7 +3859,14 @@ async def create_employee(data: EmployeeIn, user=Depends(get_current_user)):
         "role": data.role, "user_type": "employee", "status": data.status, "permissions": perms,
         "created_at": now_iso(),
     }
-    await db.users.insert_one(doc)
+    try:
+        await db.users.insert_one(doc)
+    except Exception as insert_err:
+        err_str = str(insert_err).lower()
+        if "duplicate" in err_str or "23505" in err_str or "users_pkey" in err_str:
+            await db.users.update_one({"id": emp_uid}, {"$set": doc})
+        else:
+            raise insert_err
     await log_activity(user["company_id"], user["id"], user["name"], "Added Employee", data.name)
     await push_notification(user["company_id"], "admin", "New Employee Added", data.name)
     doc.pop("_id", None)
@@ -3895,9 +3915,46 @@ async def update_employee(emp_id: str, data: EmployeeUpdate, user=Depends(get_cu
 async def delete_employee(emp_id: str, user=Depends(get_current_user)):
     if user["role"] != "Admin":
         raise HTTPException(status_code=403, detail="Admin only")
-    await db.users.delete_one({"id": emp_id, "company_id": user["company_id"], "user_type": "employee"})
-    _cache_invalidate_user(emp_id)  # Remove from auth cache immediately
-    await log_activity(user["company_id"], user["id"], user["name"], "Deleted Employee", emp_id)
+
+    # 1. Look up target employee to verify user_type and obtain email
+    emp = await db.users.find_one({"id": emp_id, "company_id": user["company_id"]})
+    if not emp:
+        try:
+            rpc_res = get_rpc_client().rpc("get_user_by_id", {"p_user_id": emp_id}).execute()
+            if rpc_res.data and isinstance(rpc_res.data, list) and len(rpc_res.data) > 0:
+                emp = rpc_res.data[0]
+        except Exception:
+            pass
+
+    if emp and emp.get("user_type") == "owner":
+        raise HTTPException(status_code=400, detail="Cannot delete company owner account")
+
+    emp_email = emp.get("email", "").lower() if emp else ""
+    emp_name = emp.get("name", "") if emp else emp_id
+
+    # 2. Delete child records referencing this employee
+    try:
+        await db.activity_logs.delete_many({"company_id": user["company_id"], "$or": [{"user_id": emp_id}, {"target": emp_id}]})
+        await db.notifications.delete_many({"company_id": user["company_id"], "to_user_id": emp_id})
+        if emp_email:
+            await db.password_reset_tokens.delete_many({"email": emp_email})
+            await db.password_reset_otps.delete_many({"email": emp_email})
+            _test_temp_passwords.pop(emp_email, None)
+        await db.employees.delete_many({"id": emp_id, "company_id": user["company_id"]})
+    except Exception as exc:
+        logger.warning(f"Child record cleanup warning during employee deletion: {exc}")
+
+    # 3. Permanently remove employee from public.users table
+    await db.users.delete_one({"id": emp_id, "company_id": user["company_id"], "user_type": {"$ne": "owner"}})
+    if emp_email:
+        await db.users.delete_many({"email": emp_email, "company_id": user["company_id"], "user_type": {"$ne": "owner"}})
+
+    # 4. Invalidate auth cache immediately
+    _cache_invalidate_user(emp_id)
+    if emp_email:
+        _cache_invalidate_user(emp_email)
+
+    await log_activity(user["company_id"], user["id"], user["name"], "Deleted Employee", emp_name)
     return {"ok": True}
 
 # ---------- Notifications ----------
