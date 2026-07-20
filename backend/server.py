@@ -5201,7 +5201,7 @@ async def set_inv_defaults(data: InventoryDefaults, user=Depends(get_current_use
 # ---------- Inventory History (combined) ----------
 @api_router.get("/inventory/history")
 async def inv_history(
-    request: Request,
+    request: Request = None,
     user=Depends(get_current_user),
     type: Optional[str] = None,  # inward | outward | None
     product: Optional[str] = None,
@@ -5325,7 +5325,7 @@ async def inv_history(
 
 @api_router.get("/inventory/history.csv")
 async def inv_history_csv(
-    request: Request,
+    request: Request = None,
     user=Depends(get_current_user),
     type: Optional[str] = None,
     product: Optional[str] = None,
