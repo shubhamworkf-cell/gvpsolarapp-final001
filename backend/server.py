@@ -6194,6 +6194,13 @@ async def root():
     return {"message": "Solarix API", "version": "1.0"}
 
 
+@api_router.get("/health")
+@app.get("/health")
+@app.get("/api/health")
+async def health_check():
+    return {"status": "ok", "service": "GVP Solar CRM API", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
 # ---------- Sprint 3: DOCX Template Engine ----------
 import docx_template_engine as docx_engine
 
@@ -7228,7 +7235,8 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173').split(','),
+    allow_origins=os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173').split(',') if os.environ.get('CORS_ORIGINS') else ["*"],
+    allow_origin_regex=r"https://.*\.vercel\.app|http://localhost:.*|http://127\.0\.0\.1:.*",
     allow_methods=["*"],
     allow_headers=["*"],
 )
