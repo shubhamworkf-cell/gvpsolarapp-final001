@@ -3,6 +3,8 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, fileUrl } from "@/lib/api";
 import { useClientDataDetail, useLedger } from "@/hooks/useClientDataHooks";
+import { useDeleteClient } from "@/hooks/useClients";
+import { usePermission } from "@/lib/permissions";
 import { useEmployeeList } from "@/hooks/useTeam";
 
 const STAGES = [
@@ -34,7 +36,7 @@ import {
   ArrowLeft, Phone, MessageCircle, Download, MapPin, User, FileImage, Image as ImageIcon,
   Plus, Save, Eye, EyeOff, ExternalLink, Calendar, Wrench, AlertTriangle, Paperclip,
   Clock, CheckCircle2, ChevronRight, Activity, Megaphone, ClipboardList,
-  Truck, FileText, Gauge, Package, ScrollText, Check
+  Truck, FileText, Gauge, Package, ScrollText, Check, Trash2
 } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
@@ -119,6 +121,16 @@ export default function ClientDataDetail() {
   const outward = clientData?.outward || [];
   const activityLogs = clientData?.activity_logs || [];
 
+  const canDelete = usePermission("clients", "delete");
+  const deleteClientMutation = useDeleteClient();
+
+  const handleDeleteClient = () => {
+    if (!window.confirm("Are you sure you want to delete this client? This action cannot be undone.")) return;
+    deleteClientMutation.mutate(id, {
+      onSuccess: () => navigate("/client-data"),
+    });
+  };
+
   const handleInvalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["client-data", id] });
   };
@@ -201,6 +213,17 @@ export default function ClientDataDetail() {
                 </Button>
               </a>
             </>
+          )}
+          {canDelete && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-red-300 text-red-700 hover:bg-red-50"
+              onClick={handleDeleteClient}
+              data-testid="delete-client-btn"
+            >
+              <Trash2 className="w-4 h-4 mr-1.5" /> Delete Client
+            </Button>
           )}
         </div>
       </div>

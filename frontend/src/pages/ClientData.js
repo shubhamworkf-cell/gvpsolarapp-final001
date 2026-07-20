@@ -2,6 +2,8 @@ import React, { useMemo, useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import api, { formatApiError } from "@/lib/api";
 import { useClientDataList, useClientDataStats } from "@/hooks/useClientDataHooks";
+import { useDeleteClient } from "@/hooks/useClients";
+import { usePermission } from "@/lib/permissions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import {
   Users2, Activity, AlertCircle, Ticket as TicketIcon, CheckCircle2, Zap, Search, Filter,
-  Download, ChevronRight, Phone, MessageCircle, Wifi, WifiOff, Wrench, Settings,
+  Download, ChevronRight, Phone, MessageCircle, Wifi, WifiOff, Wrench, Settings, Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
@@ -67,6 +69,14 @@ export default function ClientData() {
   const [showFilters, setShowFilters] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 25;
+
+  const canDelete = usePermission("clients", "delete");
+  const deleteClientMutation = useDeleteClient();
+
+  const handleDeleteClient = (id) => {
+    if (!window.confirm("Are you sure you want to delete this client?")) return;
+    deleteClientMutation.mutate(id);
+  };
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -262,6 +272,9 @@ export default function ClientData() {
                     <div className="flex items-center justify-center gap-1">
                       <QuickAction icon={Phone} label="Call" color="text-blue-600" onClick={() => callClient(c.mobile)} testid={`call-${c.id}`} />
                       <QuickAction icon={MessageCircle} label="WhatsApp" color="text-emerald-600" onClick={() => whatsApp(c.mobile, c.full_name)} testid={`wa-${c.id}`} />
+                      {canDelete && (
+                        <QuickAction icon={Trash2} label="Delete Client" color="text-red-600" onClick={() => handleDeleteClient(c.id)} testid={`delete-client-${c.id}`} />
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-3">
