@@ -4366,10 +4366,36 @@ class InventoryDefaults(BaseModel):
     inward: Optional[Dict[str, Any]] = None
     outward: Optional[Dict[str, Any]] = None
 
+def norm_str(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    val = str(s).strip()
+    val = re.sub(r'\s*[xX×\*]\s*', '×', val)
+    return val.strip()
+
+def norm_product_name(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    return norm_str(s).upper()
+
+def norm_unit(u: Optional[str]) -> str:
+    if not u:
+        return "Nos"
+    val = str(u).strip().upper()
+    if val in ["MTR", "MTRS", "METER", "METERS"]:
+        return "Mtr"
+    if val in ["NOS", "NO", "NUMBERS", "NUMBER"]:
+        return "Nos"
+    if val in ["SET", "SETS"]:
+        return "Set"
+    if val in ["KG", "KGS", "KILOGRAM"]:
+        return "Kg"
+    return str(u).strip().capitalize() or "Nos"
+
 async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "Nos", min_stock: float = 0, brand: str = ""):
-    n = (name or "").strip().upper()
-    s = (size or "").strip()
-    u = (unit or "Nos").strip()
+    n = norm_product_name(name)
+    s = norm_str(size)
+    u = norm_unit(unit)
     b = (brand or "").strip()
     if not n: return None
     
@@ -4378,9 +4404,18 @@ async def ensure_product(company_id: str, name: str, size: str = "", category: s
         query["brand"] = b
 
     existing = await db.products.find_one(query)
-    if not existing and b:
-        # Fall back to checking without brand if brand was not previously stored on product master
+    if not existing:
         existing = await db.products.find_one({"company_id": company_id, "name": n, "size": s, "unit": u})
+
+    if not existing:
+        try:
+            all_prods = await db.products.find({"company_id": company_id, "name": n}).to_list(1000)
+            for p in all_prods:
+                if norm_str(p.get("size")) == s and norm_unit(p.get("unit")) == u:
+                    existing = p
+                    break
+        except Exception:
+            pass
 
     if existing:
         patch = {}
@@ -4463,30 +4498,34 @@ async def inv_stats(user=Depends(get_current_user)):
     for x in in_agg_list:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")), norm_unit(_id.get("unit")))
         else:
-            p_k = (str(_id).strip().upper(), "", "Nos")
+            p_k = (norm_product_name(str(_id)), "", "Nos")
         in_map[p_k] = in_map.get(p_k, 0) + x["qty"]
 
     out_map = {}
     for x in out_agg_list:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")), norm_unit(_id.get("unit")))
         else:
-            p_k = (str(_id).strip().upper(), "", "Nos")
+            p_k = (norm_product_name(str(_id)), "", "Nos")
         out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
+
+    all_specs = set(in_map.keys()) | set(out_map.keys()) | {
+        (norm_product_name(p["name"]), norm_str(p.get("size")), norm_unit(p.get("unit")))
+        for p in prods_list
+    }
 
     low = 0
     total_stock_qty = 0.0
-    for p in prods_list:
-        p_k = (p["name"].strip().upper(), (p.get("size") or "").strip(), (p.get("unit") or "Nos").strip())
+    for p_k in all_specs:
         bal = in_map.get(p_k, 0) - out_map.get(p_k, 0)
         total_stock_qty += max(bal, 0)
-        if bal <= float(p.get("min_stock") or 5):
+        if bal <= 5:
             low += 1
     return {
-        "total_products": products_count, "total_stock_qty": round(total_stock_qty, 2),
+        "total_products": len(all_specs), "total_stock_qty": round(total_stock_qty, 2),
         "low_stock": low, "in_today": in_today, "out_today": out_today,
         "pending_requests": pending_req, "stock_value": 0,
     }
@@ -4590,24 +4629,24 @@ async def list_products(user=Depends(get_current_user)):
     for x in in_agg:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")), norm_unit(_id.get("unit")))
         else:
-            p_k = (str(_id).strip().upper(), "", "Nos")
+            p_k = (norm_product_name(str(_id)), "", "Nos")
         in_map[p_k] = in_map.get(p_k, 0) + x["qty"]
 
     out_map = {}
     for x in out_agg:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")), norm_unit(_id.get("unit")))
         else:
-            p_k = (str(_id).strip().upper(), "", "Nos")
+            p_k = (norm_product_name(str(_id)), "", "Nos")
         out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
 
     # Auto-heal: Ensure any product specification present in History exists in Product Master items
     all_history_keys = set(in_map.keys()) | set(out_map.keys())
     existing_items_keys = {
-        (p["name"].strip().upper(), (p.get("size") or "").strip(), (p.get("unit") or "Nos").strip())
+        (norm_product_name(p["name"]), norm_str(p.get("size")), norm_unit(p.get("unit")))
         for p in items
     }
     missing_keys = all_history_keys - existing_items_keys
@@ -4617,16 +4656,17 @@ async def list_products(user=Depends(get_current_user)):
                 try:
                     new_prod = await ensure_product(cid, m_name, size=m_size, unit=m_unit)
                     if new_prod and isinstance(new_prod, dict):
-                        items.append(new_prod)
+                        if not any(it.get("id") == new_prod.get("id") for it in items):
+                            items.append(new_prod)
                 except Exception as e:
                     logger.warning(f"Auto-heal product creation failed for {m_name}: {e}")
 
     local_rates = _load_local_rates()
     local_high_values = _load_local_high_value_products()
     for p in items:
-        p_name = p["name"].strip().upper()
-        p_size = (p.get("size") or "").strip()
-        p_unit = (p.get("unit") or "Nos").strip()
+        p_name = norm_product_name(p["name"])
+        p_size = norm_str(p.get("size"))
+        p_unit = norm_unit(p.get("unit"))
         k = (p_name, p_size, p_unit)
         p["rate"] = local_rates.get(p_name, float(p.get("rate") or 0.0))
         p["high_value_goods"] = local_high_values.get(p_name, False)
@@ -4642,7 +4682,7 @@ async def list_products(user=Depends(get_current_user)):
             p["stock_status"] = "Normal"
     hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
     def _is_hv_prod(p):
-        p_name = p["name"].strip().upper()
+        p_name = norm_product_name(p["name"])
         if p.get("high_value_goods") or p.get("high_value_asset"):
             return True
         if any(kw in p_name for kw in hv_keywords):
