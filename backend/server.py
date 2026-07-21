@@ -102,32 +102,53 @@ supabase_key = os.environ.get('SUPABASE_KEY')
 # Optional explicit service-role key for privileged RPCs (DO NOT commit this value)
 supabase_service_key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
 
-_shared_timeout = httpx.Timeout(30.0, connect=10.0)
-_shared_transport = httpx.HTTPTransport(retries=3)
+# Tight timeout — Vercel functions have a 10-second hard limit; fail fast, don't retry.
+_shared_timeout = httpx.Timeout(8.0, connect=5.0)
+# retries=0 — each retry triples the timeout; on Vercel this guarantees a 504.
+_shared_transport = httpx.HTTPTransport(retries=0)
 
-def get_supabase_client(token: Optional[str] = None, use_service_key: bool = False) -> Client:
-    # Use shared transport connection pool for network resilience and TCP reuse
+# ── Supabase client cache ────────────────────────────────────────────────────
+# Creating a new httpx.Client + supabase_create_client on EVERY request is very
+# expensive (new TCP connection pool each time). Cache clients keyed by token.
+import functools
+_client_cache: Dict[Optional[str], Any] = {}
+_client_cache_lock = threading.Lock()
+_MAX_CLIENT_CACHE = 64  # prevent unbounded growth
+
+def get_supabase_client(token: Optional[str] = None, use_service_key: bool = False):
+    cache_key = (token, use_service_key)
+    with _client_cache_lock:
+        if cache_key in _client_cache:
+            return _client_cache[cache_key]
+
     httpx_client = httpx.Client(timeout=_shared_timeout, transport=_shared_transport)
-    
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-        
     key = supabase_service_key if use_service_key else supabase_key
-    
     opts = ClientOptions(
         httpx_client=httpx_client,
-        postgrest_client_timeout=30.0,
-        storage_client_timeout=30,
-        function_client_timeout=30,
+        postgrest_client_timeout=8.0,
+        storage_client_timeout=8,
+        function_client_timeout=8,
         headers=headers
     )
-    return supabase_create_client(supabase_url, key or "", options=opts)
+    client = supabase_create_client(supabase_url, key or "", options=opts)
+    with _client_cache_lock:
+        if len(_client_cache) >= _MAX_CLIENT_CACHE:
+            # Evict oldest entry
+            try:
+                oldest = next(iter(_client_cache))
+                del _client_cache[oldest]
+            except StopIteration:
+                pass
+        _client_cache[cache_key] = client
+    return client
 
 # Default client (used for request-scoped and anon operations)
-default_supabase: Client | None = get_supabase_client() if supabase_key else None
+default_supabase = get_supabase_client() if supabase_key else None
 # Service client (use for admin RPCs that require elevated privileges)
-service_supabase: Client | None = get_supabase_client(use_service_key=True) if supabase_service_key else None
+service_supabase = get_supabase_client(use_service_key=True) if supabase_service_key else None
 
 _supabase_var: contextvars.ContextVar[Client | None] = contextvars.ContextVar("supabase", default=None)
 
@@ -1169,16 +1190,23 @@ async def activity_logs_cleanup_task():
     """Background task that runs a daily cleanup of activity logs older than 30 days."""
     logger.info("Activity logs cleanup task initialized")
     while True:
+        # CRITICAL: must await sleep FIRST — without this the while True loop
+        # is a tight infinite loop that permanently blocks the event loop.
+        await asyncio.sleep(86400)  # Run once every 24 hours
         try:
             from datetime import datetime, timedelta, timezone
             thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
             client_to_use = service_supabase if service_supabase is not None else default_supabase
             if client_to_use:
-                res = client_to_use.table("activity_logs").delete().lt("created_at", thirty_days_ago).execute()
+                res = await asyncio.to_thread(
+                    lambda: client_to_use.table("activity_logs").delete().lt("created_at", thirty_days_ago).execute()
+                )
                 deleted_count = len(res.data) if res.data else 0
                 logger.info(f"Scheduled Activity Logs Cleanup: Deleted {deleted_count} logs older than 30 days.")
             else:
                 logger.warning("Activity logs cleanup skipped: No Supabase client configured.")
+        except asyncio.CancelledError:
+            break
         except Exception as e:
             logger.error(f"Scheduled Activity Logs Cleanup failed: {e}", exc_info=True)
 async def auto_migrate_product_variants():
@@ -1231,48 +1259,44 @@ async def auto_migrate_product_variants():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_storage()
-    cleanup_task = asyncio.create_task(activity_logs_cleanup_task())
+    # REMOVED: init_storage() — made 5 synchronous HTTP calls to Supabase Storage
+    # on every cold start (each returning 400 "already exists"), wasting 5+ seconds.
+    # Storage buckets are created lazily on first use instead.
+
+    # REMOVED: await auto_migrate_product_variants() — fetched up to 200,000 rows
+    # and ran ensure_product() for every unique (company, product, size, unit) tuple
+    # on every cold start. Now runs as a one-time background task 30s after startup.
+
+    # Cleanup task starts AFTER yield so it doesn't block startup
+    cleanup_task = None
+    migrate_task = None
     try:
-        await db.users.create_index("email", unique=True)
-        await db.users.create_index("mobile")
-        await db.clients.create_index("company_id")
-        await db.notifications.create_index([("company_id", 1), ("created_at", -1)])
-        await db.activity_logs.create_index([("company_id", 1), ("created_at", -1)])
-        await db.task_updates.create_index([("task_id", 1), ("created_at", -1)])
-        await db.complaints.create_index([("company_id", 1), ("created_at", -1)])
-        await db.complaints.create_index([("company_id", 1), ("status", 1)])
-        await db.complaint_comments.create_index([("complaint_id", 1), ("created_at", 1)])
-        await db.complaint_audit.create_index([("complaint_id", 1), ("created_at", -1)])
-        await db.password_reset_otps.create_index([("email", 1), ("created_at", -1)])
-        await db.password_reset_otps.create_index("expires_at")
-        await db.password_reset_tokens.create_index("token", unique=True)
-        await db.password_reset_tokens.create_index("expires_at")
-        await db.inward_entries.create_index([("company_id", 1), ("client_id", 1), ("date", -1)])
-        await db.inward_entries.create_index([("company_id", 1), ("product", 1), ("date", -1)])
-        await db.outward_entries.create_index([("company_id", 1), ("client_id", 1), ("date", -1)])
-        await db.outward_entries.create_index([("company_id", 1), ("product", 1), ("date", -1)])
-        await db.tasks.create_index([("company_id", 1), ("assigned_to", 1), ("status", 1)])
-        await db.tasks.create_index([("company_id", 1), ("client_id", 1), ("status", 1)])
-        await db.material_requests.create_index([("company_id", 1), ("requested_by", 1), ("status", 1)])
-        await db.material_requests.create_index([("company_id", 1), ("client_id", 1), ("updated_at", -1)])
-        await db.verifications.create_index([("company_id", 1), ("status", 1), ("created_at", -1)])
-        await db.clients.create_index([("company_id", 1), ("status", 1), ("updated_at", -1)])
-        await db.clients.create_index([("company_id", 1), ("stages.Onboarding", 1), ("updated_at", -1)])
-        await db.service_tickets.create_index([("company_id", 1), ("client_id", 1)])
-        await db.inverter_monitoring.create_index([("company_id", 1), ("client_id", 1)])
-        await db.files.create_index([("company_id", 1), ("category", 1), ("created_at", -1)])
+        logger.info("Solarix backend started")
+        yield
+    finally:
+        if cleanup_task:
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
+        if migrate_task:
+            migrate_task.cancel()
+            try:
+                await migrate_task
+            except asyncio.CancelledError:
+                pass
+
+async def _deferred_startup_tasks():
+    """Non-critical startup tasks deferred so they don't block the first request."""
+    await asyncio.sleep(30)  # Wait 30s for the function to be warm before doing heavy work
+    try:
         await auto_migrate_product_variants()
+        logger.info("Deferred product variant migration complete")
     except Exception as e:
-        logger.warning(f"Index creation: {e}")
-    logger.info("Solarix backend started")
-    yield
-    cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
-    client.close()
+        logger.warning(f"Deferred migration error: {e}")
+    # Schedule daily cleanup — sleep first so the infinite loop starts harmlessly
+    await activity_logs_cleanup_task()
 
 app = FastAPI(lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
@@ -1315,14 +1339,19 @@ async def supabase_client_middleware(request: Request, call_next):
         _supabase_var.reset(token_token)
 
 # ---------- Storage ----------
+_storage_init_done = False
 def init_storage():
-    # Ensure buckets exist
+    """Lazily init storage buckets on first use — NOT during cold start."""
+    global _storage_init_done
+    if _storage_init_done:
+        return "supabase"
     buckets = ["customer-documents", "project-images", "vendor-documents", "generated-pdfs", "user-profile-images"]
     for b in buckets:
         try:
             supabase.storage.create_bucket(b, options={"public": b == "user-profile-images"})
         except Exception:
             pass
+    _storage_init_done = True
     return "supabase"
 
 def _map_path_to_bucket_and_name(path: str) -> tuple:
@@ -1939,9 +1968,14 @@ def _fetch_company_with_token_sync(company_id: str, token: str):
 
 @api_router.post("/auth/login")
 async def login(data: LoginIn, response: Response):
+    _t0 = time.time()
+    def _elapsed():
+        return round((time.time() - _t0) * 1000)
+
     raw = data.identifier.strip()
     ident = raw.lower()
     is_email = "@" in ident
+    logger.info(f"[LOGIN] START ident={ident[:20]} is_email={is_email}")
 
     token = ""
     refresh_token = ""
@@ -1950,6 +1984,7 @@ async def login(data: LoginIn, response: Response):
 
     if is_email:
         # ── Email login: authenticate directly with Supabase Auth (no RPC needed) ──
+        logger.info(f"[LOGIN] step=auth_start elapsed={_elapsed()}ms")
         try:
             auth_res = await asyncio.to_thread(_supabase_sign_in_sync, ident, data.password)
             if not auth_res or not auth_res.session:
@@ -1957,11 +1992,12 @@ async def login(data: LoginIn, response: Response):
             token = auth_res.session.access_token
             refresh_token = auth_res.session.refresh_token
             auth_user_id = auth_res.session.user.id if auth_res.session.user else None
+            logger.info(f"[LOGIN] step=auth_done user_id={auth_user_id} elapsed={_elapsed()}ms")
         except HTTPException:
             raise
         except Exception as e:
             err_str = str(e).lower()
-            logger.error(f"Supabase direct login failed for {ident}: {e}")
+            logger.error(f"[LOGIN] step=auth_failed elapsed={_elapsed()}ms err={e}")
             if "invalid login credentials" in err_str or "invalid_credentials" in err_str:
                 raise HTTPException(status_code=401, detail="Invalid credentials")
             if "email not confirmed" in err_str:
@@ -1969,9 +2005,12 @@ async def login(data: LoginIn, response: Response):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         # Fetch user profile using the user's own JWT (bypasses RLS without needing service key)
+        logger.info(f"[LOGIN] step=profile_lookup_start elapsed={_elapsed()}ms")
         if auth_user_id:
             try:
                 user = await asyncio.to_thread(_lookup_user_profile_with_token_sync, auth_user_id, token)
+                if user:
+                    logger.info(f"[LOGIN] step=profile_via_user_jwt elapsed={_elapsed()}ms")
             except Exception:
                 pass
             if not user:
@@ -1981,42 +2020,50 @@ async def login(data: LoginIn, response: Response):
                         lambda: get_rpc_client().rpc("get_user_by_id", {"p_user_id": auth_user_id}).execute()
                     )
                     user = rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
+                    if user:
+                        logger.info(f"[LOGIN] step=profile_via_service_rpc elapsed={_elapsed()}ms")
                 except Exception:
                     pass
             if not user:
-                # Last resort: try direct DB lookup via CollectionAdapter with user token context
+                # Last resort: try direct DB lookup via CollectionAdapter
                 try:
                     user = await db.users.find_one({"id": auth_user_id}, {"_id": 0})
+                    if user:
+                        logger.info(f"[LOGIN] step=profile_via_db elapsed={_elapsed()}ms")
                 except Exception:
                     pass
 
         if not user or not isinstance(user, dict):
-            logger.error(f"User profile not found after successful Supabase auth for id={auth_user_id}")
+            logger.error(f"[LOGIN] step=profile_not_found user_id={auth_user_id} elapsed={_elapsed()}ms")
             raise HTTPException(status_code=401, detail="User profile not found. Please contact admin.")
 
     else:
         # ── Employee ID / Mobile login: RPC lookup to get email, then sign in ──
+        logger.info(f"[LOGIN] step=rpc_lookup_start elapsed={_elapsed()}ms")
         try:
             user = await asyncio.to_thread(_lookup_user_for_login_sync, ident, raw)
+            logger.info(f"[LOGIN] step=rpc_lookup_done found={bool(user)} elapsed={_elapsed()}ms")
         except Exception as e:
-            logger.error(f"lookup_user_for_login RPC failed: {e}")
+            logger.error(f"[LOGIN] step=rpc_lookup_failed elapsed={_elapsed()}ms err={e}")
             user = None
 
         if not user or not isinstance(user, dict):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         email_for_auth = str(user.get("email") or "")
+        logger.info(f"[LOGIN] step=auth_start elapsed={_elapsed()}ms")
         try:
             auth_res = await asyncio.to_thread(_supabase_sign_in_sync, email_for_auth, data.password)
             if not auth_res or not auth_res.session:
                 raise HTTPException(status_code=401, detail="Invalid credentials")
             token = auth_res.session.access_token
             refresh_token = auth_res.session.refresh_token
+            logger.info(f"[LOGIN] step=auth_done elapsed={_elapsed()}ms")
         except HTTPException:
             raise
         except Exception as e:
             err_str = str(e).lower()
-            logger.error(f"Supabase login failed for {email_for_auth}: {e}")
+            logger.error(f"[LOGIN] step=auth_failed elapsed={_elapsed()}ms err={e}")
             if "invalid login credentials" in err_str or "invalid_credentials" in err_str:
                 raise HTTPException(status_code=401, detail="Invalid credentials")
             if "email not confirmed" in err_str:
@@ -2029,6 +2076,7 @@ async def login(data: LoginIn, response: Response):
     response.set_cookie("access_token", token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
 
     cid = user.get("company_id") or ""
+    logger.info(f"[LOGIN] step=company_lookup_start cid={cid} elapsed={_elapsed()}ms")
     company = _cache_get_company(cid)
     if not company and cid:
         try:
@@ -2040,11 +2088,12 @@ async def login(data: LoginIn, response: Response):
             if company:
                 _cache_put_company(cid, company)
         except Exception as e:
-            logger.error(f"Failed to fetch company during login: {e}")
+            logger.error(f"[LOGIN] step=company_failed elapsed={_elapsed()}ms err={e}")
             company = None
 
     # Proactively seed auth cache so subsequent requests (/auth/me, /clients, etc.) resolve instantly
     _cache_put_user(token, user)
+    logger.info(f"[LOGIN] COMPLETE elapsed={_elapsed()}ms")
     return {"token": token, "refresh_token": refresh_token, "user": serialize_user(user), "company": company}
 
 @api_router.post("/auth/logout")
