@@ -1,3 +1,4 @@
+from __future__ import annotations
 """PDF generators for Solarix documents."""
 from io import BytesIO
 from datetime import datetime, timezone

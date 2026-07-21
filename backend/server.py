@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dotenv import load_dotenv
 from pathlib import Path
 ROOT_DIR = Path(__file__).parent
@@ -1259,37 +1260,21 @@ async def auto_migrate_product_variants():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # REMOVED: init_storage() — made 5 synchronous HTTP calls to Supabase Storage
-    # on every cold start (each returning 400 "already exists"), wasting 5+ seconds.
-    # Storage buckets are created lazily on first use instead.
-
-    # REMOVED: await auto_migrate_product_variants() — fetched up to 200,000 rows
-    # and ran ensure_product() for every unique (company, product, size, unit) tuple
-    # on every cold start. Now runs as a one-time background task 30s after startup.
-
-    # Cleanup task starts AFTER yield so it doesn't block startup
-    cleanup_task = None
-    migrate_task = None
+    deferred_task = asyncio.create_task(_deferred_startup_tasks())
     try:
         logger.info("Solarix backend started")
         yield
     finally:
-        if cleanup_task:
-            cleanup_task.cancel()
+        if deferred_task:
+            deferred_task.cancel()
             try:
-                await cleanup_task
-            except asyncio.CancelledError:
-                pass
-        if migrate_task:
-            migrate_task.cancel()
-            try:
-                await migrate_task
+                await deferred_task
             except asyncio.CancelledError:
                 pass
 
 async def _deferred_startup_tasks():
     """Non-critical startup tasks deferred so they don't block the first request."""
-    await asyncio.sleep(30)  # Wait 30s for the function to be warm before doing heavy work
+    await asyncio.sleep(5)  # Wait 5s for the function to be warm before doing heavy work
     try:
         await auto_migrate_product_variants()
         logger.info("Deferred product variant migration complete")
@@ -3764,38 +3749,39 @@ async def _enrich_requests_with_stock_batch(requests_list: List[Dict[str, Any]],
         for it in (req.get("items") or []):
             name = (it.get("product") or "").strip().upper()
             size = (it.get("size") or "").strip()
+            unit = (it.get("unit") or "Nos").strip()
             if name:
-                product_keys.add((name, size))
+                product_keys.add((name, size, unit))
     
     if not product_keys:
         return requests_list
         
     in_sum_res = await db.inward_entries.aggregate([
         {"$match": {"company_id": company_id}},
-        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+        {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(10000)
     
     out_sum_res = await db.outward_entries.aggregate([
         {"$match": {"company_id": company_id, "status": {"$ne": "Pending"}}},
-        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+        {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(10000)
     
     in_map = {}
     for x in in_sum_res:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip())
+            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
         else:
-            p_k = (str(_id).strip().upper(), "")
+            p_k = (str(_id).strip().upper(), "", "Nos")
         in_map[p_k] = in_map.get(p_k, 0) + x["qty"]
 
     out_map = {}
     for x in out_sum_res:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip())
+            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
         else:
-            p_k = (str(_id).strip().upper(), "")
+            p_k = (str(_id).strip().upper(), "", "Nos")
         out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
     
     for req in requests_list:
@@ -3803,7 +3789,8 @@ async def _enrich_requests_with_stock_batch(requests_list: List[Dict[str, Any]],
         for it in (req.get("items") or []):
             name = (it.get("product") or "").strip().upper()
             size = (it.get("size") or "").strip()
-            k = (name, size)
+            unit = (it.get("unit") or "Nos").strip()
+            k = (name, size, unit)
             total_in = in_map.get(k, 0.0)
             total_out = out_map.get(k, 0.0)
             available_stock = max(0.0, total_in - total_out)
@@ -4356,21 +4343,42 @@ class InventoryDefaults(BaseModel):
     inward: Optional[Dict[str, Any]] = None
     outward: Optional[Dict[str, Any]] = None
 
-async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "Nos", min_stock: float = 0):
+async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "Nos", min_stock: float = 0, brand: str = ""):
     n = (name or "").strip().upper()
     s = (size or "").strip()
     u = (unit or "Nos").strip()
+    b = (brand or "").strip()
     if not n: return None
-    existing = await db.products.find_one({"company_id": company_id, "name": n, "size": s, "unit": u})
+    
+    query: Dict[str, Any] = {"company_id": company_id, "name": n, "size": s, "unit": u}
+    if b:
+        query["brand"] = b
+
+    existing = await db.products.find_one(query)
+    if not existing and b:
+        # Fall back to checking without brand if brand was not previously stored on product master
+        existing = await db.products.find_one({"company_id": company_id, "name": n, "size": s, "unit": u})
+
     if existing:
         patch = {}
         if not existing.get("category") and category: patch["category"] = category
+        if b and not existing.get("brand"): patch["brand"] = b
         if patch:
             await db.products.update_one({"id": existing["id"]}, {"$set": patch})
         return existing
-    doc = {"id": str(uuid.uuid4()), "company_id": company_id, "name": n, "size": s,
-           "category": category or "Solar", "unit": u or "Nos", "min_stock": float(min_stock or 0),
-           "status": "Active", "created_at": now_iso()}
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "name": n,
+        "size": s,
+        "brand": b,
+        "category": category or "Solar",
+        "unit": u or "Nos",
+        "min_stock": float(min_stock or 0),
+        "status": "Active",
+        "created_at": now_iso()
+    }
     await db.products.insert_one(doc)
     return doc
 
@@ -4740,7 +4748,7 @@ def _enrich_outward_with_assets(outward_doc: Optional[dict]) -> Optional[dict]:
 
 async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = ""):
     pn = data.product.strip().upper()
-    await ensure_product(company_id, pn, data.size or "", unit=data.unit or "Nos")
+    await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos", brand=data.source_name or "")
     
     source_type_val = data.source_type or "Supplier"
     source_name_val = data.source_name or ""
@@ -4855,7 +4863,7 @@ async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str,
 
 async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = ""):
     pn = data.product.strip().upper()
-    await ensure_product(company_id, pn, data.size or "", unit=data.unit or "Nos")
+    await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos")
     
     client_id_val = data.client_id or ""
     client_name_val = data.client_name or ""
@@ -5104,7 +5112,7 @@ async def update_inward(entry_id: str, data: InwardIn, user=Depends(get_current_
     if not existing:
         raise HTTPException(status_code=404, detail="Inward entry not found")
     pn = (data.product or existing["product"]).strip().upper()
-    await ensure_product(cid, pn, data.size or "")
+    await ensure_product(cid, pn, size=data.size or "", unit=data.unit or existing.get("unit") or "Nos", brand=data.source_name or "")
     
     remarks_val = data.remarks or ""
     source_type_val = data.source_type or existing.get("source_type") or "Supplier"
@@ -5239,7 +5247,7 @@ async def update_outward(entry_id: str, data: OutwardIn, user=Depends(get_curren
     if not existing:
         raise HTTPException(status_code=404, detail="Outward entry not found")
     pn = (data.product or existing["product"]).strip().upper()
-    await ensure_product(cid, pn, data.size or "")
+    await ensure_product(cid, pn, size=data.size or "", unit=data.unit or existing.get("unit") or "Nos")
     patch = {
         "product": pn, "size": data.size or "", "quantity": data.quantity,
         "unit": data.unit or existing.get("unit") or "Nos",
@@ -5719,13 +5727,14 @@ async def inv_history_csv(
     user=Depends(get_current_user),
     type: Optional[str] = None,
     product: Optional[str] = None,
+    size: Optional[str] = None,
     vendor: Optional[str] = None,
     client: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     search: Optional[str] = None,
 ):
-    result = await inv_history(request=request, user=user, type=type, product=product, vendor=vendor, client=client, from_date=from_date, to_date=to_date, search=search, page=1, page_size=100000)  # type: ignore
+    result = await inv_history(request=request, user=user, type=type, product=product, size=size, vendor=vendor, client=client, from_date=from_date, to_date=to_date, search=search, page=1, page_size=100000)  # type: ignore
     rows: Any = result["rows"] if isinstance(result, dict) else result
     if not isinstance(rows, list):
         rows = []
