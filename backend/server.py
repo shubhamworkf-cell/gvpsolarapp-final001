@@ -1162,10 +1162,10 @@ async def auto_migrate_product_variants():
             cid = entry.get("company_id")
             pn = (entry.get("product") or "").strip().upper()
             ps = (entry.get("size") or "").strip()
-            unit = entry.get("unit") or "Nos"
+            unit = (entry.get("unit") or "Nos").strip()
             if not cid or not pn:
                 continue
-            key = (cid, pn, ps)
+            key = (cid, pn, ps, unit)
             if key not in seen:
                 seen.add(key)
                 await ensure_product(cid, pn, ps, unit=unit)
@@ -3555,35 +3555,53 @@ async def create_material_request(data: MaterialRequestIn, user=Depends(get_curr
     return doc
 
 async def _enrich_requests_with_stock_batch(requests_list: List[Dict[str, Any]], company_id: str) -> List[Dict[str, Any]]:
-    product_names = set()
+    product_keys = set()
     for req in requests_list:
         for it in (req.get("items") or []):
             name = (it.get("product") or "").strip().upper()
+            size = (it.get("size") or "").strip()
             if name:
-                product_names.add(name)
+                product_keys.add((name, size))
     
-    if not product_names:
+    if not product_keys:
         return requests_list
         
     in_sum_res = await db.inward_entries.aggregate([
-        {"$match": {"company_id": company_id, "product": {"$in": list(product_names)}}},
-        {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}
+        {"$match": {"company_id": company_id}},
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(10000)
     
     out_sum_res = await db.outward_entries.aggregate([
-        {"$match": {"company_id": company_id, "product": {"$in": list(product_names)}, "status": {"$ne": "Pending"}}},
-        {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}
+        {"$match": {"company_id": company_id, "status": {"$ne": "Pending"}}},
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(10000)
     
-    in_map = {x["_id"]: x["qty"] for x in in_sum_res if x.get("_id")}
-    out_map = {x["_id"]: x["qty"] for x in out_sum_res if x.get("_id")}
+    in_map = {}
+    for x in in_sum_res:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip())
+        else:
+            p_k = (str(_id).strip().upper(), "")
+        in_map[p_k] = in_map.get(p_k, 0) + x["qty"]
+
+    out_map = {}
+    for x in out_sum_res:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip())
+        else:
+            p_k = (str(_id).strip().upper(), "")
+        out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
     
     for req in requests_list:
         enriched = []
         for it in (req.get("items") or []):
             name = (it.get("product") or "").strip().upper()
-            total_in = in_map.get(name, 0.0)
-            total_out = out_map.get(name, 0.0)
+            size = (it.get("size") or "").strip()
+            k = (name, size)
+            total_in = in_map.get(k, 0.0)
+            total_out = out_map.get(k, 0.0)
             available_stock = max(0.0, total_in - total_out)
             enriched.append({**it, "available_stock": available_stock})
         req["items"] = enriched
@@ -4137,17 +4155,17 @@ class InventoryDefaults(BaseModel):
 async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "Nos", min_stock: float = 0):
     n = (name or "").strip().upper()
     s = (size or "").strip()
+    u = (unit or "Nos").strip()
     if not n: return None
-    existing = await db.products.find_one({"company_id": company_id, "name": n, "size": s})
+    existing = await db.products.find_one({"company_id": company_id, "name": n, "size": s, "unit": u})
     if existing:
         patch = {}
         if not existing.get("category") and category: patch["category"] = category
-        if not existing.get("unit") and unit: patch["unit"] = unit
         if patch:
             await db.products.update_one({"id": existing["id"]}, {"$set": patch})
         return existing
     doc = {"id": str(uuid.uuid4()), "company_id": company_id, "name": n, "size": s,
-           "category": category or "Solar", "unit": unit or "Nos", "min_stock": float(min_stock or 0),
+           "category": category or "Solar", "unit": u or "Nos", "min_stock": float(min_stock or 0),
            "status": "Active", "created_at": now_iso()}
     await db.products.insert_one(doc)
     return doc
@@ -4191,25 +4209,44 @@ async def inv_stats(user=Depends(get_current_user)):
             "company_id": cid, "date": {"$gte": today, "$lt": tomorrow}
         }),
         db.material_requests.count_documents({"company_id": cid, "status": "pending"}),
-        db.inward_entries.aggregate([{"$match": {"company_id": cid}}, {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}]).to_list(2000),
+        db.inward_entries.aggregate([
+            {"$match": {"company_id": cid}},
+            {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
+        ]).to_list(2000),
         db.outward_entries.aggregate([
             {"$match": {"company_id": cid, "status": {"$ne": "Pending"}}},
-            {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}
+            {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
         ]).to_list(2000),
-        db.products.find({"company_id": cid}, {"_id": 0, "name": 1, "min_stock": 1}).to_list(2000)
+        db.products.find({"company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1, "min_stock": 1}).to_list(2000)
     )
 
     in_agg_list = in_agg if isinstance(in_agg, list) else []
     out_agg_list = out_agg if isinstance(out_agg, list) else []
     prods_list = prods if isinstance(prods, list) else []
 
-    in_map = {x["_id"]: x["qty"] for x in in_agg_list}
-    out_map = {x["_id"]: x["qty"] for x in out_agg_list}
-    # Low-stock count uses each product's min_stock (fallback 5)
+    in_map = {}
+    for x in in_agg_list:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
+        else:
+            p_k = (str(_id).strip().upper(), "", "Nos")
+        in_map[p_k] = in_map.get(p_k, 0) + x["qty"]
+
+    out_map = {}
+    for x in out_agg_list:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
+        else:
+            p_k = (str(_id).strip().upper(), "", "Nos")
+        out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
+
     low = 0
     total_stock_qty = 0.0
     for p in prods_list:
-        bal = in_map.get(p["name"], 0) - out_map.get(p["name"], 0)
+        p_k = (p["name"].strip().upper(), (p.get("size") or "").strip(), (p.get("unit") or "Nos").strip())
+        bal = in_map.get(p_k, 0) - out_map.get(p_k, 0)
         total_stock_qty += max(bal, 0)
         if bal <= float(p.get("min_stock") or 5):
             low += 1
@@ -4306,29 +4343,29 @@ async def list_products(user=Depends(get_current_user)):
     items = await db.products.find({"company_id": user["company_id"]}, {"_id": 0}).sort("name", 1).to_list(2000)
     in_agg = await db.inward_entries.aggregate([
         {"$match": {"company_id": user["company_id"]}},
-        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+        {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(2000)
     out_agg = await db.outward_entries.aggregate([
         {"$match": {"company_id": user["company_id"], "status": {"$ne": "Pending"}}},
-        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+        {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(2000)
     
     in_map = {}
     for x in in_agg:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip())
+            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
         else:
-            p_k = (str(_id).strip().upper(), "")
+            p_k = (str(_id).strip().upper(), "", "Nos")
         in_map[p_k] = in_map.get(p_k, 0) + x["qty"]
 
     out_map = {}
     for x in out_agg:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip())
+            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
         else:
-            p_k = (str(_id).strip().upper(), "")
+            p_k = (str(_id).strip().upper(), "", "Nos")
         out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
 
     local_rates = _load_local_rates()
@@ -4336,7 +4373,8 @@ async def list_products(user=Depends(get_current_user)):
     for p in items:
         p_name = p["name"].strip().upper()
         p_size = (p.get("size") or "").strip()
-        k = (p_name, p_size)
+        p_unit = (p.get("unit") or "Nos").strip()
+        k = (p_name, p_size, p_unit)
         p["rate"] = local_rates.get(p_name, float(p.get("rate") or 0.0))
         p["high_value_goods"] = local_high_values.get(p_name, False)
         p["total_in"] = in_map.get(k, 0)
@@ -4366,18 +4404,19 @@ async def create_product(data: ProductIn, user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Missing permission: data_management.create")
     name = (data.name or "").strip().upper()
     size = (data.size or "").strip()
+    unit = (data.unit or "Nos").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Product name required")
-    existing = await db.products.find_one({"company_id": user["company_id"], "name": name, "size": size})
+    existing = await db.products.find_one({"company_id": user["company_id"], "name": name, "size": size, "unit": unit})
     if existing:
-        raise HTTPException(status_code=400, detail="Product variant already exists for this name and size")
+        raise HTTPException(status_code=400, detail="Product variant already exists for this complete specification")
     rate_val = data.rate or 0.0
     _save_local_rate(name, rate_val)
     _save_local_high_value_product(name, data.high_value_goods or False)
     doc = {
         "id": str(uuid.uuid4()), "company_id": user["company_id"], "name": name,
         "size": size, "category": data.category or "Solar",
-        "unit": data.unit or "Nos", "min_stock": float(data.min_stock or 0),
+        "unit": unit or "Nos", "min_stock": float(data.min_stock or 0),
         "rate": rate_val,
         "status": data.status or "Active", "created_at": now_iso(),
     }
@@ -4396,20 +4435,21 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
         raise HTTPException(status_code=404, detail="Product not found")
     new_name = (data.name or existing["name"]).strip().upper()
     new_size = (data.size if data.size is not None else existing.get("size", "")).strip()
-    if new_name != existing["name"] or new_size != existing.get("size", ""):
-        dup = await db.products.find_one({"company_id": cid, "name": new_name, "size": new_size})
+    new_unit = (data.unit if data.unit is not None else existing.get("unit", "Nos")).strip()
+    if new_name != existing["name"] or new_size != existing.get("size", "") or new_unit != existing.get("unit", "Nos"):
+        dup = await db.products.find_one({"company_id": cid, "name": new_name, "size": new_size, "unit": new_unit})
         if dup and dup["id"] != product_id:
-            raise HTTPException(status_code=400, detail="Another product variant already uses this name and size")
+            raise HTTPException(status_code=400, detail="Another product variant already uses this complete specification")
         # cascade rename in inward/outward entries
-        await db.inward_entries.update_many({"company_id": cid, "product": existing["name"], "size": existing.get("size", "")}, {"$set": {"product": new_name, "size": new_size}})
-        await db.outward_entries.update_many({"company_id": cid, "product": existing["name"], "size": existing.get("size", "")}, {"$set": {"product": new_name, "size": new_size}})
+        await db.inward_entries.update_many({"company_id": cid, "product": existing["name"], "size": existing.get("size", ""), "unit": existing.get("unit", "Nos")}, {"$set": {"product": new_name, "size": new_size, "unit": new_unit}})
+        await db.outward_entries.update_many({"company_id": cid, "product": existing["name"], "size": existing.get("size", ""), "unit": existing.get("unit", "Nos")}, {"$set": {"product": new_name, "size": new_size, "unit": new_unit}})
     rate_val = data.rate or 0.0
     _save_local_rate(new_name, rate_val)
     if data.high_value_goods is not None:
         _save_local_high_value_product(new_name, data.high_value_goods)
     patch = {
         "name": new_name, "size": new_size, "category": data.category or "",
-        "unit": data.unit or "Nos", "min_stock": float(data.min_stock or 0),
+        "unit": new_unit or "Nos", "min_stock": float(data.min_stock or 0),
         "rate": rate_val,
         "status": data.status or existing.get("status") or "Active",
         "updated_at": now_iso(),
@@ -4429,10 +4469,10 @@ async def delete_product(product_id: str, user=Depends(get_current_user)):
     existing = await db.products.find_one({"id": product_id, "company_id": cid})
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
-    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": existing["name"], "size": existing.get("size", "")})
-    out_count = await db.outward_entries.count_documents({"company_id": cid, "product": existing["name"], "size": existing.get("size", "")})
+    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": existing["name"], "size": existing.get("size", ""), "unit": existing.get("unit", "Nos")})
+    out_count = await db.outward_entries.count_documents({"company_id": cid, "product": existing["name"], "size": existing.get("size", ""), "unit": existing.get("unit", "Nos")})
     if in_count + out_count > 0:
-        raise HTTPException(status_code=409, detail=f"Cannot delete — {in_count + out_count} transactions reference this product variant. Delete those first.")
+        raise HTTPException(status_code=409, detail=f"Cannot delete — {in_count + out_count} transactions reference this product specification. Delete those first.")
     await db.products.delete_one({"id": product_id, "company_id": cid})
     await log_activity(cid, user["id"], user["name"], "Product Deleted", f"{existing['name']} ({existing.get('size', '')})" if existing.get("size") else existing["name"])
     return {"ok": True}
@@ -5599,14 +5639,16 @@ async def product_stats(product_id: str, user=Depends(get_current_user)):
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
     name = p["name"]
-    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": name})
-    out_count = await db.outward_entries.count_documents({"company_id": cid, "product": name})
+    size = p.get("size") or ""
+    unit = p.get("unit") or "Nos"
+    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": name, "size": size, "unit": unit})
+    out_count = await db.outward_entries.count_documents({"company_id": cid, "product": name, "size": size, "unit": unit})
     in_agg = await db.inward_entries.aggregate([
-        {"$match": {"company_id": cid, "product": name}},
+        {"$match": {"company_id": cid, "product": name, "size": size, "unit": unit}},
         {"$group": {"_id": None, "qty": {"$sum": "$quantity"}, "last_date": {"$max": "$date"}}}
     ]).to_list(1)
     out_agg = await db.outward_entries.aggregate([
-        {"$match": {"company_id": cid, "product": name, "status": {"$ne": "Pending"}}},
+        {"$match": {"company_id": cid, "product": name, "size": size, "unit": unit, "status": {"$ne": "Pending"}}},
         {"$group": {"_id": None, "qty": {"$sum": "$quantity"}, "last_date": {"$max": "$date"}}}
     ]).to_list(1)
     total_in = (in_agg[0]["qty"] if in_agg else 0)
@@ -5635,11 +5677,11 @@ async def product_transactions(
     search: Optional[str] = None,
 ):
     cid = user["company_id"]
-    p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0, "name": 1})
+    p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1})
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
     return await inv_history(  # type: ignore
-        request=request, user=user, type=type, product=p["name"], vendor=vendor, client=client,
+        request=request, user=user, type=type, product=p["name"], size=p.get("size") or "", unit=p.get("unit") or "Nos", vendor=vendor, client=client,
         challan=challan, from_date=from_date, to_date=to_date, search=search,
         page=1, page_size=10000,
     )
