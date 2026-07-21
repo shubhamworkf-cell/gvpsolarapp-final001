@@ -1153,7 +1153,24 @@ async def activity_logs_cleanup_task():
                 logger.warning("Activity logs cleanup skipped: No Supabase client configured.")
         except Exception as e:
             logger.error(f"Scheduled Activity Logs Cleanup failed: {e}", exc_info=True)
-        await asyncio.sleep(24 * 3600)  # Sleep for 24 hours
+async def auto_migrate_product_variants():
+    try:
+        inward_entries = await db.inward_entries.find({}, {"company_id": 1, "product": 1, "size": 1, "unit": 1}).to_list(100000)
+        outward_entries = await db.outward_entries.find({}, {"company_id": 1, "product": 1, "size": 1, "unit": 1}).to_list(100000)
+        seen = set()
+        for entry in (inward_entries or []) + (outward_entries or []):
+            cid = entry.get("company_id")
+            pn = (entry.get("product") or "").strip().upper()
+            ps = (entry.get("size") or "").strip()
+            unit = entry.get("unit") or "Nos"
+            if not cid or not pn:
+                continue
+            key = (cid, pn, ps)
+            if key not in seen:
+                seen.add(key)
+                await ensure_product(cid, pn, ps, unit=unit)
+    except Exception as e:
+        logger.warning(f"auto_migrate_product_variants error: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1188,6 +1205,7 @@ async def lifespan(app: FastAPI):
         await db.service_tickets.create_index([("company_id", 1), ("client_id", 1)])
         await db.inverter_monitoring.create_index([("company_id", 1), ("client_id", 1)])
         await db.files.create_index([("company_id", 1), ("category", 1), ("created_at", -1)])
+        await auto_migrate_product_variants()
     except Exception as e:
         logger.warning(f"Index creation: {e}")
     logger.info("Solarix backend started")
@@ -4118,18 +4136,17 @@ class InventoryDefaults(BaseModel):
 
 async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "Nos", min_stock: float = 0):
     n = (name or "").strip().upper()
+    s = (size or "").strip()
     if not n: return None
-    existing = await db.products.find_one({"company_id": company_id, "name": n})
+    existing = await db.products.find_one({"company_id": company_id, "name": n, "size": s})
     if existing:
-        # backfill missing fields
         patch = {}
-        if not existing.get("size") and size: patch["size"] = size
         if not existing.get("category") and category: patch["category"] = category
         if not existing.get("unit") and unit: patch["unit"] = unit
         if patch:
             await db.products.update_one({"id": existing["id"]}, {"$set": patch})
         return existing
-    doc = {"id": str(uuid.uuid4()), "company_id": company_id, "name": n, "size": size,
+    doc = {"id": str(uuid.uuid4()), "company_id": company_id, "name": n, "size": s,
            "category": category or "Solar", "unit": unit or "Nos", "min_stock": float(min_stock or 0),
            "status": "Active", "created_at": now_iso()}
     await db.products.insert_one(doc)
@@ -4287,21 +4304,43 @@ def _save_local_high_value_product(product_name: str, is_high_value: bool):
 @api_router.get("/inventory/products")
 async def list_products(user=Depends(get_current_user)):
     items = await db.products.find({"company_id": user["company_id"]}, {"_id": 0}).sort("name", 1).to_list(2000)
-    in_agg = await db.inward_entries.aggregate([{"$match": {"company_id": user["company_id"]}}, {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}]).to_list(2000)
+    in_agg = await db.inward_entries.aggregate([
+        {"$match": {"company_id": user["company_id"]}},
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+    ]).to_list(2000)
     out_agg = await db.outward_entries.aggregate([
         {"$match": {"company_id": user["company_id"], "status": {"$ne": "Pending"}}},
-        {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(2000)
-    in_map = {x["_id"]: x["qty"] for x in in_agg}
-    out_map = {x["_id"]: x["qty"] for x in out_agg}
+    
+    in_map = {}
+    for x in in_agg:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip())
+        else:
+            p_k = (str(_id).strip().upper(), "")
+        in_map[p_k] = in_map.get(p_k, 0) + x["qty"]
+
+    out_map = {}
+    for x in out_agg:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip())
+        else:
+            p_k = (str(_id).strip().upper(), "")
+        out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
+
     local_rates = _load_local_rates()
     local_high_values = _load_local_high_value_products()
     for p in items:
         p_name = p["name"].strip().upper()
+        p_size = (p.get("size") or "").strip()
+        k = (p_name, p_size)
         p["rate"] = local_rates.get(p_name, float(p.get("rate") or 0.0))
         p["high_value_goods"] = local_high_values.get(p_name, False)
-        p["total_in"] = in_map.get(p["name"], 0)
-        p["total_out"] = out_map.get(p["name"], 0)
+        p["total_in"] = in_map.get(k, 0)
+        p["total_out"] = out_map.get(k, 0)
         p["balance"] = p["total_in"] - p["total_out"]
         mn = float(p.get("min_stock") or 0)
         if p["balance"] <= 0:
@@ -4318,7 +4357,7 @@ async def list_products(user=Depends(get_current_user)):
         if any(kw in p_name for kw in hv_keywords):
             return True
         return False
-    items.sort(key=lambda p: (0 if _is_hv_prod(p) else 1, p["name"]))
+    items.sort(key=lambda p: (0 if _is_hv_prod(p) else 1, p["name"], p.get("size") or ""))
     return items
 
 @api_router.post("/inventory/products")
@@ -4326,24 +4365,25 @@ async def create_product(data: ProductIn, user=Depends(get_current_user)):
     if not has_perm(user, "data_management", "create"):
         raise HTTPException(status_code=403, detail="Missing permission: data_management.create")
     name = (data.name or "").strip().upper()
+    size = (data.size or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Product name required")
-    existing = await db.products.find_one({"company_id": user["company_id"], "name": name})
+    existing = await db.products.find_one({"company_id": user["company_id"], "name": name, "size": size})
     if existing:
-        raise HTTPException(status_code=400, detail="Product already exists")
+        raise HTTPException(status_code=400, detail="Product variant already exists for this name and size")
     rate_val = data.rate or 0.0
     _save_local_rate(name, rate_val)
     _save_local_high_value_product(name, data.high_value_goods or False)
     doc = {
         "id": str(uuid.uuid4()), "company_id": user["company_id"], "name": name,
-        "size": data.size or "", "category": data.category or "Solar",
+        "size": size, "category": data.category or "Solar",
         "unit": data.unit or "Nos", "min_stock": float(data.min_stock or 0),
         "rate": rate_val,
         "status": data.status or "Active", "created_at": now_iso(),
     }
     await db.products.insert_one(doc); doc.pop("_id", None)
     doc["high_value_goods"] = data.high_value_goods or False
-    await log_activity(user["company_id"], user["id"], user["name"], "Product Created", name)
+    await log_activity(user["company_id"], user["id"], user["name"], "Product Created", f"{name} ({size})" if size else name)
     return doc
 
 @api_router.patch("/inventory/products/{product_id}")
@@ -4355,26 +4395,27 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
     new_name = (data.name or existing["name"]).strip().upper()
-    if new_name != existing["name"]:
-        dup = await db.products.find_one({"company_id": cid, "name": new_name})
+    new_size = (data.size if data.size is not None else existing.get("size", "")).strip()
+    if new_name != existing["name"] or new_size != existing.get("size", ""):
+        dup = await db.products.find_one({"company_id": cid, "name": new_name, "size": new_size})
         if dup and dup["id"] != product_id:
-            raise HTTPException(status_code=400, detail="Another product already uses this name")
+            raise HTTPException(status_code=400, detail="Another product variant already uses this name and size")
         # cascade rename in inward/outward entries
-        await db.inward_entries.update_many({"company_id": cid, "product": existing["name"]}, {"$set": {"product": new_name}})
-        await db.outward_entries.update_many({"company_id": cid, "product": existing["name"]}, {"$set": {"product": new_name}})
+        await db.inward_entries.update_many({"company_id": cid, "product": existing["name"], "size": existing.get("size", "")}, {"$set": {"product": new_name, "size": new_size}})
+        await db.outward_entries.update_many({"company_id": cid, "product": existing["name"], "size": existing.get("size", "")}, {"$set": {"product": new_name, "size": new_size}})
     rate_val = data.rate or 0.0
     _save_local_rate(new_name, rate_val)
     if data.high_value_goods is not None:
         _save_local_high_value_product(new_name, data.high_value_goods)
     patch = {
-        "name": new_name, "size": data.size or "", "category": data.category or "",
+        "name": new_name, "size": new_size, "category": data.category or "",
         "unit": data.unit or "Nos", "min_stock": float(data.min_stock or 0),
         "rate": rate_val,
         "status": data.status or existing.get("status") or "Active",
         "updated_at": now_iso(),
     }
     await db.products.update_one({"id": product_id, "company_id": cid}, {"$set": patch})
-    await log_activity(cid, user["id"], user["name"], "Product Updated", new_name)
+    await log_activity(cid, user["id"], user["name"], "Product Updated", f"{new_name} ({new_size})" if new_size else new_name)
     res = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0})
     if res:
         res["high_value_goods"] = _load_local_high_value_products().get(new_name, False)
@@ -4388,12 +4429,12 @@ async def delete_product(product_id: str, user=Depends(get_current_user)):
     existing = await db.products.find_one({"id": product_id, "company_id": cid})
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
-    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": existing["name"]})
-    out_count = await db.outward_entries.count_documents({"company_id": cid, "product": existing["name"]})
+    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": existing["name"], "size": existing.get("size", "")})
+    out_count = await db.outward_entries.count_documents({"company_id": cid, "product": existing["name"], "size": existing.get("size", "")})
     if in_count + out_count > 0:
-        raise HTTPException(status_code=409, detail=f"Cannot delete — {in_count + out_count} transactions reference this product. Delete those first.")
+        raise HTTPException(status_code=409, detail=f"Cannot delete — {in_count + out_count} transactions reference this product variant. Delete those first.")
     await db.products.delete_one({"id": product_id, "company_id": cid})
-    await log_activity(cid, user["id"], user["name"], "Product Deleted", existing["name"])
+    await log_activity(cid, user["id"], user["name"], "Product Deleted", f"{existing['name']} ({existing.get('size', '')})" if existing.get("size") else existing["name"])
     return {"ok": True}
 
 def parse_inward_client_info(entry):
@@ -5318,6 +5359,7 @@ async def inv_history(
     user=Depends(get_current_user),
     type: Optional[str] = None,  # inward | outward | None
     product: Optional[str] = None,
+    size: Optional[str] = None,
     vendor: Optional[str] = None,
     client: Optional[str] = None,
     challan: Optional[str] = None,
@@ -5390,11 +5432,12 @@ async def inv_history(
     if (not type or type == "inward") and not status:
         q: Dict[str, Any] = {"company_id": cid}
         if product: q["product"] = _text_filter(product)
+        if size is not None and size != "": q["size"] = size
         if vendor: q["source_name"] = _text_filter(vendor)
         if challan: q["reference_number"] = _text_filter(challan)
         if bill_number: q["bill_number"] = _text_filter(bill_number)
         if user_id: q["created_by"] = user_id
-        if search: q["$or"] = _search_or_conditions(["product", "source_name", "reference_number", "bill_number", "remarks"], search)
+        if search: q["$or"] = _search_or_conditions(["product", "size", "source_name", "reference_number", "bill_number", "remarks"], search)
         inward_rows = await db.inward_entries.find(q, inward_projection).sort([("date", -1), ("created_at", -1)]).to_list(10000)
         for r in inward_rows:
             if not _date_match(r):
@@ -5406,11 +5449,12 @@ async def inv_history(
     if (not type or type == "outward") and not bill_number:
         q = {"company_id": cid}
         if product: q["product"] = _text_filter(product)
+        if size is not None and size != "": q["size"] = size
         if client: q["client_name"] = _text_filter(client)
         if challan: q["$or"] = [{"outward_challan_no": _text_filter(challan)}, {"reference_number": _text_filter(challan)}]
         if user_id: q["created_by"] = user_id
         if status: q["status"] = status
-        if search: q["$or"] = _search_or_conditions(["product", "client_name", "project_name", "outward_challan_no", "reference_number", "remarks"], search)
+        if search: q["$or"] = _search_or_conditions(["product", "size", "client_name", "project_name", "outward_challan_no", "reference_number", "remarks"], search)
         outward_rows = await db.outward_entries.find(q, outward_projection).sort([("date", -1), ("created_at", -1)]).to_list(10000)
         for r in outward_rows:
             if not _date_match(r):
@@ -5423,18 +5467,7 @@ async def inv_history(
     total = len(rows)
     start = (page - 1) * page_size
     paged = rows[start:start + page_size]
-    user_agent = ""
-    if request is not None:
-        user_agent = request.headers.get("user-agent", "").lower()
-    is_pytest = "python-requests" in user_agent or "pytest" in user_agent
-    if is_pytest:
-        qp = request.query_params if request is not None else {}
-        is_transaction = request is not None and "transactions" in request.url.path
-        is_empty_query = len(qp) == 0
-        is_paginated_test = "page" in qp or "page_size" in qp or "status" in qp or "challan" in qp or "bill_number" in qp or "user_id" in qp
-        if not (is_transaction or is_empty_query or is_paginated_test):
-            return paged
-    return {"rows": paged, "total": total, "page": page, "page_size": page_size, "pages": (total + page_size - 1) // page_size}
+    return {"items": paged, "total": total, "page": page, "page_size": page_size, "rows": paged}
 
 @api_router.get("/inventory/history.csv")
 async def inv_history_csv(
