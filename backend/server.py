@@ -1919,46 +1919,122 @@ def _fetch_company_sync(company_id: str):
     company_rpc = get_rpc_client().rpc("get_company_by_id", {"p_company_id": company_id}).execute()
     return company_rpc.data[0] if isinstance(company_rpc.data, list) and company_rpc.data else None
 
+def _lookup_user_profile_with_token_sync(user_id: str, token: str):
+    """Fetch user profile using the user's own JWT - bypasses RLS since users can read their own row."""
+    user_client = get_supabase_client(token=token)
+    try:
+        rpc_res = user_client.rpc("get_user_by_id", {"p_user_id": user_id}).execute()
+        return rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
+    except Exception:
+        return None
+
+def _fetch_company_with_token_sync(company_id: str, token: str):
+    """Fetch company using the user's own JWT - bypasses RLS."""
+    user_client = get_supabase_client(token=token)
+    try:
+        rpc_res = user_client.rpc("get_company_by_id", {"p_company_id": company_id}).execute()
+        return rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
+    except Exception:
+        return None
+
 @api_router.post("/auth/login")
 async def login(data: LoginIn, response: Response):
     raw = data.identifier.strip()
     ident = raw.lower()
-    
-    try:
-        user = await asyncio.to_thread(_lookup_user_for_login_sync, ident, raw)
-    except Exception as e:
-        logger.error(f"lookup_user_for_login RPC failed: {e}")
-        user = None
+    is_email = "@" in ident
 
-    if not user or not isinstance(user, dict):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = ""
+    refresh_token = ""
+    user = None
+    auth_user_id = None
+
+    if is_email:
+        # ── Email login: authenticate directly with Supabase Auth (no RPC needed) ──
+        try:
+            auth_res = await asyncio.to_thread(_supabase_sign_in_sync, ident, data.password)
+            if not auth_res or not auth_res.session:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            token = auth_res.session.access_token
+            refresh_token = auth_res.session.refresh_token
+            auth_user_id = auth_res.session.user.id if auth_res.session.user else None
+        except HTTPException:
+            raise
+        except Exception as e:
+            err_str = str(e).lower()
+            logger.error(f"Supabase direct login failed for {ident}: {e}")
+            if "invalid login credentials" in err_str or "invalid_credentials" in err_str:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            if "email not confirmed" in err_str:
+                raise HTTPException(status_code=401, detail="Email not confirmed. Please check your inbox.")
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        # Fetch user profile using the user's own JWT (bypasses RLS without needing service key)
+        if auth_user_id:
+            try:
+                user = await asyncio.to_thread(_lookup_user_profile_with_token_sync, auth_user_id, token)
+            except Exception:
+                pass
+            if not user:
+                try:
+                    # Fallback: try service RPC
+                    rpc_res = await asyncio.to_thread(
+                        lambda: get_rpc_client().rpc("get_user_by_id", {"p_user_id": auth_user_id}).execute()
+                    )
+                    user = rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
+                except Exception:
+                    pass
+            if not user:
+                # Last resort: try direct DB lookup via CollectionAdapter with user token context
+                try:
+                    user = await db.users.find_one({"id": auth_user_id}, {"_id": 0})
+                except Exception:
+                    pass
+
+        if not user or not isinstance(user, dict):
+            logger.error(f"User profile not found after successful Supabase auth for id={auth_user_id}")
+            raise HTTPException(status_code=401, detail="User profile not found. Please contact admin.")
+
+    else:
+        # ── Employee ID / Mobile login: RPC lookup to get email, then sign in ──
+        try:
+            user = await asyncio.to_thread(_lookup_user_for_login_sync, ident, raw)
+        except Exception as e:
+            logger.error(f"lookup_user_for_login RPC failed: {e}")
+            user = None
+
+        if not user or not isinstance(user, dict):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        email_for_auth = str(user.get("email") or "")
+        try:
+            auth_res = await asyncio.to_thread(_supabase_sign_in_sync, email_for_auth, data.password)
+            if not auth_res or not auth_res.session:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            token = auth_res.session.access_token
+            refresh_token = auth_res.session.refresh_token
+        except HTTPException:
+            raise
+        except Exception as e:
+            err_str = str(e).lower()
+            logger.error(f"Supabase login failed for {email_for_auth}: {e}")
+            if "invalid login credentials" in err_str or "invalid_credentials" in err_str:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            if "email not confirmed" in err_str:
+                raise HTTPException(status_code=401, detail="Email not confirmed. Please check your inbox.")
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
     if user.get("status") == "Inactive":
         raise HTTPException(status_code=403, detail="Account is inactive")
 
-    email_for_auth = str(user.get("email") or "")
-
-    try:
-        auth_res = await asyncio.to_thread(_supabase_sign_in_sync, email_for_auth, data.password)
-        if not auth_res or not auth_res.session:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        token = auth_res.session.access_token
-        refresh_token = auth_res.session.refresh_token
-    except Exception as e:
-        err_str = str(e).lower()
-        logger.error(f"Supabase login failed for {email_for_auth}: {e}")
-        if "invalid login credentials" in err_str or "invalid_credentials" in err_str:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        if "email not confirmed" in err_str:
-            raise HTTPException(status_code=401, detail="Email not confirmed. Please check your inbox.")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
     response.set_cookie("access_token", token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
-    
+
     cid = user.get("company_id") or ""
     company = _cache_get_company(cid)
     if not company and cid:
         try:
-            company = await asyncio.to_thread(_fetch_company_sync, cid)
+            company = await asyncio.to_thread(_fetch_company_with_token_sync, cid, token)
+            if not company:
+                company = await asyncio.to_thread(_fetch_company_sync, cid)
             if not company:
                 company = await db.companies.find_one({"id": cid}, {"_id": 0})
             if company:
