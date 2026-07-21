@@ -1619,10 +1619,13 @@ def serialize_user(u: dict) -> dict:
 
 ROLE_PAGES = ["dashboard", "clients", "documents", "project_execution", "task_portal", "data_management", "client_data", "complaints", "reports", "settings", "team", "sales_documents"]
 PERMS = ["view", "create", "edit", "delete", "approve"]
+PROJ_EXEC_TABS = ["verification", "approval", "reject", "project_assignment", "retry"]
 
 def default_perms_for_role(role: str) -> Dict[str, Dict[str, bool]]:
     if role == "Admin":
-        return {p: {a: True for a in PERMS} for p in ROLE_PAGES}
+        res = {p: {a: True for a in PERMS} for p in ROLE_PAGES}
+        res["project_execution"].update({t: True for t in PROJ_EXEC_TABS})
+        return res
     base = {p: {a: False for a in PERMS} for p in ROLE_PAGES}
     # Everyone (even employees) can VIEW the complaint center and raise complaints —
     # they're built to surface issues across the org.
@@ -1634,6 +1637,7 @@ def default_perms_for_role(role: str) -> Dict[str, Dict[str, bool]]:
     elif role == "Supervisor":
         for p in ["dashboard", "clients", "task_portal", "project_execution", "client_data"]:
             base[p] = {"view": True, "create": True, "edit": True, "delete": False, "approve": True}
+        base["project_execution"].update({t: True for t in PROJ_EXEC_TABS})
         base["complaints"] = {"view": True, "create": True, "edit": True, "delete": False, "approve": True}
     elif role == "Sales Executive":
         for p in ["dashboard", "clients"]:
@@ -1652,7 +1656,12 @@ def has_perm(user: Dict[str, Any], page: str, action: str) -> bool:
     if user.get("role") == "Admin":
         return True
     perms = user.get("permissions") or {}
-    return bool((perms.get(page) or {}).get(action))
+    page_perms = perms.get(page) or {}
+    val = page_perms.get(action)
+    if val is None and page == "project_execution" and action in PROJ_EXEC_TABS:
+        # Fallback to main project_execution view permission for backward compatibility
+        return bool(page_perms.get("view"))
+    return bool(val)
 
 
 def require_perm(page: str, action: str):
@@ -3377,6 +3386,8 @@ async def create_task(data: TaskIn, user=Depends(get_current_user)):
 
 @api_router.get("/tasks")
 async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = None, mine: bool = False):
+    if not has_perm(user, "task_portal", "view"):
+        raise HTTPException(status_code=403, detail="Missing permission: task_portal.view")
     q = {"company_id": user["company_id"]}
     if client_id: q["client_id"] = client_id
     if mine or user["role"] not in ("Admin", "Supervisor"):

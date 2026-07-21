@@ -4,6 +4,7 @@ import api, { formatApiError, fileUrl } from "@/lib/api";
 import { useProjectList, useProjectStats, useInvalidateProjects } from "@/hooks/useProjects";
 import { useEmployeeList } from "@/hooks/useTeam";
 import { useMaterialRequestList, useInvalidateMaterialRequests } from "@/hooks/useMaterialRequests";
+import { usePermission } from "@/lib/permissions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,11 +62,17 @@ export default function ProjectExecution() {
   const itemsPerPage = 25;
 
   // React Query queries
+  const canProjectAssignment = usePermission("project_execution", "project_assignment");
+  const canVerification = usePermission("project_execution", "verification");
+  const canApproval = usePermission("project_execution", "approval");
+  const canReject = usePermission("project_execution", "reject");
+  const canRetry = usePermission("project_execution", "retry");
+
   const { data: stats = {}, isLoading: statsLoading } = useProjectStats();
   const { data: projects = [], isLoading: projectsLoading } = useProjectList();
 
   const { data: employees = [], isLoading: employeesLoading } = useEmployeeList();
-  const { data: matReqs = [], isLoading: matReqsLoading } = useMaterialRequestList({}, { enabled: tab === "materials" });
+  const { data: matReqs = [], isLoading: matReqsLoading } = useMaterialRequestList({}, { enabled: tab === "materials" || tab === "rejected" });
 
   const { data: verifs = [], isLoading: verifsLoading } = useQuery({
     queryKey: ["verifications"],
@@ -73,7 +80,7 @@ export default function ProjectExecution() {
       const { data } = await api.get("/verifications");
       return data || [];
     },
-    enabled: tab === "verifications",
+    enabled: tab === "verifications" || tab === "materials" || tab === "rejected" || tab === "retry",
     staleTime: 3 * 60 * 1000,
   });
 
@@ -142,6 +149,22 @@ export default function ProjectExecution() {
     setProjectPage(1);
   }, [projects.length]);
 
+  const allTabs = useMemo(() => [
+    { id: "projects", label: "Project Assignment", perm: canProjectAssignment, testId: "tab-projects" },
+    { id: "verifications", label: "Verification", perm: canVerification, testId: "tab-verifs" },
+    { id: "materials", label: "Approval", perm: canApproval, testId: "tab-materials", badge: loadedTabs.has("materials") ? (matReqs.filter(m => m.status === "pending").length + verifs.filter(v => v.status === "pending").length) : 0 },
+    { id: "rejected", label: "Rejected", perm: canReject, testId: "tab-rejected", badge: (matReqs.filter(m => m.status === "rejected").length + verifs.filter(v => v.status === "rejected").length) },
+    { id: "retry", label: "Rework / Retry", perm: canRetry, testId: "tab-retry", badge: verifs.filter(v => v.status === "rework" || v.status === "retry").length },
+  ], [canProjectAssignment, canVerification, canApproval, canReject, canRetry, loadedTabs, matReqs, verifs]);
+
+  const visibleTabs = useMemo(() => allTabs.filter((t) => t.perm), [allTabs]);
+
+  useEffect(() => {
+    if (visibleTabs.length > 0 && !visibleTabs.some((t) => t.id === tab)) {
+      setTab(visibleTabs[0].id);
+    }
+  }, [visibleTabs, tab]);
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -195,222 +218,306 @@ export default function ProjectExecution() {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="bg-white border border-slate-200">
-          <TabsTrigger value="projects" data-testid="tab-projects">Projects</TabsTrigger>
-          <TabsTrigger value="materials" data-testid="tab-materials">Material Requests {loadedTabs.has("materials") ? `(${matReqs.filter(m => m.status === "pending").length})` : ""}</TabsTrigger>
-          <TabsTrigger value="verifications" data-testid="tab-verifs">Verifications {loadedTabs.has("verifications") ? `(${verifs.filter(v => v.status === "pending").length})` : ""}</TabsTrigger>
+          {visibleTabs.map((t) => (
+            <TabsTrigger key={t.id} value={t.id} data-testid={t.testId}>
+              {t.label} {t.badge ? `(${t.badge})` : ""}
+            </TabsTrigger>
+          ))}
         </TabsList>
 
-        <div style={{ display: tab === "projects" ? "block" : "none" }}>
-          {loadedTabs.has("projects") && (
-            <Card className="border-slate-200">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm" data-testid="projects-table">
-                  <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                    <tr>
-                      <th className="text-left px-4 py-3 font-semibold">Client</th>
-                      <th className="text-left px-4 py-3 font-semibold">Mobile</th>
-                      <th className="text-left px-4 py-3 font-semibold">KW</th>
-                      <th className="text-left px-4 py-3 font-semibold">Current Stage</th>
-                      <th className="text-left px-4 py-3 font-semibold">Assigned Team</th>
-                      <th className="text-left px-4 py-3 font-semibold">Updated</th>
-                      <th className="text-right px-4 py-3 font-semibold">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginated.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">No onboarded projects yet. Mark Onboarding complete on a client to add them here.</td></tr>}
-                    {paginated.map((p) => {
-                      const stages = p.stages || {};
-                      const order = [
-                        "Handover",
-                        "Verification",
-                        "MSEDCL Upload",
-                        "PM Surya Ghar Upload",
-                        "Meter Testing Completed",
-                        "Meter Testing Request",
-                        "Document Signed",
-                        "Document Making",
-                        "Installation",
-                        "Material Delivery",
-                        "Quotation",
-                        "Survey",
-                        "Onboarding",
-                      ];
-                      const current = order.find((s) => stages[s]) || "Onboarding";
-                      return (
-                        <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50">
-                          <td className="px-4 py-3"><div className="font-medium text-slate-900">{p.full_name}</div><div className="text-xs text-slate-500">{p.sol_id}</div></td>
-                          <td className="px-4 py-3 text-slate-700">{p.mobile}</td>
-                          <td className="px-4 py-3 text-slate-700">{p.system_kw || 0}</td>
-                          <td className="px-4 py-3"><Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">{current}</Badge></td>
-                          <td className="px-4 py-3 text-slate-700 text-xs">{p.assigned_team?.length ? p.assigned_team.join(", ") : "—"}</td>
-                          <td className="px-4 py-3 text-xs text-slate-500">{p.updated_at ? dayjs(p.updated_at).format("MMM D") : "—"}</td>
-                          <td className="px-4 py-3 text-right">
-                            <Button size="sm" onClick={() => openAssign(p)} className="bg-blue-600 hover:bg-blue-700" data-testid={`assign-${p.id}`}>
-                              <Plus className="w-3.5 h-3.5 mr-1" /> Assign Work
-                            </Button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+        {visibleTabs.length === 0 && (
+          <div className="p-8 text-center text-slate-500 bg-white rounded-lg border border-slate-200 mt-4">
+            No project execution tabs permitted. Contact your administrator.
+          </div>
+        )}
 
-              {totalPages > 1 && (
-                <div className="p-4 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
-                  <div className="text-xs text-slate-500">
-                    Showing {(projectPage - 1) * itemsPerPage + 1} to {Math.min(projectPage * itemsPerPage, projects.length)} of {projects.length} projects
-                  </div>
-                  <div className="flex gap-1">
-                    <Button variant="outline" size="sm" onClick={() => setProjectPage(p => Math.max(1, p - 1))} disabled={projectPage === 1}>Previous</Button>
-                    <Button variant="outline" size="sm" onClick={() => setProjectPage(p => Math.min(totalPages, p + 1))} disabled={projectPage === totalPages}>Next</Button>
-                  </div>
+        {canProjectAssignment && (
+          <div style={{ display: tab === "projects" ? "block" : "none" }}>
+            {loadedTabs.has("projects") && (
+              <Card className="border-slate-200">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm" data-testid="projects-table">
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                      <tr>
+                        <th className="text-left px-4 py-3 font-semibold">Client</th>
+                        <th className="text-left px-4 py-3 font-semibold">Mobile</th>
+                        <th className="text-left px-4 py-3 font-semibold">KW</th>
+                        <th className="text-left px-4 py-3 font-semibold">Current Stage</th>
+                        <th className="text-left px-4 py-3 font-semibold">Assigned Team</th>
+                        <th className="text-left px-4 py-3 font-semibold">Updated</th>
+                        <th className="text-right px-4 py-3 font-semibold">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginated.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">No onboarded projects yet. Mark Onboarding complete on a client to add them here.</td></tr>}
+                      {paginated.map((p) => {
+                        const stages = p.stages || {};
+                        const order = [
+                          "Handover",
+                          "Verification",
+                          "MSEDCL Upload",
+                          "PM Surya Ghar Upload",
+                          "Meter Testing Completed",
+                          "Meter Testing Request",
+                          "Document Signed",
+                          "Document Making",
+                          "Installation",
+                          "Material Delivery",
+                          "Quotation",
+                          "Survey",
+                          "Onboarding",
+                        ];
+                        const current = order.find((s) => stages[s]) || "Onboarding";
+                        return (
+                          <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50">
+                            <td className="px-4 py-3"><div className="font-medium text-slate-900">{p.full_name}</div><div className="text-xs text-slate-500">{p.sol_id}</div></td>
+                            <td className="px-4 py-3 text-slate-700">{p.mobile}</td>
+                            <td className="px-4 py-3 text-slate-700">{p.system_kw || 0}</td>
+                            <td className="px-4 py-3"><Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">{current}</Badge></td>
+                            <td className="px-4 py-3 text-slate-700 text-xs">{p.assigned_team?.length ? p.assigned_team.join(", ") : "—"}</td>
+                            <td className="px-4 py-3 text-xs text-slate-500">{p.updated_at ? dayjs(p.updated_at).format("MMM D") : "—"}</td>
+                            <td className="px-4 py-3 text-right">
+                              {canProjectAssignment && (
+                                <Button size="sm" onClick={() => openAssign(p)} className="bg-blue-600 hover:bg-blue-700" data-testid={`assign-${p.id}`}>
+                                  <Plus className="w-3.5 h-3.5 mr-1" /> Assign Work
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-              )}
-            </Card>
-          )}
-        </div>
 
-        <div style={{ display: tab === "materials" ? "block" : "none" }}>
-          {loadedTabs.has("materials") && loadingTab ? (
-            <Card className="border-slate-200 p-6 space-y-4 animate-pulse">
-              {[1, 2, 3].map((x) => (
-                <div key={x} className="flex justify-between items-center py-4 border-b border-slate-100 last:border-none">
-                  <div className="space-y-2 flex-1">
-                    <div className="h-4 w-32 bg-slate-200 rounded" />
-                    <div className="h-3 w-64 bg-slate-100 rounded" />
-                  </div>
-                  <div className="h-8 w-24 bg-slate-200 rounded" />
-                </div>
-              ))}
-            </Card>
-          ) : (
-            <Card className="border-slate-200">
-              <div className="divide-y divide-slate-100">
-                {matReqs.length === 0 && <div className="p-8 text-center text-slate-500">No material requests yet.</div>}
-                {matReqs.map((m) => {
-                  const totalApproved = (m.items || []).reduce((sum, it) => {
-                    const requested = Number(it.quantity || 0);
-                    const approved = it.approved_quantity != null ? Number(it.approved_quantity) : (m.status === "approved" ? requested : 0);
-                    return sum + approved;
-                  }, 0);
-                  const totalPending = (m.items || []).reduce((sum, it) => {
-                    const requested = Number(it.quantity || 0);
-                    const approved = it.approved_quantity != null ? Number(it.approved_quantity) : (m.status === "approved" ? requested : 0);
-                    const pending = m.status === "pending" ? requested : Math.max(0, requested - approved);
-                    return sum + pending;
-                  }, 0);
-
-                  return (
-                    <div key={m.id} className="p-5 flex items-start gap-4 flex-wrap" data-testid={`material-req-${m.id}`}>
-                      <div className="flex-1 min-w-[280px]">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-xs bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded font-semibold">{m.request_no || "—"}</span>
-                          <div className="font-semibold text-slate-900">{m.client_name}</div>
-                          <span className="text-xs text-slate-500">{m.sol_id}</span>
-                          <Badge variant="outline" className={
-                            m.status === "approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                              m.status === "partial_approved" ? "bg-amber-50 text-amber-700 border-amber-200" :
-                                m.status === "rejected" ? "bg-red-50 text-red-700 border-red-200" :
-                                  "bg-slate-100 text-slate-700 border-slate-200"
-                          } data-testid={`mr-status-${m.id}`}>{(m.status || "pending").replace("_", " ").toUpperCase()}</Badge>
-                        </div>
-                        <div className="text-xs text-slate-500 mt-0.5">Requested by {m.requested_by_name} · {dayjs(m.created_at).format("MMM D, YYYY h:mm A")}</div>
-
-                        <div className="text-xs text-slate-600 mt-2 flex gap-4 font-medium">
-                          <span>Approved Qty: <span className="text-slate-900 font-semibold">{totalApproved}</span></span>
-                          <span>Pending Qty: <span className="text-slate-900 font-semibold">{totalPending}</span></span>
-                        </div>
-
-                        <div className="mt-2 overflow-x-auto -mx-1 px-1">
-                          <table className="w-full text-xs min-w-[480px]">
-                            <thead><tr className="text-[10px] uppercase tracking-wider text-slate-400">
-                              <th className="text-left py-1 pr-2">Product</th>
-                              <th className="text-right py-1 px-2">Requested</th>
-                              <th className="text-right py-1 px-2">Available</th>
-                              <th className="text-right py-1 px-2">Approved</th>
-                              <th className="text-right py-1 pl-2">Pending</th>
-                            </tr></thead>
-                            <tbody>
-                              {(m.items || []).map((it) => {
-                                const requested = Number(it.quantity || 0);
-                                const available = Number(it.available_stock || 0);
-                                const approved = it.approved_quantity != null ? Number(it.approved_quantity) : (m.status === "approved" ? requested : 0);
-                                const pending = m.status === "pending" ? requested : Math.max(0, requested - approved);
-                                const short = available < requested;
-                                return (
-                                  <tr key={`${m.id}-${it.product}`} className="border-t border-slate-100">
-                                    <td className="py-1 pr-2 text-slate-700">{it.product} {it.size && <span className="text-slate-400">({it.size})</span>}</td>
-                                    <td className="py-1 px-2 text-right tabular-nums">{requested}</td>
-                                    <td className={`py-1 px-2 text-right tabular-nums ${short ? "text-red-600 font-semibold" : "text-slate-700"}`}>{available}</td>
-                                    <td className="py-1 px-2 text-right tabular-nums">{approved}</td>
-                                    <td className="py-1 pl-2 text-right tabular-nums">{pending}</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                        {m.delivery && <div className="text-xs text-slate-500 mt-2">Challan {m.delivery.challan_number} · {m.delivery.vehicle_number} · {m.delivery.driver_name}</div>}
-                      </div>
-                      {m.status === "pending" && <MaterialApprovalForm request={m} onSubmit={(p) => approveMaterial(m.id, p)} />}
+                {totalPages > 1 && (
+                  <div className="p-4 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
+                    <div className="text-xs text-slate-500">
+                      Showing {(projectPage - 1) * itemsPerPage + 1} to {Math.min(projectPage * itemsPerPage, projects.length)} of {projects.length} projects
                     </div>
-                  );
-                })}
-              </div>
-            </Card>
-          )}
-        </div>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" onClick={() => setProjectPage(p => Math.max(1, p - 1))} disabled={projectPage === 1}>Previous</Button>
+                      <Button variant="outline" size="sm" onClick={() => setProjectPage(p => Math.min(totalPages, p + 1))} disabled={projectPage === totalPages}>Next</Button>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            )}
+          </div>
+        )}
 
-        <div style={{ display: tab === "verifications" ? "block" : "none" }}>
-          {loadedTabs.has("verifications") && loadingTab ? (
-            <Card className="border-slate-200 p-6 space-y-4 animate-pulse">
-              {[1, 2, 3].map((x) => (
-                <div key={x} className="flex justify-between items-center py-4 border-b border-slate-100 last:border-none">
-                  <div className="space-y-2 flex-1">
-                    <div className="h-4 w-48 bg-slate-200 rounded" />
-                    <div className="h-3 w-32 bg-slate-100 rounded" />
+        {canApproval && (
+          <div style={{ display: tab === "materials" ? "block" : "none" }}>
+            {loadedTabs.has("materials") && loadingTab ? (
+              <Card className="border-slate-200 p-6 space-y-4 animate-pulse">
+                {[1, 2, 3].map((x) => (
+                  <div key={x} className="flex justify-between items-center py-4 border-b border-slate-100 last:border-none">
+                    <div className="space-y-2 flex-1">
+                      <div className="h-4 w-32 bg-slate-200 rounded" />
+                      <div className="h-3 w-64 bg-slate-100 rounded" />
+                    </div>
+                    <div className="h-8 w-24 bg-slate-200 rounded" />
                   </div>
-                  <div className="flex gap-2">
-                    <div className="h-8 w-20 bg-slate-200 rounded" />
-                    <div className="h-8 w-20 bg-slate-200 rounded" />
-                  </div>
+                ))}
+              </Card>
+            ) : (
+              <Card className="border-slate-200">
+                <div className="divide-y divide-slate-100">
+                  {matReqs.length === 0 && <div className="p-8 text-center text-slate-500">No material requests yet.</div>}
+                  {matReqs.map((m) => {
+                    const totalApproved = (m.items || []).reduce((sum, it) => {
+                      const requested = Number(it.quantity || 0);
+                      const approved = it.approved_quantity != null ? Number(it.approved_quantity) : (m.status === "approved" ? requested : 0);
+                      return sum + approved;
+                    }, 0);
+                    const totalPending = (m.items || []).reduce((sum, it) => {
+                      const requested = Number(it.quantity || 0);
+                      const approved = it.approved_quantity != null ? Number(it.approved_quantity) : (m.status === "approved" ? requested : 0);
+                      const pending = m.status === "pending" ? requested : Math.max(0, requested - approved);
+                      return sum + pending;
+                    }, 0);
+
+                    return (
+                      <div key={m.id} className="p-5 flex items-start gap-4 flex-wrap" data-testid={`material-req-${m.id}`}>
+                        <div className="flex-1 min-w-[280px]">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-xs bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded font-semibold">{m.request_no || "—"}</span>
+                            <div className="font-semibold text-slate-900">{m.client_name}</div>
+                            <span className="text-xs text-slate-500">{m.sol_id}</span>
+                            <Badge variant="outline" className={
+                              m.status === "approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                                m.status === "partial_approved" ? "bg-amber-50 text-amber-700 border-amber-200" :
+                                  m.status === "rejected" ? "bg-red-50 text-red-700 border-red-200" :
+                                    "bg-slate-100 text-slate-700 border-slate-200"
+                            } data-testid={`mr-status-${m.id}`}>{(m.status || "pending").replace("_", " ").toUpperCase()}</Badge>
+                          </div>
+                          <div className="text-xs text-slate-500 mt-0.5">Requested by {m.requested_by_name} · {dayjs(m.created_at).format("MMM D, YYYY h:mm A")}</div>
+
+                          <div className="text-xs text-slate-600 mt-2 flex gap-4 font-medium">
+                            <span>Approved Qty: <span className="text-slate-900 font-semibold">{totalApproved}</span></span>
+                            <span>Pending Qty: <span className="text-slate-900 font-semibold">{totalPending}</span></span>
+                          </div>
+
+                          <div className="mt-2 overflow-x-auto -mx-1 px-1">
+                            <table className="w-full text-xs min-w-[480px]">
+                              <thead><tr className="text-[10px] uppercase tracking-wider text-slate-400">
+                                <th className="text-left py-1 pr-2">Product</th>
+                                <th className="text-right py-1 px-2">Requested</th>
+                                <th className="text-right py-1 px-2">Available</th>
+                                <th className="text-right py-1 px-2">Approved</th>
+                                <th className="text-right py-1 pl-2">Pending</th>
+                              </tr></thead>
+                              <tbody>
+                                {(m.items || []).map((it) => {
+                                  const requested = Number(it.quantity || 0);
+                                  const available = Number(it.available_stock || 0);
+                                  const approved = it.approved_quantity != null ? Number(it.approved_quantity) : (m.status === "approved" ? requested : 0);
+                                  const pending = m.status === "pending" ? requested : Math.max(0, requested - approved);
+                                  const short = available < requested;
+                                  return (
+                                    <tr key={`${m.id}-${it.product}`} className="border-t border-slate-100">
+                                      <td className="py-1 pr-2 text-slate-700">{it.product} {it.size && <span className="text-slate-400">({it.size})</span>}</td>
+                                      <td className="py-1 px-2 text-right tabular-nums">{requested}</td>
+                                      <td className={`py-1 px-2 text-right tabular-nums ${short ? "text-red-600 font-semibold" : "text-slate-700"}`}>{available}</td>
+                                      <td className="py-1 px-2 text-right tabular-nums">{approved}</td>
+                                      <td className="py-1 pl-2 text-right tabular-nums">{pending}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          {m.delivery && <div className="text-xs text-slate-500 mt-2">Challan {m.delivery.challan_number} · {m.delivery.vehicle_number} · {m.delivery.driver_name}</div>}
+                        </div>
+                        {m.status === "pending" && <MaterialApprovalForm request={m} canApproval={canApproval} canReject={canReject} onSubmit={(p) => approveMaterial(m.id, p)} />}
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-            </Card>
-          ) : (
+              </Card>
+            )}
+          </div>
+        )}
+
+        {canVerification && (
+          <div style={{ display: tab === "verifications" ? "block" : "none" }}>
+            {loadedTabs.has("verifications") && loadingTab ? (
+              <Card className="border-slate-200 p-6 space-y-4 animate-pulse">
+                {[1, 2, 3].map((x) => (
+                  <div key={x} className="flex justify-between items-center py-4 border-b border-slate-100 last:border-none">
+                    <div className="space-y-2 flex-1">
+                      <div className="h-4 w-48 bg-slate-200 rounded" />
+                      <div className="h-3 w-32 bg-slate-100 rounded" />
+                    </div>
+                    <div className="flex gap-2">
+                      <div className="h-8 w-20 bg-slate-200 rounded" />
+                      <div className="h-8 w-20 bg-slate-200 rounded" />
+                    </div>
+                  </div>
+                ))}
+              </Card>
+            ) : (
+              <Card className="border-slate-200">
+                <div className="divide-y divide-slate-100">
+                  {verifs.length === 0 && <div className="p-8 text-center text-slate-500">No verifications submitted yet.</div>}
+                  {verifs.map((v) => (
+                    <div key={v.id} className="p-5 flex items-start gap-4 flex-wrap" data-testid={`verif-${v.id}`}>
+                      <div className="flex-1 min-w-[280px]">
+                        <div className="flex items-center gap-2">
+                          <div className="font-semibold text-slate-900">{v.client_name}</div>
+                          <span className="text-xs text-slate-500">{v.sol_id}</span>
+                          <Badge variant="outline" className={v.status === "approved" ? "bg-emerald-50 text-emerald-700" : v.status === "rejected" || v.status === "rework" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}>{v.status}</Badge>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">Submitted by {v.submitted_by_name} · {dayjs(v.created_at).format("MMM D, h:mm A")}</div>
+                        <div className="text-sm text-slate-700 mt-2">{Object.keys(v.photos || {}).length} photos · {v.inverters?.length || 0} inverters</div>
+                        {v.gps && <div className="text-xs text-slate-500">GPS: {v.gps}</div>}
+                        {v.notes && <div className="text-sm text-slate-600 mt-1">{v.notes}</div>}
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        <VerificationDetailsButton verification={v} />
+                        {v.status === "pending" && (
+                          <>
+                            {canRetry && <Button size="sm" variant="outline" onClick={() => reviewVerif(v.id, "rework")} data-testid={`verif-rework-${v.id}`}>Request Rework</Button>}
+                            {canReject && <Button size="sm" variant="outline" className="text-red-600" onClick={() => reviewVerif(v.id, "rejected")} data-testid={`verif-reject-${v.id}`}>Reject</Button>}
+                            {canApproval && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => reviewVerif(v.id, "approved")} data-testid={`verif-approve-${v.id}`}>Approve</Button>}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {canReject && (
+          <div style={{ display: tab === "rejected" ? "block" : "none" }}>
             <Card className="border-slate-200">
               <div className="divide-y divide-slate-100">
-                {verifs.length === 0 && <div className="p-8 text-center text-slate-500">No verifications submitted yet.</div>}
-                {verifs.map((v) => (
-                  <div key={v.id} className="p-5 flex items-start gap-4 flex-wrap" data-testid={`verif-${v.id}`}>
+                {matReqs.filter(m => m.status === "rejected").length === 0 && verifs.filter(v => v.status === "rejected").length === 0 && (
+                  <div className="p-8 text-center text-slate-500">No rejected items found.</div>
+                )}
+                {verifs.filter(v => v.status === "rejected").map((v) => (
+                  <div key={`rej-v-${v.id}`} className="p-5 flex items-start gap-4 flex-wrap" data-testid={`rejected-verif-${v.id}`}>
                     <div className="flex-1 min-w-[280px]">
                       <div className="flex items-center gap-2">
                         <div className="font-semibold text-slate-900">{v.client_name}</div>
                         <span className="text-xs text-slate-500">{v.sol_id}</span>
-                        <Badge variant="outline" className={v.status === "approved" ? "bg-emerald-50 text-emerald-700" : v.status === "rejected" || v.status === "rework" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}>{v.status}</Badge>
+                        <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">REJECTED VERIFICATION</Badge>
                       </div>
                       <div className="text-xs text-slate-500 mt-0.5">Submitted by {v.submitted_by_name} · {dayjs(v.created_at).format("MMM D, h:mm A")}</div>
-                      <div className="text-sm text-slate-700 mt-2">{Object.keys(v.photos || {}).length} photos · {v.inverters?.length || 0} inverters</div>
-                      {v.gps && <div className="text-xs text-slate-500">GPS: {v.gps}</div>}
                       {v.notes && <div className="text-sm text-slate-600 mt-1">{v.notes}</div>}
                     </div>
-                    <div className="flex gap-2 flex-wrap">
-                      <VerificationDetailsButton verification={v} />
-                      {v.status === "pending" && (
-                        <>
-                          <Button size="sm" variant="outline" onClick={() => reviewVerif(v.id, "rework")} data-testid={`verif-rework-${v.id}`}>Request Rework</Button>
-                          <Button size="sm" variant="outline" className="text-red-600" onClick={() => reviewVerif(v.id, "rejected")} data-testid={`verif-reject-${v.id}`}>Reject</Button>
-                          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => reviewVerif(v.id, "approved")} data-testid={`verif-approve-${v.id}`}>Approve</Button>
-                        </>
-                      )}
+                    <VerificationDetailsButton verification={v} />
+                  </div>
+                ))}
+                {matReqs.filter(m => m.status === "rejected").map((m) => (
+                  <div key={`rej-m-${m.id}`} className="p-5 flex items-start gap-4 flex-wrap" data-testid={`rejected-mr-${m.id}`}>
+                    <div className="flex-1 min-w-[280px]">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded font-semibold">{m.request_no || "—"}</span>
+                        <div className="font-semibold text-slate-900">{m.client_name}</div>
+                        <span className="text-xs text-slate-500">{m.sol_id}</span>
+                        <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">REJECTED MATERIAL REQUEST</Badge>
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">Requested by {m.requested_by_name} · {dayjs(m.created_at).format("MMM D, YYYY h:mm A")}</div>
                     </div>
                   </div>
                 ))}
               </div>
             </Card>
-          )}
-        </div>
+          </div>
+        )}
+
+        {canRetry && (
+          <div style={{ display: tab === "retry" ? "block" : "none" }}>
+            <Card className="border-slate-200">
+              <div className="divide-y divide-slate-100">
+                {verifs.filter(v => v.status === "rework" || v.status === "retry").length === 0 && (
+                  <div className="p-8 text-center text-slate-500">No items flagged for rework/retry.</div>
+                )}
+                {verifs.filter(v => v.status === "rework" || v.status === "retry").map((v) => (
+                  <div key={`retry-v-${v.id}`} className="p-5 flex items-start gap-4 flex-wrap" data-testid={`retry-verif-${v.id}`}>
+                    <div className="flex-1 min-w-[280px]">
+                      <div className="flex items-center gap-2">
+                        <div className="font-semibold text-slate-900">{v.client_name}</div>
+                        <span className="text-xs text-slate-500">{v.sol_id}</span>
+                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">REWORK REQUESTED</Badge>
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">Submitted by {v.submitted_by_name} · {dayjs(v.created_at).format("MMM D, h:mm A")}</div>
+                      {v.notes && <div className="text-sm text-slate-600 mt-1">{v.notes}</div>}
+                    </div>
+                    <div className="flex gap-2">
+                      <VerificationDetailsButton verification={v} />
+                      {canApproval && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => reviewVerif(v.id, "approved")} data-testid={`verif-retry-approve-${v.id}`}>Approve</Button>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        )}
       </Tabs>
 
       <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
@@ -578,7 +685,7 @@ const FF = ({ label, children }) => (
   <div><Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</Label><div className="mt-1.5">{children}</div></div>
 );
 
-function MaterialApprovalForm({ request, onSubmit }) {
+function MaterialApprovalForm({ request, onSubmit, canApproval = true, canReject = true }) {
   const [open, setOpen] = useState(false);
   const [d, setD] = useState({ challan_number: "", vehicle_number: "", driver_name: "", delivery_date: "", remarks: "" });
   const [deliveryPhoto, setDeliveryPhoto] = useState({ id: "", name: "" });
@@ -640,8 +747,8 @@ function MaterialApprovalForm({ request, onSubmit }) {
 
   return (
     <div className="flex gap-2">
-      <Button size="sm" variant="outline" className="text-red-600" onClick={() => onSubmit({ status: "rejected" })} data-testid={`mr-reject-${request?.id || "x"}`}>Reject</Button>
-      <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setOpen(true)} data-testid={`mr-approve-${request?.id || "x"}`}>Approve</Button>
+      {canReject && <Button size="sm" variant="outline" className="text-red-600" onClick={() => onSubmit({ status: "rejected" })} data-testid={`mr-reject-${request?.id || "x"}`}>Reject</Button>}
+      {canApproval && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setOpen(true)} data-testid={`mr-approve-${request?.id || "x"}`}>Approve</Button>}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto" data-testid="mr-approve-dialog">
           <DialogHeader>
