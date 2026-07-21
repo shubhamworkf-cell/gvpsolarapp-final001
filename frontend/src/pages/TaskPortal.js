@@ -7,6 +7,7 @@ import { useTaskList, useInvalidateTasks } from "@/hooks/useTasks";
 import { useMaterialRequestList, useInvalidateMaterialRequests } from "@/hooks/useMaterialRequests";
 import { useComplaintList, useInvalidateComplaints } from "@/hooks/useComplaints";
 import { useClientDetail } from "@/hooks/useClients";
+import { useProjectList } from "@/hooks/useProjects";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import {
@@ -70,6 +71,10 @@ export default function TaskPortal() {
   const [taskPortalTab, setTaskPortalTab] = useState("tasks");
   const [visitedTaskPortalTabs, setVisitedTaskPortalTabs] = useState(new Set(["tasks"]));
 
+  const [mrOpen, setMrOpen] = useState(false);
+  const [mrSearch, setMrSearch] = useState("");
+  const [mrSelectedProject, setMrSelectedProject] = useState(null);
+
   useEffect(() => {
     setVisitedTaskPortalTabs((prev) => {
       if (prev.has(taskPortalTab)) return prev;
@@ -89,6 +94,7 @@ export default function TaskPortal() {
   const { data: tasks = [], isLoading: tasksLoading } = useTaskList(taskFilters);
   const { data: matReqs = [], isLoading: matReqsLoading } = useMaterialRequestList({});
   const { data: complaints = [], isLoading: complaintsLoading } = useComplaintList({ mine: true });
+  const { data: projects = [] } = useProjectList();
 
   const loading = tasksLoading || matReqsLoading || complaintsLoading;
 
@@ -213,24 +219,29 @@ export default function TaskPortal() {
             {isAdmin ? "Personal tasks and team-wide visibility." : "Your assigned work, in order."}
           </p>
         </div>
-        {isAdmin && (
-          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm" data-testid="scope-toggle">
-            <button
-              onClick={() => setScope("mine")}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${scope === "mine" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-              data-testid="scope-mine"
-            >
-              <ClipboardList className="w-3.5 h-3.5 inline mr-1.5" /> My Tasks
-            </button>
-            <button
-              onClick={() => setScope("team")}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${scope === "team" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-              data-testid="scope-team"
-            >
-              <Users2 className="w-3.5 h-3.5 inline mr-1.5" /> All Team Tasks
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button onClick={() => setMrOpen(true)} className="bg-blue-600 hover:bg-blue-700 w-fit" data-testid="new-material-request-btn">
+            <Plus className="w-4 h-4 mr-1" /> New Material Request
+          </Button>
+          {isAdmin && (
+            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm" data-testid="scope-toggle">
+              <button
+                onClick={() => setScope("mine")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${scope === "mine" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+                data-testid="scope-mine"
+              >
+                <ClipboardList className="w-3.5 h-3.5 inline mr-1.5" /> My Tasks
+              </button>
+              <button
+                onClick={() => setScope("team")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${scope === "team" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+                data-testid="scope-team"
+              >
+                <Users2 className="w-3.5 h-3.5 inline mr-1.5" /> All Team Tasks
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Stat cards */}
@@ -389,9 +400,134 @@ export default function TaskPortal() {
           }}
         />
       )}
+      <Dialog open={mrOpen} onOpenChange={(o) => { setMrOpen(o); if (!o) { setMrSelectedProject(null); setMrSearch(""); } }}>
+        <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto" data-testid="new-mr-dialog">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "Outfit" }}>New Material Request</DialogTitle>
+            <DialogDescription className="text-xs">Create an independent material request for a project.</DialogDescription>
+          </DialogHeader>
+
+          {!mrSelectedProject ? (
+            <div className="space-y-4 py-2">
+              <FF label="Step 1: Select Client">
+                <Input
+                  placeholder="Search by client name, SOL ID, or mobile..."
+                  value={mrSearch}
+                  onChange={(e) => setMrSearch(e.target.value)}
+                  className="w-full"
+                  data-testid="mr-client-search"
+                />
+              </FF>
+              <div className="border border-slate-200 rounded-md max-h-[300px] overflow-y-auto divide-y divide-slate-100">
+                {projects
+                  .filter((p) => {
+                    const q = mrSearch.toLowerCase();
+                    return !q ||
+                      p.full_name?.toLowerCase().includes(q) ||
+                      p.sol_id?.toLowerCase().includes(q) ||
+                      p.mobile?.toLowerCase().includes(q);
+                  })
+                  .map((p) => (
+                    <div
+                      key={p.id}
+                      onClick={() => setMrSelectedProject(p)}
+                      className="p-3 hover:bg-slate-50 cursor-pointer flex items-center justify-between transition"
+                      data-testid={`mr-search-item-${p.id}`}
+                    >
+                      <div>
+                        <div className="font-semibold text-sm text-slate-900">{p.full_name}</div>
+                        <div className="text-xs text-slate-500">SOL ID: {p.sol_id} · Mobile: {p.mobile}</div>
+                      </div>
+                      <Plus className="w-4 h-4 text-slate-400" />
+                    </div>
+                  ))}
+                {projects.filter((p) => {
+                  const q = mrSearch.toLowerCase();
+                  return !q ||
+                    p.full_name?.toLowerCase().includes(q) ||
+                    p.sol_id?.toLowerCase().includes(q) ||
+                    p.mobile?.toLowerCase().includes(q);
+                }).length === 0 && (
+                    <div className="p-4 text-center text-xs text-slate-500">No matching clients found.</div>
+                  )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              {/* Step 2: Client Info Display */}
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 relative">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="absolute top-2 right-2 text-xs h-7 px-2"
+                  onClick={() => setMrSelectedProject(null)}
+                  data-testid="mr-change-client-btn"
+                >
+                  Change Client
+                </Button>
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Selected Project Info</div>
+                <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm">
+                  <div>
+                    <span className="text-xs text-slate-500 block">Client Name</span>
+                    <span className="font-semibold text-slate-900">{mrSelectedProject.full_name}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-500 block">Project Number</span>
+                    <span className="font-semibold text-slate-900">{mrSelectedProject.sol_id}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-500 block">Consumer Number</span>
+                    <span className="font-semibold text-slate-900">{mrSelectedProject.consumer_number || "—"}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-500 block">Current Stage</span>
+                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 mt-0.5">
+                      {(() => {
+                        const stages = mrSelectedProject.stages || {};
+                        const order = [
+                          "Handover", "Verification", "MSEDCL Upload", "PM Surya Ghar Upload",
+                          "Meter Testing Completed", "Meter Testing Request", "Document Signed",
+                          "Document Making", "Installation", "Material Delivery", "Quotation",
+                          "Survey", "Onboarding"
+                        ];
+                        return order.find((s) => stages[s]) || "Onboarding";
+                      })()}
+                    </Badge>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-xs text-slate-500 block">Site Address</span>
+                    <span className="text-slate-900">
+                      {[mrSelectedProject.address, mrSelectedProject.city, mrSelectedProject.state, mrSelectedProject.pincode].filter(Boolean).join(", ") || "—"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 3: Material Request Form */}
+              <div className="border-t border-slate-200 pt-4">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Create Material Request</div>
+                <MaterialRequest
+                  clientId={mrSelectedProject.id}
+                  onDone={() => {
+                    setMrOpen(false);
+                    setMrSelectedProject(null);
+                    setMrSearch("");
+                    invalidateMatReqs();
+                    queryClient.invalidateQueries({ queryKey: ["projects"] });
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
+
+const FF = ({ label, children }) => (
+  <div><Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</Label><div className="mt-1.5">{children}</div></div>
+);
 
 function ComplaintMiniRow({ c }) {
   const status = c.status || "Open";

@@ -55,10 +55,6 @@ export default function ProjectExecution() {
     }
   }, [tab]);
 
-  const [mrOpen, setMrOpen] = useState(false);
-  const [mrSearch, setMrSearch] = useState("");
-  const [mrSelectedProject, setMrSelectedProject] = useState(null);
-
   const itemsPerPage = 25;
 
   // React Query queries
@@ -173,9 +169,6 @@ export default function ProjectExecution() {
             <h1 className="text-3xl font-semibold tracking-tight text-slate-900" style={{ fontFamily: "Outfit" }}>Project Execution</h1>
             <div className="h-4 w-96 bg-slate-200 rounded mt-2" />
           </div>
-          <Button disabled className="bg-blue-600 hover:bg-blue-700 w-fit">
-            <Plus className="w-4 h-4 mr-1" /> New Material Request
-          </Button>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 animate-pulse">
@@ -198,9 +191,6 @@ export default function ProjectExecution() {
           <h1 className="text-3xl font-semibold tracking-tight text-slate-900" style={{ fontFamily: "Outfit" }}>Project Execution</h1>
           <p className="text-sm text-slate-500 mt-1">Control the complete installation workflow for onboarded clients.</p>
         </div>
-        <Button onClick={() => setMrOpen(true)} className="bg-blue-600 hover:bg-blue-700 w-fit" data-testid="new-material-request-btn">
-          <Plus className="w-4 h-4 mr-1" /> New Material Request
-        </Button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
@@ -553,128 +543,6 @@ export default function ProjectExecution() {
               {assigning ? "Assigning..." : "Assign"}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={mrOpen} onOpenChange={(o) => { setMrOpen(o); if (!o) { setMrSelectedProject(null); setMrSearch(""); } }}>
-        <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto" data-testid="new-mr-dialog">
-          <DialogHeader>
-            <DialogTitle style={{ fontFamily: "Outfit" }}>New Material Request</DialogTitle>
-            <DialogDescription className="text-xs">Create an independent material request for a project.</DialogDescription>
-          </DialogHeader>
-
-          {!mrSelectedProject ? (
-            <div className="space-y-4 py-2">
-              <FF label="Step 1: Select Client">
-                <Input
-                  placeholder="Search by client name, SOL ID, or mobile..."
-                  value={mrSearch}
-                  onChange={(e) => setMrSearch(e.target.value)}
-                  className="w-full"
-                  data-testid="mr-client-search"
-                />
-              </FF>
-              <div className="border border-slate-200 rounded-md max-h-[300px] overflow-y-auto divide-y divide-slate-100">
-                {projects
-                  .filter((p) => {
-                    const q = mrSearch.toLowerCase();
-                    return !q ||
-                      p.full_name?.toLowerCase().includes(q) ||
-                      p.sol_id?.toLowerCase().includes(q) ||
-                      p.mobile?.toLowerCase().includes(q);
-                  })
-                  .map((p) => (
-                    <div
-                      key={p.id}
-                      onClick={() => setMrSelectedProject(p)}
-                      className="p-3 hover:bg-slate-50 cursor-pointer flex items-center justify-between transition"
-                      data-testid={`mr-search-item-${p.id}`}
-                    >
-                      <div>
-                        <div className="font-semibold text-sm text-slate-900">{p.full_name}</div>
-                        <div className="text-xs text-slate-500">SOL ID: {p.sol_id} · Mobile: {p.mobile}</div>
-                      </div>
-                      <Plus className="w-4 h-4 text-slate-400" />
-                    </div>
-                  ))}
-                {projects.filter((p) => {
-                  const q = mrSearch.toLowerCase();
-                  return !q ||
-                    p.full_name?.toLowerCase().includes(q) ||
-                    p.sol_id?.toLowerCase().includes(q) ||
-                    p.mobile?.toLowerCase().includes(q);
-                }).length === 0 && (
-                    <div className="p-4 text-center text-xs text-slate-500">No matching clients found.</div>
-                  )}
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4 py-2">
-              {/* Step 2: Client Info Display */}
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 relative">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="absolute top-2 right-2 text-xs h-7 px-2"
-                  onClick={() => setMrSelectedProject(null)}
-                  data-testid="mr-change-client-btn"
-                >
-                  Change Client
-                </Button>
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Selected Project Info</div>
-                <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm">
-                  <div>
-                    <span className="text-xs text-slate-500 block">Client Name</span>
-                    <span className="font-semibold text-slate-900">{mrSelectedProject.full_name}</span>
-                  </div>
-                  <div>
-                    <span className="text-xs text-slate-500 block">Project Number</span>
-                    <span className="font-semibold text-slate-900">{mrSelectedProject.sol_id}</span>
-                  </div>
-                  <div>
-                    <span className="text-xs text-slate-500 block">Consumer Number</span>
-                    <span className="font-semibold text-slate-900">{mrSelectedProject.consumer_number || "—"}</span>
-                  </div>
-                  <div>
-                    <span className="text-xs text-slate-500 block">Current Stage</span>
-                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 mt-0.5">
-                      {(() => {
-                        const stages = mrSelectedProject.stages || {};
-                        const order = [
-                          "Handover", "Verification", "MSEDCL Upload", "PM Surya Ghar Upload",
-                          "Meter Testing Completed", "Meter Testing Request", "Document Signed",
-                          "Document Making", "Installation", "Material Delivery", "Quotation",
-                          "Survey", "Onboarding"
-                        ];
-                        return order.find((s) => stages[s]) || "Onboarding";
-                      })()}
-                    </Badge>
-                  </div>
-                  <div className="col-span-2">
-                    <span className="text-xs text-slate-500 block">Site Address</span>
-                    <span className="text-slate-900">
-                      {[mrSelectedProject.address, mrSelectedProject.city, mrSelectedProject.state, mrSelectedProject.pincode].filter(Boolean).join(", ") || "—"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Step 3: Material Request Form */}
-              <div className="border-t border-slate-200 pt-4">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Create Material Request</div>
-                <MaterialRequest
-                  clientId={mrSelectedProject.id}
-                  onDone={() => {
-                    setMrOpen(false);
-                    setMrSelectedProject(null);
-                    setMrSearch("");
-                    invalidateProjects();
-                    invalidateMatReqs();
-                  }}
-                />
-              </div>
-            </div>
-          )}
         </DialogContent>
       </Dialog>
     </div>
