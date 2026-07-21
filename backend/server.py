@@ -1300,7 +1300,8 @@ async def _deferred_startup_tasks():
     await asyncio.sleep(5)  # Wait 5s for the function to be warm before doing heavy work
     try:
         await auto_migrate_product_variants()
-        logger.info("Deferred product variant migration complete")
+        await sync_inventory_master()
+        logger.info("Deferred product variant migration & inventory synchronization complete")
     except Exception as e:
         logger.warning(f"Deferred migration error: {e}")
     # Schedule daily cleanup — sleep first so the infinite loop starts harmlessly
@@ -4439,6 +4440,66 @@ async def ensure_product(company_id: str, name: str, size: str = "", category: s
     }
     await db.products.insert_one(doc)
     return doc
+
+async def sync_inventory_master(company_id: Optional[str] = None):
+    """
+    PERMANENT INVENTORY RECONCILIATION ENGINE:
+    History (inward_entries + outward_entries) is the ONLY source of truth.
+    1. Scans History (inward_entries & outward_entries).
+    2. Groups all unique product specifications (Product Name, Size, Unit) per company.
+    3. Auto-creates any missing Product Master records in db.products.
+    4. Cleans up duplicate Product Master records for identical canonical specifications.
+    """
+    try:
+        query = {"company_id": company_id} if company_id else {}
+        inwards = await db.inward_entries.find(query, {"_id": 0, "company_id": 1, "product": 1, "size": 1, "unit": 1, "category": 1, "brand": 1}).to_list(100000)
+        outwards = await db.outward_entries.find(query, {"_id": 0, "company_id": 1, "product": 1, "size": 1, "unit": 1, "category": 1, "brand": 1}).to_list(100000)
+        
+        all_transactions = (inwards or []) + (outwards or [])
+        history_specs = {}
+        for entry in all_transactions:
+            cid = entry.get("company_id")
+            pn = norm_product_name(entry.get("product"))
+            ps = norm_str(entry.get("size"))
+            pu = norm_unit(entry.get("unit"))
+            if not cid or not pn:
+                continue
+            key = (cid, pn, ps, pu)
+            if key not in history_specs:
+                history_specs[key] = {"category": entry.get("category") or "", "brand": entry.get("brand") or ""}
+
+        existing_products = await db.products.find(query).to_list(100000)
+        spec_to_prods = {}
+        for p in existing_products:
+            cid = p.get("company_id")
+            pn = norm_product_name(p.get("name"))
+            ps = norm_str(p.get("size"))
+            pu = norm_unit(p.get("unit"))
+            if not cid or not pn:
+                continue
+            key = (cid, pn, ps, pu)
+            if key not in spec_to_prods:
+                spec_to_prods[key] = []
+            spec_to_prods[key].append(p)
+
+        # Deduplicate duplicates
+        for key, prods in spec_to_prods.items():
+            if len(prods) > 1:
+                primary = prods[0]
+                for dup in prods[1:]:
+                    try:
+                        await db.products.delete_one({"id": dup["id"]})
+                    except Exception:
+                        pass
+                spec_to_prods[key] = [primary]
+
+        # Auto-create missing
+        for key, h_data in history_specs.items():
+            cid, pn, ps, pu = key
+            if key not in spec_to_prods or len(spec_to_prods[key]) == 0:
+                await ensure_product(cid, pn, size=ps, unit=pu, category=h_data.get("category"), brand=h_data.get("brand"))
+    except Exception as e:
+        logger.warning(f"sync_inventory_master error: {e}")
 
 
 def numeric_only(s: Optional[str]) -> str:
