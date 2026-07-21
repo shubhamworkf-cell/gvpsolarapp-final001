@@ -311,8 +311,7 @@ class AggregateCursorAdapter:
             elif "$group" in stage:
                 group_dict = stage["$group"]
         
-        client_to_use = service_supabase if service_supabase is not None else default_supabase
-        builder = client_to_use.table(self.table_name).select("*")
+        builder = supabase.table(self.table_name).select("*")
         if "company_id" in match_dict and not isinstance(match_dict["company_id"], dict):
             builder = builder.eq("company_id", match_dict["company_id"])
         
@@ -4576,13 +4575,14 @@ def _save_local_high_value_product(product_name: str, is_high_value: bool):
 
 @api_router.get("/inventory/products")
 async def list_products(user=Depends(get_current_user)):
-    items = await db.products.find({"company_id": user["company_id"]}, {"_id": 0}).sort("name", 1).to_list(2000)
+    cid = user["company_id"]
+    items = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(2000)
     in_agg = await db.inward_entries.aggregate([
-        {"$match": {"company_id": user["company_id"]}},
+        {"$match": {"company_id": cid}},
         {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(2000)
     out_agg = await db.outward_entries.aggregate([
-        {"$match": {"company_id": user["company_id"], "status": {"$ne": "Pending"}}},
+        {"$match": {"company_id": cid, "status": {"$ne": "Pending"}}},
         {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(2000)
     
@@ -4603,6 +4603,23 @@ async def list_products(user=Depends(get_current_user)):
         else:
             p_k = (str(_id).strip().upper(), "", "Nos")
         out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
+
+    # Auto-heal: Ensure any product specification present in History exists in Product Master items
+    all_history_keys = set(in_map.keys()) | set(out_map.keys())
+    existing_items_keys = {
+        (p["name"].strip().upper(), (p.get("size") or "").strip(), (p.get("unit") or "Nos").strip())
+        for p in items
+    }
+    missing_keys = all_history_keys - existing_items_keys
+    if missing_keys:
+        for (m_name, m_size, m_unit) in missing_keys:
+            if m_name:
+                try:
+                    new_prod = await ensure_product(cid, m_name, size=m_size, unit=m_unit)
+                    if new_prod and isinstance(new_prod, dict):
+                        items.append(new_prod)
+                except Exception as e:
+                    logger.warning(f"Auto-heal product creation failed for {m_name}: {e}")
 
     local_rates = _load_local_rates()
     local_high_values = _load_local_high_value_products()
