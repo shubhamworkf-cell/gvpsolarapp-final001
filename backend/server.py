@@ -68,6 +68,34 @@ def _cache_invalidate_user(user_id: str) -> None:
         for k in stale:
             del _auth_cache[k]
 
+COMPANY_CACHE_TTL_S = 600  # 10 minutes
+_company_cache: Dict[str, Dict] = {}        # company_id -> {"company": dict, "exp": float}
+_company_cache_lock = threading.Lock()
+
+def _cache_get_company(company_id: str) -> Optional[Dict]:
+    if not company_id: return None
+    with _company_cache_lock:
+        entry = _company_cache.get(company_id)
+        if entry and entry["exp"] > time.monotonic():
+            return entry["company"]
+        if entry:
+            del _company_cache[company_id]
+    return None
+
+def _cache_put_company(company_id: str, company: Dict) -> None:
+    if not company_id or not company: return
+    with _company_cache_lock:
+        if len(_company_cache) > 1000:
+            oldest = sorted(_company_cache, key=lambda k: _company_cache[k]["exp"])[:200]
+            for k in oldest:
+                del _company_cache[k]
+        _company_cache[company_id] = {"company": company, "exp": time.monotonic() + COMPANY_CACHE_TTL_S}
+
+def _cache_invalidate_company(company_id: str) -> None:
+    if not company_id: return
+    with _company_cache_lock:
+        _company_cache.pop(company_id, None)
+
 supabase_url = os.environ['SUPABASE_URL']
 # Primary key used historically (may be anon or service role)
 supabase_key = os.environ.get('SUPABASE_KEY')
@@ -1873,21 +1901,35 @@ async def register_company(data: RegisterCompanyIn, response: Response):
     company_doc.pop("_id", None)
     return {"token": token, "refresh_token": refresh_token, "user": serialize_user(user_doc), "company": company_doc}
 
+def _lookup_user_for_login_sync(ident: str, raw: str):
+    rpc_res = get_rpc_client().rpc("lookup_user_for_login", {
+        "p_email": ident,
+        "p_mobile": raw,
+        "p_employee_id": raw
+    }).execute()
+    return rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
+
+def _supabase_sign_in_sync(email: str, password: str):
+    return supabase.auth.sign_in_with_password({
+        "email": email,
+        "password": password
+    })
+
+def _fetch_company_sync(company_id: str):
+    company_rpc = get_rpc_client().rpc("get_company_by_id", {"p_company_id": company_id}).execute()
+    return company_rpc.data[0] if isinstance(company_rpc.data, list) and company_rpc.data else None
+
 @api_router.post("/auth/login")
 async def login(data: LoginIn, response: Response):
     raw = data.identifier.strip()
     ident = raw.lower()
-    # Use SECURITY DEFINER RPC to bypass RLS — anon key cannot SELECT public.users directly
+    
     try:
-        rpc_res = get_rpc_client().rpc("lookup_user_for_login", {
-            "p_email": ident,
-            "p_mobile": raw,
-            "p_employee_id": raw
-        }).execute()
-        user = rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
+        user = await asyncio.to_thread(_lookup_user_for_login_sync, ident, raw)
     except Exception as e:
         logger.error(f"lookup_user_for_login RPC failed: {e}")
         user = None
+
     if not user or not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if user.get("status") == "Inactive":
@@ -1896,10 +1938,7 @@ async def login(data: LoginIn, response: Response):
     email_for_auth = str(user.get("email") or "")
 
     try:
-        auth_res = supabase.auth.sign_in_with_password({
-            "email": email_for_auth,
-            "password": data.password
-        })
+        auth_res = await asyncio.to_thread(_supabase_sign_in_sync, email_for_auth, data.password)
         if not auth_res or not auth_res.session:
             raise HTTPException(status_code=401, detail="Invalid credentials")
         token = auth_res.session.access_token
@@ -1914,12 +1953,22 @@ async def login(data: LoginIn, response: Response):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     response.set_cookie("access_token", token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
-    try:
-        company_rpc = get_rpc_client().rpc("get_company_by_id", {"p_company_id": user.get("company_id") or ""}).execute()
-        company = company_rpc.data[0] if isinstance(company_rpc.data, list) and company_rpc.data else await db.companies.find_one({"id": user.get("company_id") or ""}, {"_id": 0})
-    except Exception as e:
-        logger.error(f"Failed to fetch company during login: {e}")
-        company = None
+    
+    cid = user.get("company_id") or ""
+    company = _cache_get_company(cid)
+    if not company and cid:
+        try:
+            company = await asyncio.to_thread(_fetch_company_sync, cid)
+            if not company:
+                company = await db.companies.find_one({"id": cid}, {"_id": 0})
+            if company:
+                _cache_put_company(cid, company)
+        except Exception as e:
+            logger.error(f"Failed to fetch company during login: {e}")
+            company = None
+
+    # Proactively seed auth cache so subsequent requests (/auth/me, /clients, etc.) resolve instantly
+    _cache_put_user(token, user)
     return {"token": token, "refresh_token": refresh_token, "user": serialize_user(user), "company": company}
 
 @api_router.post("/auth/logout")
@@ -2311,6 +2360,7 @@ async def update_company(data: CompanyUpdate, request: Request, user=Depends(get
         await db.companies.update_one({"id": user["company_id"]}, {"$set": update})
         
     await log_activity(user["company_id"], user["id"], user["name"], "Updated Company Profile")
+    _cache_invalidate_company(user["company_id"])
     
     projection = {
         "_id": 0,
