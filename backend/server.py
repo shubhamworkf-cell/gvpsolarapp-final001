@@ -1157,8 +1157,37 @@ async def auto_migrate_product_variants():
     try:
         inward_entries = await db.inward_entries.find({}, {"company_id": 1, "product": 1, "size": 1, "unit": 1}).to_list(100000)
         outward_entries = await db.outward_entries.find({}, {"company_id": 1, "product": 1, "size": 1, "unit": 1}).to_list(100000)
+        all_entries = (inward_entries or []) + (outward_entries or [])
+
+        # Group non-empty sizes by (company_id, product_name)
+        spec_map: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
+        for entry in all_entries:
+            cid = entry.get("company_id")
+            pn = (entry.get("product") or "").strip().upper()
+            ps = (entry.get("size") or "").strip()
+            unit = (entry.get("unit") or "Nos").strip()
+            if not cid or not pn:
+                continue
+            k = (cid, pn)
+            if k not in spec_map:
+                spec_map[k] = []
+            if (ps, unit) not in spec_map[k]:
+                spec_map[k].append((ps, unit))
+
+        # Backfill empty-size products in db.products if transaction size specs exist
+        empty_size_prods = await db.products.find({"size": {"$in": ["", None]}}).to_list(10000)
+        for prod in empty_size_prods:
+            cid = prod.get("company_id")
+            pn = (prod.get("name") or "").strip().upper()
+            k = (cid, pn)
+            if k in spec_map and len(spec_map[k]) > 0:
+                first_size, first_unit = spec_map[k][0]
+                if first_size:
+                    await db.products.update_one({"id": prod["id"]}, {"$set": {"size": first_size, "unit": first_unit or prod.get("unit", "Nos")}})
+
+        # Ensure distinct product records exist for all (cid, pn, ps, unit) tuples
         seen = set()
-        for entry in (inward_entries or []) + (outward_entries or []):
+        for entry in all_entries:
             cid = entry.get("company_id")
             pn = (entry.get("product") or "").strip().upper()
             ps = (entry.get("size") or "").strip()
