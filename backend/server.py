@@ -5344,6 +5344,7 @@ async def update_inward(entry_id: str, data: InwardIn, user=Depends(get_current_
         _save_local_assets(non_inward_assets)
         
     await log_activity(cid, user["id"], user["name"], "Inward Updated", f"{pn} × {data.quantity}")
+    await sync_inventory_master(cid)
     res = await db.inward_entries.find_one({"id": entry_id, "company_id": cid}, {"_id": 0})
     return _enrich_inward_with_assets(parse_inward_client_info(res))
 
@@ -5363,6 +5364,7 @@ async def delete_inward(entry_id: str, user=Depends(get_current_user)):
     _save_local_assets(filtered_assets)
     
     await log_activity(cid, user["id"], user["name"], "Inward Deleted", f"{existing.get('product')} × {existing.get('quantity')}")
+    await sync_inventory_master(cid)
     return {"ok": True}
 
 @api_router.post("/inventory/outward")
@@ -5583,6 +5585,7 @@ async def update_outward(entry_id: str, data: OutwardIn, user=Depends(get_curren
     _save_local_assets(all_assets)
     
     await log_activity(cid, user["id"], user["name"], "Outward Updated", f"{pn} × {data.quantity}")
+    await sync_inventory_master(cid)
     res = await db.outward_entries.find_one({"id": entry_id, "company_id": cid}, {"_id": 0})
     return _enrich_outward_with_assets(res)
 
@@ -5608,6 +5611,7 @@ async def delete_outward(entry_id: str, user=Depends(get_current_user)):
     _save_local_assets(all_assets)
     
     await log_activity(cid, user["id"], user["name"], "Outward Deleted", f"{existing.get('product')} × {existing.get('quantity')}")
+    await sync_inventory_master(cid)
     return {"ok": True}
 
 # ---------- High Value Assets ----------
@@ -6113,6 +6117,7 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
 
     await log_activity(cid, user["id"], user["name"], "Bulk Inward Import", f"{len(inserted)} entries")
     await push_notification(cid, "admin", "Bulk Inventory Import", f"{user['name']} imported {len(inserted)} inward entries via AI")
+    await sync_inventory_master(cid)
     return {"inserted": len(inserted), "ids": inserted}
 
 
@@ -6196,6 +6201,7 @@ async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
 
     await log_activity(cid, user["id"], user["name"], "Bulk Outward Import", f"{len(inserted)} entries")
     await push_notification(cid, "admin", "Bulk Outward Import", f"{user['name']} imported {len(inserted)} outward entries via AI")
+    await sync_inventory_master(cid)
     return {"inserted": len(inserted), "ids": inserted}
 
 
