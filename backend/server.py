@@ -311,12 +311,18 @@ class AggregateCursorAdapter:
             elif "$group" in stage:
                 group_dict = stage["$group"]
         
-        builder = supabase.table(self.table_name).select("*")
+        client_to_use = service_supabase if service_supabase is not None else default_supabase
+        builder = client_to_use.table(self.table_name).select("*")
         if "company_id" in match_dict and not isinstance(match_dict["company_id"], dict):
             builder = builder.eq("company_id", match_dict["company_id"])
         
-        res = builder.execute()
-        rows = res.data or []
+        builder = builder.limit(100000)
+        try:
+            res = builder.execute()
+            rows = res.data or []
+        except Exception as e:
+            logger.warning(f"AggregateCursorAdapter query failed for {self.table_name}: {e}")
+            rows = []
         
         filtered_rows = []
         for row in rows:
@@ -346,36 +352,54 @@ class AggregateCursorAdapter:
                 filtered_rows.append(row)
                 
         group_by_field = group_dict.get("_id")
-        if isinstance(group_by_field, str) and group_by_field.startswith("$"):
-            group_field_name = group_by_field[1:]
-        else:
-            group_field_name = None
-            
+        
         groups = {}
         for row in filtered_rows:
-            g_val = row.get(group_field_name) if group_field_name else None
-            if g_val not in groups:
-                groups[g_val] = []
-            groups[g_val].append(row)
+            if isinstance(group_by_field, dict):
+                eval_id = {}
+                for alias, expr in group_by_field.items():
+                    if isinstance(expr, str) and expr.startswith("$"):
+                        f_name = expr[1:]
+                        eval_id[alias] = row.get(f_name)
+                    else:
+                        eval_id[alias] = expr
+                g_key = tuple(sorted((k, str(v or "").strip()) for k, v in eval_id.items()))
+                if g_key not in groups:
+                    groups[g_key] = {"_id": eval_id, "rows": []}
+                groups[g_key]["rows"].append(row)
+            elif isinstance(group_by_field, str) and group_by_field.startswith("$"):
+                f_name = group_by_field[1:]
+                g_val = row.get(f_name)
+                g_key = str(g_val) if g_val is not None else None
+                if g_key not in groups:
+                    groups[g_key] = {"_id": g_val, "rows": []}
+                groups[g_key]["rows"].append(row)
+            else:
+                g_key = None
+                if g_key not in groups:
+                    groups[g_key] = {"_id": None, "rows": []}
+                groups[g_key]["rows"].append(row)
             
         result = []
-        for g_val, group_rows in groups.items():
-            out = {"_id": g_val}
+        for g_key, grp_data in groups.items():
+            group_rows = grp_data["rows"]
+            out = {"_id": grp_data["_id"]}
             for agg_k, agg_v in group_dict.items():
                 if agg_k == "_id":
                     continue
-                for op, val in agg_v.items():
-                    if op == "$sum":
-                        if isinstance(val, (int, float)):
-                            out[agg_k] = sum(val for _ in group_rows)
-                        elif isinstance(val, str) and val.startswith("$"):
-                            f_name = val[1:]
-                            out[agg_k] = sum(float(r.get(f_name) or 0) for r in group_rows)
-                    elif op == "$max":
-                        if isinstance(val, str) and val.startswith("$"):
-                            f_name = val[1:]
-                            vals = [r.get(f_name) for r in group_rows if r.get(f_name) is not None]
-                            out[agg_k] = max(vals) if vals else None
+                if isinstance(agg_v, dict):
+                    for op, val in agg_v.items():
+                        if op == "$sum":
+                            if isinstance(val, (int, float)):
+                                out[agg_k] = sum(val for _ in group_rows)
+                            elif isinstance(val, str) and val.startswith("$"):
+                                f_name = val[1:]
+                                out[agg_k] = sum(float(r.get(f_name) or 0) for r in group_rows)
+                        elif op == "$max":
+                            if isinstance(val, str) and val.startswith("$"):
+                                f_name = val[1:]
+                                vals = [r.get(f_name) for r in group_rows if r.get(f_name) is not None]
+                                out[agg_k] = max(vals) if vals else None
             result.append(out)
             
         return result
@@ -7423,9 +7447,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         prod_name = (out.get("product") or "").strip().upper()
         if not prod_name:
             continue
-        key = prod_name
-        size = out.get("size") or ""
-        unit = out.get("unit") or "Nos"
+        size = (out.get("size") or "").strip()
+        unit = (out.get("unit") or "Nos").strip()
+        key = (prod_name, size, unit)
         qty = float(out.get("quantity") or 0)
         date_str = out.get("date") or out.get("created_at") or ""
         
@@ -7449,9 +7473,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         prod_name = (inv.get("product") or "").strip().upper()
         if not prod_name:
             continue
-        key = prod_name
-        size = inv.get("size") or ""
-        unit = inv.get("unit") or "Nos"
+        size = (inv.get("size") or "").strip()
+        unit = (inv.get("unit") or "Nos").strip()
+        key = (prod_name, size, unit)
         qty = float(inv.get("quantity") or 0)
         date_str = inv.get("date") or inv.get("created_at") or ""
         
