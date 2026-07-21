@@ -2495,6 +2495,7 @@ async def download_file(file_id: str, request: Request, auth: Optional[str] = Qu
 async def list_clients(
     user=Depends(get_current_user),
     limit: int = 200,
+    skip: int = 0,
     search: Optional[str] = None,
     status: Optional[str] = None,
     phase_type: Optional[str] = None,
@@ -2507,9 +2508,8 @@ async def list_clients(
         q["phase_type"] = phase_type
     if subsidy_eligible is not None:
         q["subsidy_eligible"] = subsidy_eligible
-    # Cap max at 500 but default to 200 for faster loads
     limit = min(limit, 500)
-    # Use a lean projection — only fields needed by Dashboard and Clients list views
+    skip = max(0, skip)
     projection = {
         "_id": 0, "id": 1, "sol_id": 1, "full_name": 1, "mobile": 1,
         "consumer_number": 1, "status": 1, "system_kw": 1, "phase_type": 1,
@@ -2524,7 +2524,7 @@ async def list_clients(
             {"consumer_number": {"$regex": s}},
             {"sol_id":          {"$regex": s, "$options": "i"}},
         ]
-    return await db.clients.find(q, projection).sort("created_at", -1).to_list(limit)
+    return await db.clients.find(q, projection).sort("created_at", -1).skip(skip).to_list(limit)
 
 @api_router.get("/clients/stats")
 async def client_stats(user=Depends(get_current_user)):
@@ -3385,13 +3385,15 @@ async def create_task(data: TaskIn, user=Depends(get_current_user)):
     return doc
 
 @api_router.get("/tasks")
-async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = None, mine: bool = False):
+async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = None, mine: bool = False, limit: int = 500, skip: int = 0):
     if not has_perm(user, "task_portal", "view"):
         raise HTTPException(status_code=403, detail="Missing permission: task_portal.view")
     q = {"company_id": user["company_id"]}
     if client_id: q["client_id"] = client_id
     if mine or user["role"] not in ("Admin", "Supervisor"):
         q["assigned_to"] = user["id"]
+    limit = min(limit, 500)
+    skip = max(0, skip)
     projection = {
         "_id": 0,
         "id": 1,
@@ -3411,7 +3413,7 @@ async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = 
         "created_at": 1,
         "updated_at": 1,
     }
-    return await db.tasks.find(q, projection).sort("updated_at", -1).to_list(500)
+    return await db.tasks.find(q, projection).sort("updated_at", -1).skip(skip).to_list(limit)
 
 @api_router.patch("/tasks/{task_id}")
 async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_user)):
@@ -4036,18 +4038,16 @@ async def mark_all_read(user=Depends(get_current_user)):
 
 # ---------- Activity ----------
 @api_router.get("/activity-logs")
-async def list_logs(user=Depends(get_current_user), page: int = 1, page_size: int = 100):
+async def list_logs(user=Depends(get_current_user), page: int = 1, page_size: int = 30, all_time: bool = False):
     try:
         from datetime import datetime, timedelta, timezone
         page = max(1, page)
         page_size = max(1, min(page_size, 200))
         
-        # Display only logs from the last 3 days
-        three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
-        query = {
-            "company_id": user["company_id"],
-            "created_at": {"$gte": three_days_ago}
-        }
+        query: Dict[str, Any] = {"company_id": user["company_id"]}
+        if not all_time and page == 1:
+            three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+            query["created_at"] = {"$gte": three_days_ago}
         
         projection = {"_id": 0, "id": 1, "created_at": 1, "user_name": 1, "action": 1, "target": 1}
         total = await db.activity_logs.count_documents(query)

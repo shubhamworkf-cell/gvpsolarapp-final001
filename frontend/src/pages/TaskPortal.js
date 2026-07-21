@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import dayjs from "dayjs";
 import { ProductAutocompleteInput } from "@/components/Inventory/_shared";
+import { useDebounce } from "@/hooks/useDebounce";
 
 const VERIF_PHOTOS = ["Site Photo", "Client With Solar", "Panel Photo", "Inverter Photo", "ACDB Photo", "DCDB Photo", "Net Meter Photo", "Serial Number Photo"];
 const SURVEY_PHOTOS = ["Client Photo", "Roof Photo", "Panel Layout", "Meter Location", "Site Access"];
@@ -73,6 +74,7 @@ export default function TaskPortal() {
 
   const [mrOpen, setMrOpen] = useState(false);
   const [mrSearch, setMrSearch] = useState("");
+  const debouncedMrSearch = useDebounce(mrSearch, 300);
   const [mrSelectedProject, setMrSelectedProject] = useState(null);
 
   useEffect(() => {
@@ -421,7 +423,7 @@ export default function TaskPortal() {
               <div className="border border-slate-200 rounded-md max-h-[300px] overflow-y-auto divide-y divide-slate-100">
                 {projects
                   .filter((p) => {
-                    const q = mrSearch.toLowerCase();
+                    const q = debouncedMrSearch.toLowerCase();
                     return !q ||
                       p.full_name?.toLowerCase().includes(q) ||
                       p.sol_id?.toLowerCase().includes(q) ||
@@ -442,7 +444,7 @@ export default function TaskPortal() {
                     </div>
                   ))}
                 {projects.filter((p) => {
-                  const q = mrSearch.toLowerCase();
+                  const q = debouncedMrSearch.toLowerCase();
                   return !q ||
                     p.full_name?.toLowerCase().includes(q) ||
                     p.sol_id?.toLowerCase().includes(q) ||

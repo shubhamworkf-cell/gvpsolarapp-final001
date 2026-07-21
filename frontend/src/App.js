@@ -6,12 +6,11 @@ dayjs.extend(relativeTime);
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "sonner";
-import Layout from "@/components/Layout";
-
 // Eager load Login for instant auth rendering
 import Login from "@/pages/Login";
 
-// Lazy load secondary pages for route code-splitting
+// Lazy load layout & secondary pages for route code-splitting
+const Layout = lazy(() => import("@/components/Layout"));
 const Register = lazy(() => import("@/pages/Register"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Clients = lazy(() => import("@/pages/Clients"));
@@ -54,7 +53,11 @@ function Protected({ children }) {
     );
   }
   if (!user) return <Navigate to="/login" replace />;
-  return <Layout>{children}</Layout>;
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="text-slate-500">Loading…</div></div>}>
+      <Layout>{children}</Layout>
+    </Suspense>
+  );
 }
 
 function PublicOnly({ children }) {

@@ -73,6 +73,24 @@ let webpackConfig = {
                 priority: 40,
                 chunks: "all",
               },
+              charts: {
+                test: /[\\/]node_modules[\\/](recharts)[\\/]/,
+                name: "charts-vendor",
+                priority: 50,
+                chunks: "async",
+              },
+              xlsx: {
+                test: /[\\/]node_modules[\\/](xlsx)[\\/]/,
+                name: "xlsx-vendor",
+                priority: 50,
+                chunks: "async",
+              },
+              motion: {
+                test: /[\\/]node_modules[\\/](framer-motion)[\\/]/,
+                name: "motion-vendor",
+                priority: 45,
+                chunks: "async",
+              },
               lib: {
                 test: /[\\/]node_modules[\\/](@tanstack|axios|date-fns|dayjs|lodash)[\\/]/,
                 name: "commons",
@@ -80,7 +98,7 @@ let webpackConfig = {
                 chunks: "all",
               },
               ui: {
-                test: /[\\/]node_modules[\\/](@radix-ui|lucide-react|framer-motion|recharts)[\\/]/,
+                test: /[\\/]node_modules[\\/](@radix-ui|lucide-react)[\\/]/,
                 name: "ui-vendor",
                 priority: 20,
                 chunks: "all",

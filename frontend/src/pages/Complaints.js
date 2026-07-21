@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import RaiseComplaintDialog, { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, SEND_TO_TARGETS } from "@/components/RaiseComplaintDialog";
 import { usePermission } from "@/lib/permissions";
+import { useDebounce } from "@/hooks/useDebounce";
 
 const STATUS_STYLES = {
   Open: "bg-slate-100 text-slate-700 border-slate-200",
@@ -41,7 +42,7 @@ export default function Complaints() {
 
   const [openDialog, setOpenDialog] = useState(false);
   const [search, setSearch] = useState("");
-  const [querySearch, setQuerySearch] = useState("");
+  const debouncedSearch = useDebounce(search, 300);
 
   // Admin filters (only used in 'all' view)
   const [scope, setScope] = useState(isAdmin ? "all" : "mine");
@@ -59,9 +60,9 @@ export default function Complaints() {
     if (filterCategory !== "all") f.category = filterCategory;
     if (filterStartDate) f.start_date = filterStartDate;
     if (filterEndDate) f.end_date = filterEndDate;
-    if (querySearch) f.search = querySearch;
+    if (debouncedSearch) f.search = debouncedSearch;
     return f;
-  }, [scope, filterStatus, filterPriority, filterCategory, filterStartDate, filterEndDate, querySearch]);
+  }, [scope, filterStatus, filterPriority, filterCategory, filterStartDate, filterEndDate, debouncedSearch]);
 
   const { data: rows = [], isLoading: rowsLoading } = useComplaintList(filters);
   const { data: stats = { total: 0, open: 0, in_progress: 0, resolved: 0, high_priority: 0, mine: 0 }, isLoading: statsLoading } = useComplaintStats();
