@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, fileUrl } from "@/lib/api";
 import { useProjectList, useProjectStats, useInvalidateProjects } from "@/hooks/useProjects";
@@ -260,10 +261,10 @@ export default function ProjectExecution() {
                         const current = order.find((s) => stages[s]) || "Onboarding";
                         return (
                           <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50">
-                            <td className="px-4 py-3"><div className="font-medium text-slate-900">{p.full_name}</div><div className="text-xs text-slate-500">{p.sol_id}</div></td>
+                            <td className="px-4 py-3"><Link to={`/client-data/${p.id}`} className="font-medium text-slate-900 hover:text-blue-600 hover:underline">{p.full_name}</Link><div className="text-xs text-slate-500">{p.sol_id}</div></td>
                             <td className="px-4 py-3 text-slate-700">{p.mobile}</td>
                             <td className="px-4 py-3 text-slate-700">{p.system_kw || 0}</td>
-                            <td className="px-4 py-3"><Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">{current}</Badge></td>
+                            <td className="px-4 py-3"><Link to={`/client-data/${p.id}`}><Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer">{current}</Badge></Link></td>
                             <td className="px-4 py-3 text-slate-700 text-xs">{p.assigned_team?.length ? p.assigned_team.join(", ") : "—"}</td>
                             <td className="px-4 py-3 text-xs text-slate-500">{p.updated_at ? dayjs(p.updated_at).format("MMM D") : "—"}</td>
                             <td className="px-4 py-3 text-right">

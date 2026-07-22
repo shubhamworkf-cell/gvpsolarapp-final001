@@ -208,8 +208,8 @@ export default function ClientDetail() {
           </div>
 
           <div className="relative" data-testid="progress-timeline">
-            <div className="hidden sm:block absolute top-10 left-5 right-5 h-0.5 bg-slate-200" />
-            <div className="hidden sm:block absolute top-10 left-5 h-0.5 bg-blue-600 transition-all" style={{ width: `calc((100% - 2.5rem) * ${client.progress / 100})` }} />
+            <div className="hidden sm:block absolute top-10 left-5 right-5 h-0.5 bg-slate-200 pointer-events-none" />
+            <div className="hidden sm:block absolute top-10 left-5 h-0.5 bg-blue-600 transition-all pointer-events-none" style={{ width: `calc((100% - 2.5rem) * ${client.progress / 100})` }} />
             <div className="scrollbar-hidden -mx-4 overflow-x-auto px-4 py-3 sm:mx-0 sm:overflow-visible sm:px-0">
               <div className="flex gap-4 min-w-full sm:min-w-0">
                 {STAGES.map((s, i) => {
@@ -218,8 +218,12 @@ export default function ClientDetail() {
                   return (
                     <button
                       key={s}
-                      onClick={() => toggleStage(s)}
-                      className={`flex min-w-[88px] flex-col items-center rounded-2xl border px-2 py-3 text-center transition-colors ${done ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"} ${isCurrent ? "shadow-lg border-blue-400 bg-blue-100" : ""}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleStage(s);
+                      }}
+                      className={`flex min-w-[88px] flex-col items-center rounded-2xl border px-2 py-3 text-center transition-colors cursor-pointer hover:border-blue-300 ${done ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"} ${isCurrent ? "shadow-lg border-blue-400 bg-blue-100" : ""}`}
                       data-testid={`stage-${s.replace(/\s/g, "-").toLowerCase()}`}
                     >
                       <div className={`flex h-10 w-10 items-center justify-center rounded-full border-2 ${done ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-300 text-slate-400"}`}>

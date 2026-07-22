@@ -11,7 +11,7 @@ import re
 import uuid
 import logging
 import secrets
-import requests
+import requests  # type: ignore
 import bcrypt
 import jwt
 import time
@@ -2879,18 +2879,20 @@ async def update_client(client_id: str, data: ClientIn, user=Depends(get_current
 
 @api_router.patch("/clients/{client_id}/stages")
 async def update_stages(client_id: str, data: StageUpdate, user=Depends(get_current_user)):
-    if not has_perm(user, "clients", "edit"):
+    if not (has_perm(user, "clients", "edit") or has_perm(user, "client_data", "edit") or has_perm(user, "project_execution", "edit")):
         raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
     existing = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
+    if not existing and user.get("role") == "Admin":
+        existing = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Client not found")
-    stages = {**(existing.get("stages") or {s: False for s in DEFAULT_STAGES}), **data.stages}
-    # Ensure Onboarding is always True once any stage is being managed
-    stages["Onboarding"] = True
-    stages = sync_checklist_completed(stages)
+    merged_stages = {**(existing.get("stages") or {s: False for s in DEFAULT_STAGES}), **data.stages}
+    if "Onboarding" not in data.stages and not merged_stages.get("Onboarding"):
+        merged_stages["Onboarding"] = True
+    stages = sync_checklist_completed(merged_stages)
     progress = calc_progress(stages)
     await db.clients.update_one(
-        {"id": client_id, "company_id": user["company_id"]},
+        {"id": client_id},
         {"$set": {"stages": stages, "progress": progress, "updated_at": now_iso()}}
     )
     if stages.get("Handover") and existing.get("status") != "Handover Complete":
@@ -7751,9 +7753,9 @@ async def export_client_ledger(client_id: str, format: str = "csv", user=Depends
         )
         
     elif format == "excel":
-        import openpyxl
-        import openpyxl.utils
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        import openpyxl  # type: ignore
+        import openpyxl.utils  # type: ignore
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side  # type: ignore
         from fastapi.responses import StreamingResponse
         
         wb = openpyxl.Workbook()

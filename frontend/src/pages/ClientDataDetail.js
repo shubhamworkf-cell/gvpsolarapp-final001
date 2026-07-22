@@ -511,7 +511,13 @@ function BasicInfoSection({ client: c }) {
     const isDone = !!currentStages[stage];
     const updatedStages = { ...currentStages, [stage]: !isDone };
     try {
-      await api.patch(`/clients/${c.id}/stages`, { stages: updatedStages });
+      const { data: updatedClient } = await api.patch(`/clients/${c.id}/stages`, { stages: updatedStages });
+      if (updatedClient) {
+        queryClient.setQueryData(queryKeys.clientData.tab(id, tab), (prev) => {
+          if (!prev) return prev;
+          return { ...prev, client: updatedClient };
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ["client-data"] });
       queryClient.invalidateQueries({ queryKey: ["clients"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -549,8 +555,8 @@ function BasicInfoSection({ client: c }) {
           </div>
 
           <div className="relative" data-testid="progress-timeline">
-            <div className="hidden sm:block absolute top-7 left-4 right-4 h-0.5 bg-slate-200" />
-            <div className="hidden sm:block absolute top-7 left-4 h-0.5 bg-blue-600 transition-all" style={{ width: `calc((100% - 2rem) * ${(c.progress || 0) / 100})` }} />
+            <div className="hidden sm:block absolute top-7 left-4 right-4 h-0.5 bg-slate-200 pointer-events-none" />
+            <div className="hidden sm:block absolute top-7 left-4 h-0.5 bg-blue-600 transition-all pointer-events-none" style={{ width: `calc((100% - 2rem) * ${(c.progress || 0) / 100})` }} />
             <div className="scrollbar-hidden -mx-4 overflow-x-auto px-4 py-2 sm:mx-0 sm:overflow-visible sm:px-0">
               <div className="flex gap-3 min-w-full sm:min-w-0">
                 {STAGES.map((s, i) => {
@@ -560,7 +566,10 @@ function BasicInfoSection({ client: c }) {
                     <button
                       key={s}
                       type="button"
-                      onClick={() => handleToggleStage(s)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleStage(s);
+                      }}
                       className={`flex min-w-[80px] flex-col items-center rounded-xl border px-2 py-2 text-center text-[10px] transition-all cursor-pointer hover:border-blue-300 hover:bg-blue-50/70 ${done ? "border-blue-200 bg-blue-50/60" : "border-slate-200 bg-white"} ${isCurrent ? "shadow-md border-blue-400 bg-blue-100/70" : ""}`}
                       data-testid={`stage-${s.replace(/\s/g, "-").toLowerCase()}`}
                     >

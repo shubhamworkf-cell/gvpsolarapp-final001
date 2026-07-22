@@ -1,8 +1,6 @@
 {
-  "venvPath": "/Users/mac/finalgvpsolar-app-code-main1/backend",
-  "venv": ".venv",
   "extraPaths": [
-    "/Users/mac/finalgvpsolar-app-code-main1/backend/.venv/lib/python3.11/site-packages",
     "backend"
-  ]
+  ],
+  "reportMissingTypeStubs": false
 }
