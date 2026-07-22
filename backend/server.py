@@ -126,7 +126,7 @@ def get_supabase_client(token: Optional[str] = None, use_service_key: bool = Fal
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    key = supabase_service_key if use_service_key else supabase_key
+    key = (supabase_service_key if (use_service_key and supabase_service_key) else supabase_key) or supabase_key
     opts = ClientOptions(
         httpx_client=httpx_client,
         postgrest_client_timeout=8.0,
@@ -960,15 +960,20 @@ class CollectionAdapter:
             company_id = filter["company_id"]
             year = filter["year"]
             type_val = filter.get("type", "client")
-            res = supabase.table("counters").select("seq").eq("company_id", company_id).eq("year", year).eq("type", type_val).execute()
-            if res.data:
-                current_seq = res.data[0]["seq"]
-                next_seq = current_seq + 1
-                supabase.table("counters").update({"seq": next_seq}).eq("company_id", company_id).eq("year", year).eq("type", type_val).execute()
-            else:
-                next_seq = 1
-                supabase.table("counters").insert({"company_id": company_id, "year": year, "type": type_val, "seq": next_seq}).execute()
-            return {"seq": next_seq}
+            try:
+                client = get_supabase_client(use_service_key=True)
+                res = client.table("counters").select("seq").eq("company_id", company_id).eq("year", year).eq("type", type_val).execute()
+                if res.data:
+                    current_seq = res.data[0]["seq"]
+                    next_seq = current_seq + 1
+                    client.table("counters").update({"seq": next_seq}).eq("company_id", company_id).eq("year", year).eq("type", type_val).execute()
+                else:
+                    next_seq = 1
+                    client.table("counters").insert({"company_id": company_id, "year": year, "type": type_val, "seq": next_seq}).execute()
+                return {"seq": next_seq}
+            except Exception as e:
+                logger.warning(f"Counters table update failed, using fallback sequence: {e}")
+                return {"seq": int(datetime.now().timestamp()) % 100000}
         return await self.update_one(filter, update, upsert)
 
     async def create_index(self, *args, **kwargs):
@@ -3961,19 +3966,20 @@ async def approve_material(req_id: str, data: MaterialApproval, user=Depends(get
     final_items = []
     for it in incoming_items:
         requested_qty = float(it.get("quantity", 0) or 0)
-        # approved_quantity defaults to requested_qty if not explicitly set
         approved_qty = it.get("approved_quantity")
         if approved_qty is None:
             approved_qty = requested_qty
         approved_qty = float(approved_qty or 0)
         if approved_qty < 0:
             approved_qty = 0.0
-        if approved_qty > requested_qty:
-            approved_qty = requested_qty
         if approved_qty < requested_qty:
             is_partial = True
         final_items.append({
             **it,
+            "product": str(it.get("product") or "").strip(),
+            "size": str(it.get("size") or "").strip(),
+            "unit": str(it.get("unit") or "Nos").strip(),
+            "variant": str(it.get("variant") or "").strip(),
             "quantity": requested_qty,
             "approved_quantity": approved_qty,
             "pending_quantity": max(0.0, requested_qty - approved_qty),

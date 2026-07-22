@@ -5,6 +5,7 @@ import api, { formatApiError, fileUrl } from "@/lib/api";
 import { useProjectList, useProjectStats, useInvalidateProjects } from "@/hooks/useProjects";
 import { useEmployeeList } from "@/hooks/useTeam";
 import { useMaterialRequestList, useInvalidateMaterialRequests } from "@/hooks/useMaterialRequests";
+import { useProductList } from "@/hooks/useInventory";
 import { usePermission } from "@/lib/permissions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Briefcase, Clock, PackageSearch, ShieldCheck, CheckCircle2, Zap, Plus, ClipboardCheck, Camera, Eye, MapPin, ImageIcon, FileText } from "lucide-react";
+import { Briefcase, Clock, PackageSearch, ShieldCheck, CheckCircle2, Zap, Plus, ClipboardCheck, Camera, Eye, MapPin, ImageIcon, FileText, Trash2, ArrowUp, ArrowDown } from "lucide-react";
 import dayjs from "dayjs";
 import { MaterialRequest } from "./TaskPortal";
 
@@ -563,19 +564,69 @@ function MaterialApprovalForm({ request, onSubmit, canApproval = true, canReject
   const deliveryRef = useRef(null);
   const challanRef = useRef(null);
 
-  // Per-item approved quantities (defaults to requested when stock available, otherwise capped at available)
-  const [perItem, setPerItem] = useState(() => {
-    const map = {};
-    (request?.items || []).forEach((it) => {
-      const requested = Number(it.quantity || 0);
-      const available = Number(it.available_stock || 0);
-      map[it.product] = Math.max(0, Math.min(requested, available));
-    });
-    return map;
-  });
+  const { data: productsData = [] } = useProductList();
 
-  const setQty = (product, v) => {
-    setPerItem((prev) => ({ ...prev, [product]: v }));
+  // Editable items state initialized from request.items
+  const [items, setItems] = useState([]);
+
+  useEffect(() => {
+    if (open) {
+      const initialItems = (request?.items || []).map((it) => {
+        const requested = Number(it.quantity || 0);
+        const approved = it.approved_quantity != null ? Number(it.approved_quantity) : requested;
+        return {
+          product: it.product || "",
+          size: it.size || "",
+          quantity: requested,
+          approved_quantity: approved,
+          unit: it.unit || "Nos",
+          variant: it.variant || "",
+          available_stock: it.available_stock || 0,
+        };
+      });
+      if (initialItems.length === 0) {
+        initialItems.push({ product: "", size: "", quantity: 1, approved_quantity: 1, unit: "Nos", variant: "", available_stock: 0 });
+      }
+      setItems(initialItems);
+    }
+  }, [open, request]);
+
+  const updateItem = (index, field, value) => {
+    setItems((prev) => {
+      const next = [...prev];
+      const current = { ...next[index] };
+      if (field === "quantity") {
+        const numVal = Math.max(0, Number(value) || 0);
+        current.quantity = numVal;
+        current.approved_quantity = numVal;
+      } else if (field === "approved_quantity") {
+        current.approved_quantity = Math.max(0, Number(value) || 0);
+      } else {
+        current[field] = value;
+      }
+      next[index] = current;
+      return next;
+    });
+  };
+
+  const addItem = () => {
+    setItems((prev) => [...prev, { product: "", size: "", quantity: 1, approved_quantity: 1, unit: "Nos", variant: "", available_stock: 0 }]);
+  };
+
+  const removeItem = (index) => {
+    setItems((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const moveItem = (index, direction) => {
+    setItems((prev) => {
+      const next = [...prev];
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= next.length) return prev;
+      const temp = next[index];
+      next[index] = next[targetIndex];
+      next[targetIndex] = temp;
+      return next;
+    });
   };
 
   const upload = async (file, setter, key) => {
@@ -592,17 +643,23 @@ function MaterialApprovalForm({ request, onSubmit, canApproval = true, canReject
 
   const approve = () => {
     if (!d.challan_number.trim()) { toast.error("Challan number is required"); return; }
-    const items = (request?.items || []).map((it) => {
-      const requested = Number(it.quantity || 0);
-      const raw = perItem[it.product];
-      const approved = Math.max(0, Math.min(requested, Number(raw == null ? requested : raw) || 0));
-      return { ...it, approved_quantity: approved };
-    });
-    const isPartial = items.some((it) => Number(it.approved_quantity) < Number(it.quantity || 0));
+    if (items.length === 0) { toast.error("At least one material item is required"); return; }
+    for (let i = 0; i < items.length; i++) {
+      if (!items[i].product.trim()) { toast.error(`Product Name is required for row ${i + 1}`); return; }
+      if (Number(items[i].approved_quantity || 0) <= 0) { toast.error(`Approved quantity for ${items[i].product} must be greater than 0`); return; }
+    }
+
+    const formattedItems = items.map((it) => ({
+      ...it,
+      quantity: Number(it.quantity || 0),
+      approved_quantity: Number(it.approved_quantity || 0),
+    }));
+
+    const isPartial = formattedItems.some((it) => Number(it.approved_quantity) < Number(it.quantity || 0));
     const status = isPartial ? "partial_approved" : "approved";
     onSubmit({
       status,
-      items,
+      items: formattedItems,
       challan_number: d.challan_number,
       vehicle_number: d.vehicle_number,
       driver_name: d.driver_name,
@@ -619,56 +676,158 @@ function MaterialApprovalForm({ request, onSubmit, canApproval = true, canReject
       {canReject && <Button size="sm" variant="outline" className="text-red-600" onClick={() => onSubmit({ status: "rejected" })} data-testid={`mr-reject-${request?.id || "x"}`}>Reject</Button>}
       {canApproval && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setOpen(true)} data-testid={`mr-approve-${request?.id || "x"}`}>Approve</Button>}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto" data-testid="mr-approve-dialog">
+        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto" data-testid="mr-approve-dialog">
           <DialogHeader>
             <DialogTitle>Approve & Schedule Delivery</DialogTitle>
-            <DialogDescription className="text-xs">Edit per-item approved quantities, attach optional delivery + challan photos.</DialogDescription>
+            <DialogDescription className="text-xs">Review and edit requested materials, sizes, quantities, units, and brands before final approval.</DialogDescription>
           </DialogHeader>
 
-          {/* Per-item approval table */}
+          {/* Editable per-item approval table */}
           <div className="mt-2 rounded-lg border border-slate-200 overflow-hidden">
-            <table className="w-full text-xs">
-              <thead className="bg-slate-50">
-                <tr className="text-[10px] uppercase tracking-wider text-slate-500">
-                  <th className="text-left py-2 px-3">Product</th>
-                  <th className="text-right py-2 px-3">Requested</th>
-                  <th className="text-right py-2 px-3">Available</th>
-                  <th className="text-right py-2 px-3 w-28">Approve</th>
-                  <th className="text-right py-2 px-3">After</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(request?.items || []).map((it) => {
-                  const requested = Number(it.quantity || 0);
-                  const available = Number(it.available_stock || 0);
-                  const approved = Number(perItem[it.product] ?? requested);
-                  const remainingStock = Math.max(0, available - approved);
-                  const short = approved > available;
-                  return (
-                    <tr key={`approve-${it.product}`} className="border-t border-slate-100">
-                      <td className="py-2 px-3 text-slate-700">{it.product} {it.size && <span className="text-slate-400">({it.size})</span>}</td>
-                      <td className="py-2 px-3 text-right tabular-nums">{requested}</td>
-                      <td className={`py-2 px-3 text-right tabular-nums ${available < requested ? "text-red-600 font-semibold" : "text-slate-700"}`}>{available}</td>
-                      <td className="py-2 px-3 text-right">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                    <th className="text-left py-2 px-3 min-w-[180px]">Product Name *</th>
+                    <th className="text-left py-2 px-2 min-w-[110px]">Size / Spec</th>
+                    <th className="text-left py-2 px-2 min-w-[90px]">Unit</th>
+                    <th className="text-left py-2 px-2 min-w-[100px]">Brand / Variant</th>
+                    <th className="text-right py-2 px-2 w-20">Req Qty</th>
+                    <th className="text-right py-2 px-2 w-24">Approve Qty</th>
+                    <th className="text-center py-2 px-2 w-24">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {items.map((it, idx) => (
+                    <tr key={`edit-row-${idx}`} className="hover:bg-slate-50/50">
+                      <td className="py-1.5 px-3">
+                        <Input
+                          value={it.product}
+                          onChange={(e) => updateItem(idx, "product", e.target.value)}
+                          placeholder="e.g. Solar Panel 540W"
+                          className="h-8 text-xs bg-white"
+                          list="product-suggestions"
+                          data-testid={`mr-product-name-${idx}`}
+                        />
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <Input
+                          value={it.size}
+                          onChange={(e) => updateItem(idx, "size", e.target.value)}
+                          placeholder="e.g. 540W"
+                          className="h-8 text-xs bg-white"
+                          data-testid={`mr-product-size-${idx}`}
+                        />
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <Select value={it.unit || "Nos"} onValueChange={(v) => updateItem(idx, "unit", v)}>
+                          <SelectTrigger className="h-8 text-xs bg-white"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Nos">Nos</SelectItem>
+                            <SelectItem value="Meter">Meter</SelectItem>
+                            <SelectItem value="Set">Set</SelectItem>
+                            <SelectItem value="Kg">Kg</SelectItem>
+                            <SelectItem value="Pcs">Pcs</SelectItem>
+                            <SelectItem value="Box">Box</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <Input
+                          value={it.variant}
+                          onChange={(e) => updateItem(idx, "variant", e.target.value)}
+                          placeholder="Brand/Variant"
+                          className="h-8 text-xs bg-white"
+                          data-testid={`mr-product-variant-${idx}`}
+                        />
+                      </td>
+                      <td className="py-1.5 px-2 text-right">
                         <Input
                           type="number"
                           min="0"
-                          max={requested}
-                          value={approved}
-                          onChange={(e) => setQty(it.product, e.target.value)}
-                          className={`h-8 w-20 text-right text-xs tabular-nums ml-auto ${short ? "border-red-400" : ""}`}
-                          data-testid={`mr-approved-${it.product}`}
+                          value={it.quantity}
+                          onChange={(e) => updateItem(idx, "quantity", e.target.value)}
+                          className="h-8 text-right text-xs tabular-nums bg-white"
+                          data-testid={`mr-req-qty-${idx}`}
                         />
                       </td>
-                      <td className="py-2 px-3 text-right tabular-nums text-slate-600">{remainingStock}</td>
+                      <td className="py-1.5 px-2 text-right">
+                        <Input
+                          type="number"
+                          min="0"
+                          value={it.approved_quantity}
+                          onChange={(e) => updateItem(idx, "approved_quantity", e.target.value)}
+                          className="h-8 text-right text-xs font-semibold text-emerald-700 bg-white"
+                          data-testid={`mr-approved-${idx}`}
+                        />
+                      </td>
+                      <td className="py-1.5 px-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-slate-400 hover:text-slate-700"
+                            onClick={() => moveItem(idx, -1)}
+                            disabled={idx === 0}
+                            title="Move Up"
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-slate-400 hover:text-slate-700"
+                            onClick={() => moveItem(idx, 1)}
+                            disabled={idx === items.length - 1}
+                            title="Move Down"
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => removeItem(idx)}
+                            disabled={items.length <= 1}
+                            title="Remove Product"
+                            data-testid={`mr-remove-item-${idx}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <datalist id="product-suggestions">
+              {productsData.map((p) => (
+                <option key={p.id} value={p.name}>{p.name} ({p.size || p.unit})</option>
+              ))}
+            </datalist>
+
+            <div className="p-2 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs border-dashed border-slate-300 text-blue-600 hover:bg-blue-50"
+                onClick={addItem}
+                data-testid="mr-add-product-btn"
+              >
+                <Plus className="w-3.5 h-3.5 mr-1" /> Add Product Line
+              </Button>
+              <div className="text-[11px] text-slate-500 font-medium">Total Items: {items.length}</div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 mt-2">
+          <div className="grid grid-cols-2 gap-3 mt-3">
             <FF label="Challan Number *"><Input value={d.challan_number} onChange={(e) => setD({ ...d, challan_number: e.target.value })} data-testid="mr-challan-no" /></FF>
             <FF label="Delivery Date"><Input type="date" value={d.delivery_date} onChange={(e) => setD({ ...d, delivery_date: e.target.value })} data-testid="mr-delivery-date" /></FF>
             <FF label="Vehicle Number"><Input value={d.vehicle_number} onChange={(e) => setD({ ...d, vehicle_number: e.target.value })} data-testid="mr-vehicle" /></FF>
