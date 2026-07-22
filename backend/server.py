@@ -1370,9 +1370,18 @@ async def supabase_client_middleware(request: Request, call_next):
     
     if token:
         try:
-            # Decode without verifying signature to check expiration claim
-            jwt.decode(token, options={"verify_signature": False, "verify_exp": True})
-            req_client = get_supabase_client(token=token)
+            is_custom = False
+            try:
+                jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+                is_custom = True
+            except Exception:
+                pass
+
+            if is_custom:
+                req_client = get_supabase_client(use_service_key=True)
+            else:
+                jwt.decode(token, options={"verify_signature": False, "verify_exp": True})
+                req_client = get_supabase_client(token=token)
             token_token = _supabase_var.set(req_client)
         except Exception as e:
             logger.warning(f"Stale or invalid token detected, falling back to default client: {e}")
@@ -1489,14 +1498,21 @@ async def get_current_user(request: Request) -> dict:
     if cached:
         return cached
 
-    # ── Slow path: validate with Supabase and fetch profile ───────────────────
+    # ── Slow path: validate with JWT secret or Supabase and fetch profile ──
+    user_id = None
+    payload = None
     try:
-        res = supabase.auth.get_user(token)
-        if not res or not res.user:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        user_id = res.user.id
-    except Exception as e:
-        logger.error(f"Supabase auth validation failed: {e}")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
+    except Exception:
+        try:
+            res = supabase.auth.get_user(token)
+            if res and res.user:
+                user_id = res.user.id
+        except Exception as e:
+            logger.error(f"Supabase auth validation failed: {e}")
+
+    if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token")
 
     user = None
@@ -1512,6 +1528,17 @@ async def get_current_user(request: Request) -> dict:
         except Exception as db_err:
             logger.error(f"Direct user lookup failed: {db_err}")
             user = None
+
+    if not user or not isinstance(user, dict):
+        if isinstance(payload, dict) and (payload.get("id") or payload.get("sub") or payload.get("user_id")):
+            user = {
+                "id": payload.get("id") or payload.get("sub") or user_id,
+                "company_id": payload.get("company_id") or "COMP-001",
+                "role": payload.get("role") or "Admin",
+                "name": payload.get("name") or "User",
+                "email": payload.get("email") or "",
+                "permissions": payload.get("permissions") or {}
+            }
 
     if not user or not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="User not found")
