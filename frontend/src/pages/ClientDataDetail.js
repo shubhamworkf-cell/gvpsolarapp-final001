@@ -329,10 +329,35 @@ const InfoRow = ({ label, value }) => (
 );
 
 function BasicInfoSection({ client: c }) {
+  const queryClient = useQueryClient();
+
   const completedCount = React.useMemo(() => {
     if (!c || !c.stages) return 0;
     return STAGES.filter((s) => c.stages?.[s]).length;
   }, [c]);
+
+  const currentStage = React.useMemo(() => {
+    if (!c || !c.stages) return "Onboarding";
+    const next = STAGES.find((s) => !c.stages?.[s]);
+    return next || STAGES[STAGES.length - 1];
+  }, [c]);
+
+  const handleToggleStage = async (stage) => {
+    if (!c || !c.id) return;
+    const currentStages = c.stages || {};
+    const isDone = !!currentStages[stage];
+    const updatedStages = { ...currentStages, [stage]: !isDone };
+    try {
+      await api.patch(`/clients/${c.id}/stages`, { stages: updatedStages });
+      queryClient.invalidateQueries({ queryKey: ["client-data"] });
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success(`${stage} ${!isDone ? "marked as completed" : "reset"}`);
+    } catch (e) {
+      toast.error(formatApiError(e));
+    }
+  };
 
   return (
     <div className="grid lg:grid-cols-3 gap-4">
@@ -342,9 +367,13 @@ function BasicInfoSection({ client: c }) {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
             <div>
               <div className="text-sm font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>Project Progress Timeline</div>
-              <div className="text-xs text-slate-500">Current stage and completed workflow steps.</div>
+              <div className="text-xs text-slate-500">Current stage, completed steps, and total progress.</div>
             </div>
-            <div className="grid grid-cols-2 gap-4 text-right">
+            <div className="grid grid-cols-3 gap-4 text-right">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Current Stage</div>
+                <div className="text-xs font-semibold text-slate-900">{currentStage}</div>
+              </div>
               <div>
                 <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Completed Steps</div>
                 <div className="text-xs font-semibold text-slate-900">{completedCount} / {STAGES.length}</div>
@@ -356,23 +385,27 @@ function BasicInfoSection({ client: c }) {
             </div>
           </div>
 
-          <div className="relative">
+          <div className="relative" data-testid="progress-timeline">
             <div className="hidden sm:block absolute top-7 left-4 right-4 h-0.5 bg-slate-200" />
             <div className="hidden sm:block absolute top-7 left-4 h-0.5 bg-blue-600 transition-all" style={{ width: `calc((100% - 2rem) * ${(c.progress || 0) / 100})` }} />
             <div className="scrollbar-hidden -mx-4 overflow-x-auto px-4 py-2 sm:mx-0 sm:overflow-visible sm:px-0">
               <div className="flex gap-3 min-w-full sm:min-w-0">
                 {STAGES.map((s, i) => {
                   const done = !!c.stages?.[s];
+                  const isCurrent = currentStage === s;
                   return (
-                    <div
+                    <button
                       key={s}
-                      className={`flex min-w-[75px] flex-col items-center rounded-xl border px-1.5 py-2 text-center text-[10px] ${done ? "border-blue-200 bg-blue-50/50" : "border-slate-200 bg-white"}`}
+                      type="button"
+                      onClick={() => handleToggleStage(s)}
+                      className={`flex min-w-[80px] flex-col items-center rounded-xl border px-2 py-2 text-center text-[10px] transition-all cursor-pointer hover:border-blue-300 hover:bg-blue-50/70 ${done ? "border-blue-200 bg-blue-50/60" : "border-slate-200 bg-white"} ${isCurrent ? "shadow-md border-blue-400 bg-blue-100/70" : ""}`}
+                      data-testid={`stage-${s.replace(/\s/g, "-").toLowerCase()}`}
                     >
-                      <div className={`flex h-7 w-7 items-center justify-center rounded-full border ${done ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-300 text-slate-400"}`}>
+                      <div className={`flex h-7 w-7 items-center justify-center rounded-full border transition-colors ${done ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-300 text-slate-400"}`}>
                         {done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[10px] font-semibold">{i + 1}</span>}
                       </div>
-                      <div className="mt-1.5 font-medium leading-tight text-slate-700">{s}</div>
-                    </div>
+                      <div className={`mt-1.5 font-medium leading-tight ${done ? "text-slate-900 font-semibold" : "text-slate-600"}`}>{s}</div>
+                    </button>
                   );
                 })}
               </div>

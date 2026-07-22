@@ -881,6 +881,11 @@ class CollectionAdapter:
                 else:
                     raise e
             return UpdateResult(0, 1)
+        if not res.data:
+            local_res = await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
+            if local_res.matched_count > 0 or local_res.upserted_id:
+                return local_res
+            return UpdateResult(0, 0)
         return UpdateResult(len(res.data), len(res.data))
 
     async def update_many(self, filter, update):

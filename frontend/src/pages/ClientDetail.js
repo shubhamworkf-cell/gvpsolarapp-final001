@@ -51,9 +51,11 @@ export default function ClientDetail() {
   }, [isLoading, client, nav]);
 
   const invalidate = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(id) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.clients.list() });
-  }, [queryClient, id]);
+    queryClient.invalidateQueries({ queryKey: ["clients"] });
+    queryClient.invalidateQueries({ queryKey: ["client-data"] });
+    queryClient.invalidateQueries({ queryKey: ["projects"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  }, [queryClient]);
 
   const currentStage = React.useMemo(() => {
     if (!client?.stages) return "Onboarding";
