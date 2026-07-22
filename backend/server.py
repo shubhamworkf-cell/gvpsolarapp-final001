@@ -963,8 +963,9 @@ class CollectionAdapter:
             try:
                 client = get_supabase_client(use_service_key=True)
                 res = client.table("counters").select("seq").eq("company_id", company_id).eq("year", year).eq("type", type_val).execute()
-                if res.data:
-                    current_seq = res.data[0]["seq"]
+                if res.data and isinstance(res.data, list) and len(res.data) > 0:
+                    first_row = res.data[0]
+                    current_seq = int(first_row.get("seq", 0)) if isinstance(first_row, dict) else 0  # type: ignore
                     next_seq = current_seq + 1
                     client.table("counters").update({"seq": next_seq}).eq("company_id", company_id).eq("year", year).eq("type", type_val).execute()
                 else:
