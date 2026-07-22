@@ -7123,39 +7123,29 @@ async def generate_template(tpl_id: str, data: TemplateGenerate, user=Depends(ge
         logger.exception("Template render failed")
         raise HTTPException(status_code=500, detail=f"Render failed: {str(e)[:200]}")
 
-    # Save to storage + files collection
-    file_id = str(uuid.uuid4())
     safe_client = re.sub(r"[^A-Za-z0-9_-]+", "-", client_doc.get("full_name", "client")).strip("-")[:40] or "client"
     safe_tpl = re.sub(r"[^A-Za-z0-9_-]+", "-", t.get("name", "template")).strip("-")[:40] or "template"
     filename = f"{safe_client}-{safe_tpl}.docx"
-    storage_path = f"{APP_NAME}/{user['company_id']}/generated/{file_id}.docx"
-    put_result = put_object(
-        storage_path, filled,
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
-    await db.files.insert_one({
-        "id": file_id, "company_id": user["company_id"], "uploader_id": user["id"],
-        "storage_path": put_result["path"], "original_filename": filename,
-        "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "size": put_result.get("size", len(filled)), "category": "generated",
-        "is_deleted": False, "created_at": now_iso(),
-    })
 
     if data.save_to_client:
-        docs = list(client_doc.get("documents") or [])
-        docs.append({
-            "id": file_id, "filename": filename,
-            "label": t.get("name") or t.get("doc_type") or "Template",
-            "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "template_id": tpl_id, "created_at": now_iso(),
-        })
         stages = {**(client_doc.get("stages") or {}), "Document Making": True, "Onboarding": True}
         await db.clients.update_one(
             {"id": data.client_id, "company_id": user["company_id"]},
-            {"$set": {"documents": docs, "stages": stages, "progress": calc_progress(stages), "updated_at": now_iso()}}
+            {"$set": {"stages": stages, "progress": calc_progress(stages), "updated_at": now_iso()}}
         )
     await log_activity(user["company_id"], user["id"], user["name"], f"Generated {t.get('name')}", client_doc.get("full_name", ""))
-    return {"id": file_id, "filename": filename, "label": t.get("name") or "Template", "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+
+    from fastapi.responses import Response
+    return Response(
+        content=filled,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+            "X-Filename": filename,
+            "X-Label": t.get("name") or "Template",
+        },
+    )
 
 
 # ---------- Complaint Management ----------

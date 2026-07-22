@@ -64,13 +64,30 @@ export default function TemplateGenerateDialog({ open, onOpenChange, clientId, o
     if (!selectedId) return;
     setGenerating(true);
     try {
-      const { data } = await api.post(`/document-templates/${selectedId}/generate`, {
+      const response = await api.post(`/document-templates/${selectedId}/generate`, {
         client_id: clientId,
         raw_overrides: rawOverrides,
         save_to_client: true,
+      }, {
+        responseType: "blob",
       });
-      setGenerated(data);
-      toast.success(`${data.label} generated`);
+
+      const selectedTpl = templates.find((t) => t.id === selectedId);
+      const label = selectedTpl?.name || selectedTpl?.doc_type || "Template";
+      const filename = `${selectedTpl?.name || "document"}.docx`;
+      const blob = new Blob([response.data], { type: response.headers["content-type"] || "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      const url = window.URL.createObjectURL(blob);
+
+      // Trigger automatic browser download
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      setGenerated({ url, filename, label });
+      toast.success(`${label} generated and downloaded`);
       onGenerated?.();
     } catch (e) { toast.error(formatApiError(e)); }
     finally { setGenerating(false); }
@@ -186,9 +203,9 @@ export default function TemplateGenerateDialog({ open, onOpenChange, clientId, o
               <div className="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center"><CheckCircle2 className="w-5 h-5" /></div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-semibold text-slate-900">{generated.label} generated</div>
-                <div className="text-xs text-slate-500 truncate">{generated.filename} · saved to client documents</div>
+                <div className="text-xs text-slate-500 truncate">{generated.filename} · downloaded</div>
               </div>
-              <a href={fileUrl(generated.id)} target="_blank" rel="noreferrer" download>
+              <a href={generated.url} download={generated.filename}>
                 <Button className="bg-emerald-600 hover:bg-emerald-700" data-testid="download-generated-btn">
                   <Download className="w-4 h-4 mr-1.5" /> Download .docx
                 </Button>
