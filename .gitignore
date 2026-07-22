@@ -40,6 +40,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+local_storage/
+backend/local_storage/
 
 # Environment variables
 # .env
