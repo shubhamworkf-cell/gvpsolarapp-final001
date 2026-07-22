@@ -36,7 +36,7 @@ import {
   ArrowLeft, Phone, MessageCircle, Download, MapPin, User, FileImage, Image as ImageIcon,
   Plus, Save, Eye, EyeOff, ExternalLink, Calendar, Wrench, AlertTriangle, Paperclip,
   Clock, CheckCircle2, ChevronRight, Activity, Megaphone, ClipboardList,
-  Truck, FileText, Gauge, Package, ScrollText, Check, Trash2
+  Truck, FileText, Gauge, Package, ScrollText, Check, Trash2, Edit3
 } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
@@ -84,6 +84,8 @@ export default function ClientDataDetail() {
   const [zoom, setZoom] = useState(null); // file_id of zoomed asset
   const [complaintOpen, setComplaintOpen] = useState(false);
   const [visitedTabs, setVisitedTabs] = useState(new Set(["info"]));
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState(null);
 
   useEffect(() => {
     setVisitedTabs((prev) => {
@@ -123,6 +125,53 @@ export default function ClientDataDetail() {
 
   const canDelete = usePermission("clients", "delete");
   const deleteClientMutation = useDeleteClient();
+
+  const handleOpenEdit = () => {
+    setEditForm({
+      full_name: c.full_name || "",
+      mobile: c.mobile || "",
+      alt_mobile: c.alt_mobile || "",
+      consumer_number: c.consumer_number || "",
+      address: c.address || "",
+      city: c.city || "",
+      state: c.state || "",
+      pincode: c.pincode || "",
+      aadhaar: c.aadhaar || "",
+      system_kw: c.system_kw || 0,
+      panel_make: c.panel_make || "",
+      panel_wattage: c.panel_wattage || 0,
+      num_panels: c.num_panels || 0,
+      inverter_make: c.inverter_make || "",
+      inverter_capacity: c.inverter_capacity || "",
+      inverter_serial: c.inverter_serial || "",
+      phase_type: c.phase_type || "Single Phase",
+      subsidy_eligible: c.subsidy_eligible ?? false,
+      status: c.status || "Lead",
+    });
+    setEditOpen(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editForm) return;
+    try {
+      const payload = {
+        ...editForm,
+        system_kw: Number(editForm.system_kw) || 0,
+        panel_wattage: Number(editForm.panel_wattage) || 0,
+        num_panels: Number(editForm.num_panels) || 0,
+      };
+      await api.put(`/clients/${id}`, payload);
+      queryClient.invalidateQueries({ queryKey: ["client-data"] });
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Client details updated successfully");
+      setEditOpen(false);
+      setEditForm(null);
+    } catch (e) {
+      toast.error(formatApiError(e));
+    }
+  };
 
   const handleDeleteClient = () => {
     if (!window.confirm("Are you sure you want to delete this client? This action cannot be undone.")) return;
@@ -195,6 +244,15 @@ export default function ClientDataDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-blue-300 text-blue-700 hover:bg-blue-50"
+            onClick={handleOpenEdit}
+            data-testid="edit-client-btn"
+          >
+            <Edit3 className="w-4 h-4 mr-1.5" /> Edit
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -316,6 +374,111 @@ export default function ClientDataDetail() {
         lockedClient={{ id: c.id, full_name: c.full_name }}
         onCreated={() => toast.success("Complaint raised — track it in Complaint Center")}
       />
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="edit-client-dialog">
+          <DialogHeader>
+            <DialogTitle>Edit Client Details</DialogTitle>
+            <DialogDescription>Modify any client, address, system, panel, or inverter details below.</DialogDescription>
+          </DialogHeader>
+          {editForm && (
+            <div className="grid md:grid-cols-2 gap-4 py-3 text-sm">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Full Name</Label>
+                <Input value={editForm.full_name} onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Mobile Number</Label>
+                <Input value={editForm.mobile} onChange={(e) => setEditForm({ ...editForm, mobile: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Alternate Mobile</Label>
+                <Input value={editForm.alt_mobile} onChange={(e) => setEditForm({ ...editForm, alt_mobile: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Consumer Number</Label>
+                <Input value={editForm.consumer_number} onChange={(e) => setEditForm({ ...editForm, consumer_number: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Aadhaar Number</Label>
+                <Input value={editForm.aadhaar} onChange={(e) => setEditForm({ ...editForm, aadhaar: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">System Capacity (kW)</Label>
+                <Input type="number" step="0.1" value={editForm.system_kw} onChange={(e) => setEditForm({ ...editForm, system_kw: e.target.value })} />
+              </div>
+
+              <div className="md:col-span-2 space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Address</Label>
+                <Input value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">City</Label>
+                <Input value={editForm.city} onChange={(e) => setEditForm({ ...editForm, city: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">State</Label>
+                <Input value={editForm.state} onChange={(e) => setEditForm({ ...editForm, state: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Pincode</Label>
+                <Input value={editForm.pincode} onChange={(e) => setEditForm({ ...editForm, pincode: e.target.value })} />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Panel Make / Brand</Label>
+                <Input value={editForm.panel_make} onChange={(e) => setEditForm({ ...editForm, panel_make: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Panel Wattage (Wp)</Label>
+                <Input type="number" value={editForm.panel_wattage} onChange={(e) => setEditForm({ ...editForm, panel_wattage: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Number of Panels</Label>
+                <Input type="number" value={editForm.num_panels} onChange={(e) => setEditForm({ ...editForm, num_panels: e.target.value })} />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Inverter Make / Brand</Label>
+                <Input value={editForm.inverter_make} onChange={(e) => setEditForm({ ...editForm, inverter_make: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Inverter Capacity</Label>
+                <Input value={editForm.inverter_capacity} onChange={(e) => setEditForm({ ...editForm, inverter_capacity: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Inverter Serial Number</Label>
+                <Input value={editForm.inverter_serial} onChange={(e) => setEditForm({ ...editForm, inverter_serial: e.target.value })} />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Phase Type</Label>
+                <Select value={editForm.phase_type} onValueChange={(val) => setEditForm({ ...editForm, phase_type: val })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Single Phase">Single Phase</SelectItem>
+                    <SelectItem value="Three Phase">Three Phase</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Subsidy Eligible</Label>
+                <Select value={editForm.subsidy_eligible ? "yes" : "no"} onValueChange={(val) => setEditForm({ ...editForm, subsidy_eligible: val === "yes" })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="yes">Yes</SelectItem>
+                    <SelectItem value="no">No</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveEdit} className="bg-blue-600 hover:bg-blue-700">Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
