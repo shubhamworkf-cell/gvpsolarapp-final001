@@ -1623,11 +1623,11 @@ class ClientIn(BaseModel):
     phase_type: Optional[str] = "Single Phase"
     subsidy_eligible: Optional[bool] = False
     status: Optional[str] = "Lead"
-    stages: Optional[Dict[str, bool]] = None
+    stages: Optional[Dict[str, Any]] = None
     documents: Optional[List[Dict[str, Any]]] = None
 
 class StageUpdate(BaseModel):
-    stages: Dict[str, bool]
+    stages: Dict[str, Any]
 
 class StatusUpdate(BaseModel):
     status: str
@@ -1783,7 +1783,14 @@ STAGE_CHECKLISTS = {
 }
 
 def sync_checklist_completed(stages: dict) -> dict:
-    checklist_completed = stages.get("checklist_completed") or {}
+    raw_checklist = stages.get("checklist_completed")
+    checklist_completed = {}
+    if isinstance(raw_checklist, dict):
+        for k, v in raw_checklist.items():
+            if isinstance(v, str):
+                checklist_completed[str(k)] = v.strip().lower() in ("true", "1", "yes", "completed")
+            else:
+                checklist_completed[str(k)] = bool(v)
     for stage, items in STAGE_CHECKLISTS.items():
         if not stages.get(stage):
             for item in items:
