@@ -883,7 +883,7 @@ class CollectionAdapter:
             return UpdateResult(0, 1)
         if not res.data:
             local_res = await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
-            if local_res.matched_count > 0 or local_res.upserted_id:
+            if local_res.matched_count > 0 or local_res.modified_count > 0:
                 return local_res
             return UpdateResult(0, 0)
         return UpdateResult(len(res.data), len(res.data))
