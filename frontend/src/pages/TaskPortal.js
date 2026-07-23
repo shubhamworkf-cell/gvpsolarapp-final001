@@ -2103,17 +2103,22 @@ function ComplaintWorkflow({ task, canMutate, updateStatus }) {
 
 // ─── Shared sub-components ───────────────────────────────────────────────────
 
-import { fetchProductsDeduplicated, getCachedProducts } from "@/lib/productCache";
+import { fetchSearchProducts, getCachedSearchProducts, getCachedProducts } from "@/lib/productCache";
 
 export function MaterialRequest({ clientId, onDone }) {
   const [items, setItems] = useState([{ product: "", size: "", quantity: 1, remarks: "" }]);
   const [remarks, setRemarks] = useState("");
-  const [products, setProducts] = useState(() => getCachedProducts() || []);
+  // Use slim 6-field search cache — no balance/aggregation queries
+  const [products, setProducts] = useState(() => getCachedSearchProducts() || getCachedProducts() || []);
 
   useEffect(() => {
-    fetchProductsDeduplicated()
+    fetchSearchProducts()
       .then((list) => setProducts(list || []))
-      .catch(() => {});
+      .catch(() => {
+        // Fallback to full cache if search endpoint fails
+        const full = getCachedProducts();
+        if (full && full.length > 0) setProducts(full);
+      });
   }, []);
 
   const handleProductChange = (i, v) => {
