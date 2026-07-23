@@ -158,9 +158,9 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
     if (!form.product?.trim() || !form.quantity || Number(form.quantity) <= 0) {
       toast.error("Product and quantity are required"); return;
     }
-    if (form.high_value_goods) {
+    if (form.high_value_goods || form.use_serial_number || form.serial_number_required) {
       setHvDialogData({
-        serial_number_required: form.serial_number_required || false,
+        serial_number_required: true,
         serial_text: form.serial_text || "",
         serial_numbers: form.serial_numbers || [],
         installation_notes: form.installation_notes || "",
@@ -409,6 +409,23 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                 </label>
               </div>
             )}
+
+            {/* Additional Standalone Use Serial Number Checkbox */}
+            <div className="md:col-span-3 lg:col-span-4 flex items-center gap-2.5 py-2 border-t border-slate-100 mt-2">
+              <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={form.use_serial_number || false}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setForm(prev => ({ ...prev, use_serial_number: checked }));
+                  }}
+                  className="w-4 h-4 accent-blue-600 rounded border-slate-300"
+                  data-testid="out-use-serial-number-toggle"
+                />
+                Use Serial Number
+              </label>
+            </div>
 
             <TextareaField label="Remarks" value={form.remarks} onChange={(v) => setForm({ ...form, remarks: v })} testid="out-remarks" full />
 

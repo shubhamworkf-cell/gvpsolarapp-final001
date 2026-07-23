@@ -515,6 +515,15 @@ class CursorAdapter:
         return AsyncIteratorWrapper(self.to_list())
 
 _PRODUCTS_HAS_RATE = True
+_PRODUCTS_HAS_OPENING_STOCK = True
+
+def _clean_products_doc(doc: dict) -> dict:
+    cleaned = dict(doc)
+    if not _PRODUCTS_HAS_RATE:
+        cleaned.pop("rate", None)
+    if not _PRODUCTS_HAS_OPENING_STOCK:
+        cleaned.pop("opening_stock", None)
+    return cleaned
 
 class CollectionAdapter:
     def __init__(self, table_name: str):
@@ -761,26 +770,28 @@ class CollectionAdapter:
             }
             document["original_filename"] = f"__METADATA__:{json.dumps(metadata)}:{orig_filename}"
 
-        if self.table_name == "products" and not _PRODUCTS_HAS_RATE:
-            document = {k: v for k, v in document.items() if k != "rate"}
-        try:
-            res = supabase.table(self.table_name).insert(document, returning="minimal").execute()
-        except Exception as e:
-            err_str = str(e)
-            if self.table_name == "products" and "rate" in document:
-                if "PGRST204" in err_str or "rate" in err_str:
-                    logger.warning("Supabase table products does not have rate column. Disabling rate writes.")
-                    _PRODUCTS_HAS_RATE = False
-                    document_copy = {k: v for k, v in document.items() if k != "rate"}
-                    try:
-                        res = supabase.table(self.table_name).insert(document_copy, returning="minimal").execute()
-                        return InsertOneResult(document.get("id"))
-                    except Exception as e2:
-                        err_str = str(e2)
-            if "42501" in err_str or "row-level security" in err_str.lower() or "unauthorized" in err_str.lower():
-                return await LocalFileCollection(self.table_name).insert_one(document)
-            raise e
-        return InsertOneResult(document.get("id"))
+        if self.table_name == "products":
+            document = _clean_products_doc(document)
+        
+        while True:
+            try:
+                res = supabase.table(self.table_name).insert(document, returning="minimal").execute()
+                return InsertOneResult(document.get("id"))
+            except Exception as e:
+                err_str = str(e)
+                if self.table_name == "products" and "PGRST204" in err_str:
+                    global _PRODUCTS_HAS_RATE, _PRODUCTS_HAS_OPENING_STOCK
+                    changed = False
+                    if "rate" in err_str and _PRODUCTS_HAS_RATE:
+                        _PRODUCTS_HAS_RATE = False; changed = True
+                    if "opening_stock" in err_str and _PRODUCTS_HAS_OPENING_STOCK:
+                        _PRODUCTS_HAS_OPENING_STOCK = False; changed = True
+                    if changed:
+                        document = _clean_products_doc(document)
+                        continue
+                if "42501" in err_str or "row-level security" in err_str.lower() or "unauthorized" in err_str.lower() or "401" in err_str:
+                    return await LocalFileCollection(self.table_name).insert_one(document)
+                raise e
 
     async def insert_many(self, documents):
         global _PRODUCTS_HAS_RATE
@@ -4521,6 +4532,8 @@ class InwardIn(BaseModel):
     attachment_filename: Optional[str] = ""
     high_value_asset: Optional[bool] = False
     high_value_goods: Optional[bool] = False
+    serial_number_required: Optional[bool] = False
+    use_serial_number: Optional[bool] = False
     serial_numbers: Optional[List[str]] = []
 
 class OutwardIn(BaseModel):
@@ -4542,6 +4555,8 @@ class OutwardIn(BaseModel):
     attachment_filename: Optional[str] = ""
     high_value_asset: Optional[bool] = False
     high_value_goods: Optional[bool] = False
+    serial_number_required: Optional[bool] = False
+    use_serial_number: Optional[bool] = False
     serial_numbers: Optional[List[str]] = []
     installation_notes: Optional[str] = ""
     warranty_start_date: Optional[str] = ""
@@ -4557,6 +4572,7 @@ class ProductIn(BaseModel):
     rate: Optional[float] = 0.0
     status: Optional[str] = "Active"
     high_value_goods: Optional[bool] = False
+    serial_number_required: Optional[bool] = False
 
 class InventoryDefaults(BaseModel):
     inward: Optional[Dict[str, Any]] = None
@@ -4949,7 +4965,27 @@ async def list_products(user=Depends(get_current_user)):
             return True
         return False
     items.sort(key=lambda p: (0 if _is_hv_prod(p) else 1, p["name"], p.get("size") or ""))
-    return items
+@api_router.get("/inventory/available-serials")
+async def get_available_serials(product: Optional[str] = None, size: Optional[str] = None, user=Depends(get_current_user)):
+    cid = user["company_id"]
+    all_assets = await db.high_value_assets.find({"company_id": cid}).to_list(10000)
+    p_norm = norm_product_name(product) if product else ""
+    s_norm = norm_str(size) if size else ""
+
+    available = []
+    for a in all_assets:
+        if a.get("company_id") == cid and a.get("status") == "Available":
+            sn = (a.get("serial_number") or "").strip().upper()
+            if not sn:
+                continue
+            if p_norm and norm_product_name(a.get("product_name")) != p_norm:
+                continue
+            if s_norm and norm_str(a.get("size_model")) != s_norm:
+                continue
+            available.append(sn)
+
+    unique_serials = sorted(list(set(available)))
+    return {"serials": unique_serials}
 
 @api_router.post("/inventory/products")
 async def create_product(data: ProductIn, user=Depends(get_current_user)):
