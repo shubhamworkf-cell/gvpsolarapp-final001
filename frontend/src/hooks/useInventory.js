@@ -2,17 +2,21 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError } from "@/lib/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { toast } from "sonner";
+import { getCachedProducts, fetchProductsDeduplicated, invalidateFrontendProductCache } from "@/lib/productCache";
 
-const STALE_TIME = 10 * 60 * 1000; // 10 min — inventory changes infrequently
+const STALE_TIME = 15 * 60 * 1000; // 15 min - inventory changes infrequently
 
 export function useProductList(filters = {}) {
   return useQuery({
     queryKey: queryKeys.inventory.products(filters),
     queryFn: async () => {
-      const { data } = await api.get("/inventory/products");
-      return data || [];
+      return await fetchProductsDeduplicated();
     },
+    initialData: () => getCachedProducts(),
     staleTime: STALE_TIME,
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
   });
 }
 

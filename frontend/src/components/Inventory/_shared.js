@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertTriangle } from "lucide-react";
+import { getCachedProducts, fetchProductsDeduplicated } from "@/lib/productCache";
 
 export const UNIT_OPTIONS = ["Nos", "Pair", "Mtr", "Set", "Box", "Pcs", "Kg", "Ltr", "Roll"];
 export const CATEGORY_OPTIONS = ["Solar Panel", "Inverter", "Battery", "BoS", "Cable", "Structure", "MC4 / Connector", "Earthing", "Net Meter", "Tools", "Other"];
@@ -96,6 +97,12 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
   const [search, setSearch] = useState("");
   const containerRef = useRef(null);
 
+  // Fallback to synchronous frontend cache if products prop is not passed or empty
+  const activeProducts = useMemo(() => {
+    if (products && products.length > 0) return products;
+    return getCachedProducts() || [];
+  }, [products]);
+
   useEffect(() => {
     function handleClickOutside(event) {
       if (containerRef.current && !containerRef.current.contains(event.target)) {
@@ -106,41 +113,47 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Pre-index search tokens once when activeProducts changes
   const { highValueProducts, otherProducts } = useMemo(() => {
     const hvKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"];
     const hv = [];
     const other = [];
-    
-    const sortedProducts = [...(products || [])].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    
-    sortedProducts.forEach(p => {
+
+    const list = [...activeProducts];
+    list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+    list.forEach(p => {
       const nameUpper = (p.name || "").toUpperCase();
+      const rawSize = (p.size || "").toUpperCase();
+      const cleanSize = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
+      const _searchKey = `${nameUpper} ${cleanSize} ${rawSize}`;
+      const item = { ...p, _searchKey };
+
       const isHV = p.high_value_goods || hvKeywords.some(kw => nameUpper.includes(kw));
       if (isHV) {
-        hv.push(p);
+        hv.push(item);
       } else {
-        other.push(p);
+        other.push(item);
       }
     });
-    
-    return { highValueProducts: hv, otherProducts: other };
-  }, [products]);
 
-  const filterList = (list, query) => {
+    return { highValueProducts: hv, otherProducts: other };
+  }, [activeProducts]);
+
+  const filterList = useCallback((list, query) => {
     if (!query) return list;
     const cleanSearch = query.toUpperCase().replace(/\s*[xX×\*]\s*/g, "*");
     const tokens = cleanSearch.split(/\s+/).filter(Boolean);
-    return list.filter(p => {
-      const name = (p.name || "").toUpperCase();
-      const rawSize = (p.size || "").toUpperCase();
-      const size = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
-      const fullText = `${name} ${size} ${rawSize}`;
-      return tokens.every(token => fullText.includes(token));
-    });
-  };
+    if (tokens.length === 0) return list;
+    return list.filter(p => tokens.every(token => p._searchKey.includes(token)));
+  }, []);
 
-  const filteredHighValue = useMemo(() => filterList(highValueProducts, search), [highValueProducts, search]);
-  const filteredOther = useMemo(() => filterList(otherProducts, search), [otherProducts, search]);
+  const filteredHighValue = useMemo(() => filterList(highValueProducts, search), [highValueProducts, search, filterList]);
+  const filteredOther = useMemo(() => filterList(otherProducts, search), [otherProducts, search, filterList]);
+
+  // CRITICAL DOM SLICING: Render max 50 HV and 100 Other items to eliminate DOM freeze & lag
+  const displayedHighValue = useMemo(() => filteredHighValue.slice(0, 50), [filteredHighValue]);
+  const displayedOther = useMemo(() => filteredOther.slice(0, 100), [filteredOther]);
 
   const handleInputChange = (val) => {
     setSearch(val);
@@ -166,15 +179,16 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
       />
       {open && (
         <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto text-xs py-1.5 text-left">
-          <div className="px-2.5 py-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider bg-slate-50">
-            HIGH VALUE GOODS
+          <div className="px-2.5 py-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
+            <span>HIGH VALUE GOODS</span>
+            {filteredHighValue.length > 50 && <span className="text-[9px] text-slate-400 font-normal">Showing 50 of {filteredHighValue.length}</span>}
           </div>
-          {filteredHighValue.length === 0 ? (
+          {displayedHighValue.length === 0 ? (
             <div className="px-4 py-1.5 text-slate-400 italic">No high value goods found</div>
           ) : (
-            filteredHighValue.map((p) => (
+            displayedHighValue.map((p) => (
               <button
-                key={p.id || p.name}
+                key={p.id || `${p.name}-${p.size}`}
                 type="button"
                 className="w-full text-left px-4 py-1.5 hover:bg-slate-100 font-semibold text-slate-800 transition-colors"
                 onClick={() => handleSelect(p)}
@@ -189,15 +203,16 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
 
           <div className="border-t border-slate-100 my-1"></div>
 
-          <div className="px-2.5 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50">
-            OTHER PRODUCTS (A-Z)
+          <div className="px-2.5 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
+            <span>OTHER PRODUCTS (A-Z)</span>
+            {filteredOther.length > 100 && <span className="text-[9px] text-slate-400 font-normal">Showing 100 of {filteredOther.length}</span>}
           </div>
-          {filteredOther.length === 0 ? (
+          {displayedOther.length === 0 ? (
             <div className="px-4 py-1.5 text-slate-400 italic">No other products found</div>
           ) : (
-            filteredOther.map((p) => (
+            displayedOther.map((p) => (
               <button
-                key={p.id || p.name}
+                key={p.id || `${p.name}-${p.size}`}
                 type="button"
                 className="w-full text-left px-4 py-1.5 hover:bg-slate-100 text-slate-700 transition-colors"
                 onClick={() => handleSelect(p)}

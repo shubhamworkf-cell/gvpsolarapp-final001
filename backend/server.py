@@ -4880,18 +4880,34 @@ def _save_local_high_value_product(product_name: str, is_high_value: bool):
     except Exception:
         pass
 
+_PRODUCTS_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+_PRODUCTS_CACHE_TTL_S = 60.0
+
+def invalidate_products_cache(company_id: Optional[str] = None):
+    global _PRODUCTS_CACHE
+    if company_id:
+        _PRODUCTS_CACHE.pop(company_id, None)
+    else:
+        _PRODUCTS_CACHE.clear()
+
 @api_router.get("/inventory/products")
 async def list_products(user=Depends(get_current_user)):
     cid = user["company_id"]
-    items = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(5000)
+    now = time.monotonic()
+    if cid in _PRODUCTS_CACHE:
+        cache_time, cached_items = _PRODUCTS_CACHE[cid]
+        if now - cache_time < _PRODUCTS_CACHE_TTL_S:
+            return cached_items
+
+    items = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(10000)
     in_agg = await db.inward_entries.aggregate([
         {"$match": {"company_id": cid}},
         {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
-    ]).to_list(5000)
+    ]).to_list(10000)
     out_agg = await db.outward_entries.aggregate([
         {"$match": {"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}},
         {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
-    ]).to_list(5000)
+    ]).to_list(10000)
     
     in_map = {}
     for x in in_agg:
@@ -4965,6 +4981,8 @@ async def list_products(user=Depends(get_current_user)):
             return True
         return False
     items.sort(key=lambda p: (0 if _is_hv_prod(p) else 1, p["name"], p.get("size") or ""))
+    _PRODUCTS_CACHE[cid] = (now, items)
+    return items
 @api_router.get("/inventory/available-serials")
 async def get_available_serials(product: Optional[str] = None, size: Optional[str] = None, user=Depends(get_current_user)):
     cid = user["company_id"]
@@ -5012,6 +5030,7 @@ async def create_product(data: ProductIn, user=Depends(get_current_user)):
     }
     await db.products.insert_one(doc); doc.pop("_id", None)
     doc["high_value_goods"] = data.high_value_goods or False
+    invalidate_products_cache(user["company_id"])
     await log_activity(user["company_id"], user["id"], user["name"], "Product Created", f"{name} ({size})" if size else name)
     return doc
 
@@ -5046,6 +5065,7 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
         "updated_at": now_iso(),
     }
     await db.products.update_one({"id": product_id, "company_id": cid}, {"$set": patch})
+    invalidate_products_cache(cid)
     await log_activity(cid, user["id"], user["name"], "Product Updated", f"{new_name} ({new_size})" if new_size else new_name)
     res = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0})
     if res:
@@ -5065,6 +5085,7 @@ async def delete_product(product_id: str, user=Depends(get_current_user)):
     if in_count + out_count > 0:
         raise HTTPException(status_code=409, detail=f"Cannot delete — {in_count + out_count} transactions reference this product specification. Delete those first.")
     await db.products.delete_one({"id": product_id, "company_id": cid})
+    invalidate_products_cache(cid)
     await log_activity(cid, user["id"], user["name"], "Product Deleted", f"{existing['name']} ({existing.get('size', '')})" if existing.get("size") else existing["name"])
     return {"ok": True}
 

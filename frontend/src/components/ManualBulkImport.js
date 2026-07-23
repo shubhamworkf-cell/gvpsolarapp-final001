@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { FileSpreadsheet, Upload, Clipboard, CheckCircle2, ArrowLeft, X } from "lucide-react";
-import { toast } from "sonner";
+import { fetchProductsDeduplicated, getCachedProducts } from "@/lib/productCache";
 
 const MODE_CONFIG = {
   inward: {
@@ -278,7 +278,11 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
 
     api.get("/clients").then((r) => setClients(r.data || [])).catch(() => {});
     if (!products || products.length === 0) {
-      api.get("/inventory/products").then((r) => setProductsList(r.data || [])).catch(() => {});
+      const cached = getCachedProducts();
+      if (cached && cached.length > 0) {
+        setProductsList(cached);
+      }
+      fetchProductsDeduplicated().then((list) => setProductsList(list || [])).catch(() => {});
     } else {
       setProductsList(products);
     }

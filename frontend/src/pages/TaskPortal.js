@@ -2103,14 +2103,16 @@ function ComplaintWorkflow({ task, canMutate, updateStatus }) {
 
 // ─── Shared sub-components ───────────────────────────────────────────────────
 
+import { fetchProductsDeduplicated, getCachedProducts } from "@/lib/productCache";
+
 export function MaterialRequest({ clientId, onDone }) {
   const [items, setItems] = useState([{ product: "", size: "", quantity: 1, remarks: "" }]);
   const [remarks, setRemarks] = useState("");
-  const [products, setProducts] = useState([]);
+  const [products, setProducts] = useState(() => getCachedProducts() || []);
 
   useEffect(() => {
-    api.get("/inventory/products")
-      .then((res) => setProducts(res.data || []))
+    fetchProductsDeduplicated()
+      .then((list) => setProducts(list || []))
       .catch(() => {});
   }, []);
 
