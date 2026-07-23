@@ -482,13 +482,21 @@ class CursorAdapter:
             else:
                 raise e
         
-        local_records = await LocalFileCollection(self.collection.table_name).find(self.filter, self.projection).sort(self.sort_fields).to_list(length)
-        if local_records:
-            existing_ids = {d.get("id") for d in data if isinstance(d, dict) and d.get("id")}
-            for lr in local_records:
-                if lr.get("id") not in existing_ids:
-                    data.append(lr)
-        
+        # ── Local-file merge (fallback/offline data) ─────────────────────────────
+        # Skip this expensive disk read for the products table when Supabase already
+        # returned data — products.json can be 26KB+, reading it on every request
+        # was the primary cause of the 30-second product-search delay.
+        skip_local_merge = (
+            self.collection.table_name == "products" and len(data) > 0
+        )
+        if not skip_local_merge:
+            local_records = await LocalFileCollection(self.collection.table_name).find(self.filter, self.projection).sort(self.sort_fields).to_list(length)
+            if local_records:
+                existing_ids = {d.get("id") for d in data if isinstance(d, dict) and d.get("id")}
+                for lr in local_records:
+                    if lr.get("id") not in existing_ids:
+                        data.append(lr)
+
         deserialized_data = []
         for doc in data:
             doc = self.collection._deserialize_document(doc)
@@ -4908,17 +4916,34 @@ def invalidate_products_cache(company_id: Optional[str] = None):
         _PRODUCTS_SEARCH_CACHE.clear()
 
 # ---------------------------------------------------------------------------
-# ULTRA-FAST SEARCH ENDPOINT  (dropdown use only — no aggregations)
-# Returns only the 6 fields needed for product selection dropdowns.
+# ULTRA-FAST SEARCH ENDPOINT  (dropdown use only — NO CursorAdapter, NO local merge)
+# Calls Supabase directly in a thread to avoid blocking the event loop.
 # Backed by a 5-minute in-memory cache, invalidated whenever the product
 # master changes (create / update / delete).
 # ---------------------------------------------------------------------------
+def _fetch_slim_products_sync(cid: str) -> List[Dict[str, Any]]:
+    """Synchronous Supabase call — runs in a thread executor."""
+    client = default_supabase
+    if client is None:
+        return []
+    try:
+        res = client.table("products") \
+            .select("id,name,size,unit,high_value_goods,serial_number_required") \
+            .eq("company_id", cid) \
+            .order("name") \
+            .limit(20000) \
+            .execute()
+        return res.data or []
+    except Exception as e:
+        logger.warning(f"slim products fetch failed: {e}")
+        return []
+
 @api_router.get("/inventory/products/search")
 async def search_products_for_dropdown(q: Optional[str] = None, user=Depends(get_current_user)):
     cid = user["company_id"]
     now = time.monotonic()
 
-    # Serve from search cache (TTL = 5 min)
+    # ── Serve from 5-minute in-memory cache (0ms) ───────────────────────────
     if cid in _PRODUCTS_SEARCH_CACHE:
         cache_time, cached_list = _PRODUCTS_SEARCH_CACHE[cid]
         if now - cache_time < _PRODUCTS_SEARCH_CACHE_TTL_S:
@@ -4927,13 +4952,14 @@ async def search_products_for_dropdown(q: Optional[str] = None, user=Depends(get
             qu = q.strip().upper()
             return [p for p in cached_list if qu in p["name"] or qu in (p.get("size") or "")]
 
-    # Fetch ONLY the 6 required fields — no balance/aggregation queries
-    fields_projection = {"_id": 0, "id": 1, "name": 1, "size": 1, "unit": 1,
-                         "high_value_goods": 1, "serial_number_required": 1}
-    try:
-        rows = await db.products.find({"company_id": cid}, fields_projection).sort("name", 1).to_list(20000)
-    except Exception:
-        rows = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(20000)
+    # ── Call Supabase directly in a thread (no CursorAdapter, no local merge) ──
+    loop = asyncio.get_event_loop()
+    rows = await loop.run_in_executor(None, _fetch_slim_products_sync, cid)
+
+    # ── Fallback: read from local_storage/products.json if Supabase returned nothing ──
+    if not rows:
+        local_col = LocalFileCollection("products")
+        rows = await local_col.find({"company_id": cid}, {"_id": 0}).to_list(20000)
 
     hv_keywords = {"SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"}
     local_high_values = _load_local_high_value_products()
@@ -4941,7 +4967,6 @@ async def search_products_for_dropdown(q: Optional[str] = None, user=Depends(get
     slim_list = []
     for p in rows:
         p_name = norm_product_name(p.get("name") or "")
-        # Merge high_value from local fallback if column missing in DB
         hv = bool(p.get("high_value_goods")) or local_high_values.get(p_name, False) \
              or any(kw in p_name for kw in hv_keywords)
         slim_list.append({
