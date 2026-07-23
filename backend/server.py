@@ -6205,7 +6205,7 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
 
     await log_activity(cid, user["id"], user["name"], "Bulk Inward Import", f"{len(inserted)} entries")
     await push_notification(cid, "admin", "Bulk Inventory Import", f"{user['name']} imported {len(inserted)} inward entries via AI")
-    await sync_inventory_master(cid)
+    asyncio.create_task(sync_inventory_master(cid))
     return {"inserted": len(inserted), "ids": inserted}
 
 

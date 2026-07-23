@@ -480,7 +480,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
     setCancelImport(false);
     cancelImportRef.current = false;
 
-    const CHUNK_SIZE = 500;
+    const CHUNK_SIZE = 100;
     const totalRows = validRows.length;
     let importedCount = 0;
 
@@ -491,11 +491,15 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
           break;
         }
         const chunk = validRows.slice(i, i + CHUNK_SIZE);
-        await api.post(cfg.bulkEndpoint, {
-          rows: chunk,
-          global_defaults: globalDefaults,
-          source: "manual-bulk-import",
-        });
+        await api.post(
+          cfg.bulkEndpoint,
+          {
+            rows: chunk,
+            global_defaults: globalDefaults,
+            source: "manual-bulk-import",
+          },
+          { timeout: 120000 }
+        );
         importedCount += chunk.length;
         setImportProgress(Math.round((importedCount / totalRows) * 100));
         // Yield to the browser main thread to keep UI responsive
