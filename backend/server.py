@@ -4972,7 +4972,7 @@ def _enrich_outward_with_assets(outward_doc: Optional[dict]) -> Optional[dict]:
         outward_doc["asset_remarks"] = ""
     return outward_doc
 
-async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = ""):
+async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = "", skip_activity_log: bool = False):
     pn = data.product.strip().upper()
     await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos", brand=data.source_name or "")
     
@@ -5084,7 +5084,8 @@ async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str,
             all_assets.append(asset_doc)
         _save_local_assets(all_assets)
         
-    await log_activity(company_id, user_id, user_name, "Inward Entry", f"{pn} × {data.quantity}")
+    if not skip_activity_log:
+        await log_activity(company_id, user_id, user_name, "Inward Entry", f"{pn} × {data.quantity}")
     return doc
 
 async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = ""):
@@ -6166,8 +6167,24 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
     if not data.rows:
         raise HTTPException(status_code=400, detail="No rows provided")
     cid = user["company_id"]
-    inserted: List[str] = []
+    inserted_ids: List[str] = []
     gd = data.global_defaults or {}  # v2 global defaults
+    prod_cache: Dict[Tuple[str, str, str, str], Any] = {}
+    docs_to_insert = []
+    new_assets = []
+    all_assets = _load_local_assets()
+    hv_products = _load_local_high_value_products()
+    
+    # 1. Pre-fetch existing products for company in 1 single query
+    existing_prods = await db.products.find({"company_id": cid}).to_list(10000)
+    for p in (existing_prods or []):
+        pn_n = norm_product_name(p.get("name"))
+        ps_n = norm_str(p.get("size"))
+        pu_n = norm_unit(p.get("unit"))
+        if cid and pn_n:
+            prod_cache[(cid, pn_n, ps_n, pu_n)] = p
+
+    # 2. Build documents and ensure products as needed
     for r in data.rows:
         pn = (r.product or "").strip().upper()
         if not pn:
@@ -6180,33 +6197,120 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
         remarks_val = r.remarks or gd.get("remarks", "")
         source_type_val = r.source_type or gd.get("source_type", "Supplier")
         client_id_val = r.client_id or gd.get("client_id", "")
+        client_name_val = r.client_name or gd.get("client_name", "")
+        source_name_val = r.source_name or gd.get("source_name", "")
+        ps = r.size or ""
+        pu = r.unit or gd.get("unit") or "Nos"
         
-        inward_data = InwardIn(
-            product=pn,
-            size=r.size or "",
-            quantity=qty,
-            unit=r.unit or gd.get("unit") or "Nos",
-            reference_number=r.reference_number or gd.get("reference_number", ""),
-            reference_type=r.reference_type or gd.get("reference_type", "Challan Number"),
-            bill_number=r.bill_number or gd.get("bill_number", ""),
-            source_type=source_type_val,
-            source_name=r.source_name or gd.get("source_name", ""),
-            client_id=client_id_val,
-            client_name=r.client_name or gd.get("client_name", ""),
-            date=r.date or gd.get("date", "") or now_iso(),
-            remarks=remarks_val,
-            high_value_asset=r.high_value_asset or False,
-            high_value_goods=r.high_value_goods or False,
-            serial_numbers=r.serial_numbers or []
-        )
-        
-        doc = await save_inward_entry_logic(inward_data, cid, user["id"], user["name"], source="ai-bulk-import", import_batch=data.batch_label or "")
-        inserted.append(doc["id"])
+        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
+        if cache_key not in prod_cache:
+            prod_doc = await ensure_product(cid, pn, size=ps, unit=pu, brand=source_name_val)
+            prod_cache[cache_key] = prod_doc
+            
+        # Client ID resolution from name case-insensitively for Return From Client
+        if source_type_val == "Return From Client":
+            if client_name_val and not client_id_val:
+                client = await db.clients.find_one({
+                    "company_id": cid,
+                    "full_name": {"$regex": f"^{re.escape(client_name_val)}$", "$options": "i"}
+                })
+                if client:
+                    client_id_val = client["id"]
+                    client_name_val = client["full_name"]
+            if client_name_val:
+                source_name_val = client_name_val
+            if client_id_val:
+                remarks_val = f"{remarks_val} [client_id:{client_id_val}]".strip()
 
-    await log_activity(cid, user["id"], user["name"], "Bulk Inward Import", f"{len(inserted)} entries")
-    await push_notification(cid, "admin", "Bulk Inventory Import", f"{user['name']} imported {len(inserted)} inward entries via AI")
-    asyncio.create_task(sync_inventory_master(cid))
-    return {"inserted": len(inserted), "ids": inserted}
+        entry_id = str(uuid.uuid4())
+        ref_num = r.reference_number or gd.get("reference_number", "")
+        bill_num = r.bill_number or gd.get("bill_number", "")
+        date_val = r.date or gd.get("date", "") or now_iso()
+        
+        doc = {
+            "id": entry_id,
+            "company_id": cid,
+            "product": pn,
+            "size": ps,
+            "quantity": qty,
+            "unit": pu,
+            "reference_number": numeric_only(ref_num),
+            "reference_type": r.reference_type or gd.get("reference_type", "Challan Number"),
+            "bill_number": numeric_only(bill_num),
+            "source_type": source_type_val,
+            "source_name": source_name_val,
+            "date": date_val,
+            "remarks": remarks_val,
+            "attachment_file_id": "",
+            "attachment_filename": "",
+            "source": "ai-bulk-import",
+            "created_by": user["id"],
+            "created_by_name": user["name"],
+            "created_at": now_iso()
+        }
+        if data.batch_label:
+            doc["import_batch"] = data.batch_label
+            
+        docs_to_insert.append(doc)
+        inserted_ids.append(entry_id)
+        
+        # High value asset tracking
+        is_hv = r.high_value_asset or r.high_value_goods or hv_products.get(pn, False) or any(kw in pn for kw in ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"])
+        if is_hv:
+            sns = [sn.strip().upper() for sn in (r.serial_numbers or []) if sn.strip()]
+            if sns:
+                for sn in sns:
+                    new_assets.append({
+                        "id": str(uuid.uuid4()),
+                        "company_id": cid,
+                        "inward_entry_id": entry_id,
+                        "product_name": pn,
+                        "brand": source_name_val or "Unknown",
+                        "size_model": ps,
+                        "quantity": 1.0,
+                        "serial_number": sn,
+                        "vendor": source_name_val or "",
+                        "purchase_date": date_val[:10],
+                        "challan_number": ref_num,
+                        "client_id": None,
+                        "client_name": None,
+                        "installation_date": None,
+                        "warranty_status": "Active",
+                        "status": "Available",
+                        "created_at": now_iso()
+                    })
+            else:
+                new_assets.append({
+                    "id": str(uuid.uuid4()),
+                    "company_id": cid,
+                    "inward_entry_id": entry_id,
+                    "product_name": pn,
+                    "brand": source_name_val or "Unknown",
+                    "size_model": ps,
+                    "quantity": qty,
+                    "serial_number": "",
+                    "vendor": source_name_val or "",
+                    "purchase_date": date_val[:10],
+                    "challan_number": ref_num,
+                    "client_id": None,
+                    "client_name": None,
+                    "installation_date": None,
+                    "warranty_status": "Active",
+                    "status": "Available",
+                    "created_at": now_iso()
+                })
+
+    # 3. Bulk DB Insertion (1 single DB query)
+    if docs_to_insert:
+        await db.inward_entries.insert_many(docs_to_insert)
+        if new_assets:
+            all_assets.extend(new_assets)
+            _save_local_assets(all_assets)
+        await log_activity(cid, user["id"], user["name"], "Bulk Inward Import", f"{len(docs_to_insert)} entries")
+        await push_notification(cid, "admin", "Bulk Inventory Import", f"{user['name']} imported {len(docs_to_insert)} inward entries via AI")
+        asyncio.create_task(sync_inventory_master(cid))
+
+    return {"inserted": len(inserted_ids), "ids": inserted_ids}
 
 
 # ---- AI Bulk Import (Outward) ----

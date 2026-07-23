@@ -480,7 +480,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
     setCancelImport(false);
     cancelImportRef.current = false;
 
-    const CHUNK_SIZE = 100;
+    const CHUNK_SIZE = 25;
     const totalRows = validRows.length;
     let importedCount = 0;
 
