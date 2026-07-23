@@ -1340,10 +1340,122 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 pass
 
+def _is_migration_completed(mig_key: str) -> bool:
+    filepath = ROOT_DIR / "local_storage" / "migrations.json"
+    if not filepath.exists():
+        return False
+    try:
+        with open(filepath, "r") as f:
+            data = json.load(f)
+            return data.get(mig_key, False)
+    except Exception:
+        return False
+
+def _mark_migration_completed(mig_key: str):
+    filepath = ROOT_DIR / "local_storage" / "migrations.json"
+    data = {}
+    if filepath.exists():
+        try:
+            with open(filepath, "r") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    data[mig_key] = True
+    try:
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+async def run_one_time_size_standardization_migration():
+    """
+    ONE-TIME DATA MIGRATION FOR EXISTING INVENTORY DATA:
+    1. Scans all existing records in inward_entries, outward_entries, and products.
+    2. Converts every size format to standard format using norm_str(size) (e.g. 4Cx95 -> 4C*95).
+    3. Merges duplicate product master records created only because of different size formats.
+    4. Preserves all transaction history, inward entries, outward entries, and stock balances.
+    """
+    try:
+        mig_key = "migration_size_standardization_v1"
+        if _is_migration_completed(mig_key):
+            return
+
+        logger.info("Starting one-time size standardization & product merge migration...")
+        
+        # Step 1: Update inward_entries
+        inward_docs = await db.inward_entries.find({}).to_list(100000)
+        inward_updates = 0
+        for doc in (inward_docs or []):
+            raw_size = doc.get("size") or ""
+            std_size = norm_str(raw_size)
+            if raw_size != std_size:
+                await db.inward_entries.update_one({"id": doc["id"]}, {"$set": {"size": std_size}})
+                inward_updates += 1
+
+        # Step 2: Update outward_entries
+        outward_docs = await db.outward_entries.find({}).to_list(100000)
+        outward_updates = 0
+        for doc in (outward_docs or []):
+            raw_size = doc.get("size") or ""
+            std_size = norm_str(raw_size)
+            if raw_size != std_size:
+                await db.outward_entries.update_one({"id": doc["id"]}, {"$set": {"size": std_size}})
+                outward_updates += 1
+
+        # Step 3: Update products size and merge duplicate products
+        prod_docs = await db.products.find({}).to_list(100000)
+        spec_to_prods = {}
+        for p in (prod_docs or []):
+            cid = p.get("company_id")
+            pn = norm_product_name(p.get("name"))
+            raw_size = p.get("size") or ""
+            std_size = norm_str(raw_size)
+            if not cid or not pn:
+                continue
+            
+            if raw_size != std_size:
+                await db.products.update_one({"id": p["id"]}, {"$set": {"size": std_size}})
+                p["size"] = std_size
+
+            key = (cid, pn, std_size)
+            if key not in spec_to_prods:
+                spec_to_prods[key] = []
+            spec_to_prods[key].append(p)
+
+        merged_count = 0
+        for key, prods in spec_to_prods.items():
+            if len(prods) > 1:
+                prods.sort(key=lambda x: (0 if (x.get("rate") or x.get("min_stock") or x.get("opening_stock")) else 1, x.get("created_at") or ""))
+                primary = prods[0]
+                
+                merged_patch = {}
+                for dup in prods[1:]:
+                    if not primary.get("rate") and dup.get("rate"):
+                        merged_patch["rate"] = dup["rate"]
+                    if not primary.get("min_stock") and dup.get("min_stock"):
+                        merged_patch["min_stock"] = dup["min_stock"]
+                    if not primary.get("opening_stock") and dup.get("opening_stock"):
+                        merged_patch["opening_stock"] = dup["opening_stock"]
+                    if not primary.get("category") and dup.get("category"):
+                        merged_patch["category"] = dup["category"]
+                    
+                    await db.products.delete_one({"id": dup["id"]})
+                    merged_count += 1
+
+                if merged_patch:
+                    await db.products.update_one({"id": primary["id"]}, {"$set": merged_patch})
+
+        _mark_migration_completed(mig_key)
+        logger.info(f"Size standardization migration completed: {inward_updates} inward updated, {outward_updates} outward updated, {merged_count} duplicate products merged.")
+    except Exception as e:
+        logger.warning(f"Error during size standardization migration: {e}")
+
 async def _deferred_startup_tasks():
     """Non-critical startup tasks deferred so they don't block the first request."""
     await asyncio.sleep(5)  # Wait 5s for the function to be warm before doing heavy work
     try:
+        await run_one_time_size_standardization_migration()
         await auto_migrate_product_variants()
         await sync_inventory_master()
         logger.info("Deferred product variant migration & inventory synchronization complete")
