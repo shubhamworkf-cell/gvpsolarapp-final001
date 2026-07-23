@@ -3850,56 +3850,46 @@ async def create_material_request(data: MaterialRequestIn, user=Depends(get_curr
     return doc
 
 async def _enrich_requests_with_stock_batch(requests_list: List[Dict[str, Any]], company_id: str) -> List[Dict[str, Any]]:
-    product_keys = set()
-    for req in requests_list:
-        for it in (req.get("items") or []):
-            name = (it.get("product") or "").strip().upper()
-            size = (it.get("size") or "").strip()
-            unit = (it.get("unit") or "Nos").strip()
-            if name:
-                product_keys.add((name, size, unit))
-    
-    if not product_keys:
-        return requests_list
-        
     in_sum_res = await db.inward_entries.aggregate([
         {"$match": {"company_id": company_id}},
-        {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(10000)
-    
     out_sum_res = await db.outward_entries.aggregate([
-        {"$match": {"company_id": company_id, "status": {"$ne": "Pending"}}},
-        {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
+        {"$match": {"company_id": company_id, "status": {"$nin": ["Pending", "Cancelled"]}}},
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(10000)
     
+    prod_docs = await db.products.find({"company_id": company_id}).to_list(10000)
+    op_map = {(norm_product_name(p.get("name")), norm_str(p.get("size"))): float(p.get("opening_stock") or 0.0) for p in prod_docs}
+
     in_map = {}
     for x in in_sum_res:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
         else:
-            p_k = (str(_id).strip().upper(), "", "Nos")
-        in_map[p_k] = in_map.get(p_k, 0) + x["qty"]
+            p_k = (norm_product_name(str(_id)), "")
+        in_map[p_k] = in_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
 
     out_map = {}
     for x in out_sum_res:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = ((_id.get("product") or "").strip().upper(), (_id.get("size") or "").strip(), (_id.get("unit") or "Nos").strip())
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
         else:
-            p_k = (str(_id).strip().upper(), "", "Nos")
-        out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
+            p_k = (norm_product_name(str(_id)), "")
+        out_map[p_k] = out_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
     
     for req in requests_list:
         enriched = []
         for it in (req.get("items") or []):
-            name = (it.get("product") or "").strip().upper()
-            size = (it.get("size") or "").strip()
-            unit = (it.get("unit") or "Nos").strip()
-            k = (name, size, unit)
+            name = norm_product_name(it.get("product"))
+            size = norm_str(it.get("size"))
+            k = (name, size)
+            op_stock = op_map.get(k, 0.0)
             total_in = in_map.get(k, 0.0)
             total_out = out_map.get(k, 0.0)
-            available_stock = max(0.0, total_in - total_out)
+            available_stock = max(0.0, op_stock + total_in - total_out)
             enriched.append({**it, "available_stock": available_stock})
         req["items"] = enriched
         
@@ -4451,6 +4441,7 @@ class ProductIn(BaseModel):
     category: Optional[str] = ""
     unit: Optional[str] = "Nos"
     min_stock: Optional[float] = 0
+    opening_stock: Optional[float] = 0.0
     rate: Optional[float] = 0.0
     status: Optional[str] = "Active"
     high_value_goods: Optional[bool] = False
@@ -4469,7 +4460,7 @@ def norm_str(s: Optional[str]) -> str:
 def norm_product_name(s: Optional[str]) -> str:
     if not s:
         return ""
-    return norm_str(s).upper()
+    return str(s).strip().upper()
 
 def norm_unit(u: Optional[str]) -> str:
     if not u:
@@ -4601,12 +4592,10 @@ def numeric_only(s: Optional[str]) -> str:
 
 @api_router.get("/inventory/stats")
 async def inv_stats(user=Depends(get_current_user)):
-    import asyncio
     cid = user["company_id"]
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
-    
-    # Query all stats concurrently to avoid sequential blocking
+
     (
         products_count,
         in_today,
@@ -4626,13 +4615,13 @@ async def inv_stats(user=Depends(get_current_user)):
         db.material_requests.count_documents({"company_id": cid, "status": "pending"}),
         db.inward_entries.aggregate([
             {"$match": {"company_id": cid}},
-            {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
-        ]).to_list(2000),
+            {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+        ]).to_list(5000),
         db.outward_entries.aggregate([
-            {"$match": {"company_id": cid, "status": {"$ne": "Pending"}}},
-            {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
-        ]).to_list(2000),
-        db.products.find({"company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1, "min_stock": 1}).to_list(2000)
+            {"$match": {"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}},
+            {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+        ]).to_list(5000),
+        db.products.find({"company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1, "min_stock": 1, "opening_stock": 1}).to_list(5000)
     )
 
     in_agg_list = in_agg if isinstance(in_agg, list) else []
@@ -4643,32 +4632,38 @@ async def inv_stats(user=Depends(get_current_user)):
     for x in in_agg_list:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")), norm_unit(_id.get("unit")))
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
         else:
-            p_k = (norm_product_name(str(_id)), "", "Nos")
-        in_map[p_k] = in_map.get(p_k, 0) + x["qty"]
+            p_k = (norm_product_name(str(_id)), "")
+        in_map[p_k] = in_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
 
     out_map = {}
     for x in out_agg_list:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")), norm_unit(_id.get("unit")))
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
         else:
-            p_k = (norm_product_name(str(_id)), "", "Nos")
-        out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
+            p_k = (norm_product_name(str(_id)), "")
+        out_map[p_k] = out_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
 
-    all_specs = set(in_map.keys()) | set(out_map.keys()) | {
-        (norm_product_name(p["name"]), norm_str(p.get("size")), norm_unit(p.get("unit")))
-        for p in prods_list
-    }
+    prod_map = {}
+    for p in prods_list:
+        p_k = (norm_product_name(p["name"]), norm_str(p.get("size")))
+        prod_map[p_k] = p
+
+    all_specs = set(in_map.keys()) | set(out_map.keys()) | set(prod_map.keys())
 
     low = 0
     total_stock_qty = 0.0
     for p_k in all_specs:
-        bal = in_map.get(p_k, 0) - out_map.get(p_k, 0)
-        total_stock_qty += max(bal, 0)
-        if bal <= 5:
+        p_doc = prod_map.get(p_k) or {}
+        op_stock = float(p_doc.get("opening_stock") or 0.0)
+        bal = op_stock + in_map.get(p_k, 0.0) - out_map.get(p_k, 0.0)
+        total_stock_qty += max(bal, 0.0)
+        mn = float(p_doc.get("min_stock") or 5.0)
+        if bal <= mn:
             low += 1
+
     return {
         "total_products": len(all_specs), "total_stock_qty": round(total_stock_qty, 2),
         "low_stock": low, "in_today": in_today, "out_today": out_today,
@@ -4760,46 +4755,46 @@ def _save_local_high_value_product(product_name: str, is_high_value: bool):
 @api_router.get("/inventory/products")
 async def list_products(user=Depends(get_current_user)):
     cid = user["company_id"]
-    items = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(2000)
+    items = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(5000)
     in_agg = await db.inward_entries.aggregate([
         {"$match": {"company_id": cid}},
-        {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
-    ]).to_list(2000)
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+    ]).to_list(5000)
     out_agg = await db.outward_entries.aggregate([
-        {"$match": {"company_id": cid, "status": {"$ne": "Pending"}}},
-        {"$group": {"_id": {"product": "$product", "size": "$size", "unit": "$unit"}, "qty": {"$sum": "$quantity"}}}
-    ]).to_list(2000)
+        {"$match": {"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}},
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+    ]).to_list(5000)
     
     in_map = {}
     for x in in_agg:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")), norm_unit(_id.get("unit")))
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
         else:
-            p_k = (norm_product_name(str(_id)), "", "Nos")
-        in_map[p_k] = in_map.get(p_k, 0) + x["qty"]
+            p_k = (norm_product_name(str(_id)), "")
+        in_map[p_k] = in_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
 
     out_map = {}
     for x in out_agg:
         _id = x.get("_id") or {}
         if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")), norm_unit(_id.get("unit")))
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
         else:
-            p_k = (norm_product_name(str(_id)), "", "Nos")
-        out_map[p_k] = out_map.get(p_k, 0) + x["qty"]
+            p_k = (norm_product_name(str(_id)), "")
+        out_map[p_k] = out_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
 
     # Auto-heal: Ensure any product specification present in History exists in Product Master items
     all_history_keys = set(in_map.keys()) | set(out_map.keys())
     existing_items_keys = {
-        (norm_product_name(p["name"]), norm_str(p.get("size")), norm_unit(p.get("unit")))
+        (norm_product_name(p["name"]), norm_str(p.get("size")))
         for p in items
     }
     missing_keys = all_history_keys - existing_items_keys
     if missing_keys:
-        for (m_name, m_size, m_unit) in missing_keys:
+        for (m_name, m_size) in missing_keys:
             if m_name:
                 try:
-                    new_prod = await ensure_product(cid, m_name, size=m_size, unit=m_unit)
+                    new_prod = await ensure_product(cid, m_name, size=m_size)
                     if new_prod and isinstance(new_prod, dict):
                         if not any(it.get("id") == new_prod.get("id") for it in items):
                             items.append(new_prod)
@@ -4811,20 +4806,28 @@ async def list_products(user=Depends(get_current_user)):
     for p in items:
         p_name = norm_product_name(p["name"])
         p_size = norm_str(p.get("size"))
-        p_unit = norm_unit(p.get("unit"))
-        k = (p_name, p_size, p_unit)
+        k = (p_name, p_size)
+
+        op_stock = float(p.get("opening_stock") or 0.0)
+        tot_in = round(float(in_map.get(k, 0.0)), 2)
+        tot_out = round(float(out_map.get(k, 0.0)), 2)
+        bal = round(op_stock + tot_in - tot_out, 2)
+
+        p["opening_stock"] = op_stock
+        p["total_in"] = tot_in
+        p["total_out"] = tot_out
+        p["balance"] = bal
+
         p["rate"] = local_rates.get(p_name, float(p.get("rate") or 0.0))
         p["high_value_goods"] = local_high_values.get(p_name, False)
-        p["total_in"] = in_map.get(k, 0)
-        p["total_out"] = out_map.get(k, 0)
-        p["balance"] = p["total_in"] - p["total_out"]
-        mn = float(p.get("min_stock") or 0)
-        if p["balance"] <= 0:
+        mn = float(p.get("min_stock") or 0.0)
+        if bal <= 0:
             p["stock_status"] = "Out Of Stock"
-        elif p["balance"] <= mn:
+        elif bal <= mn:
             p["stock_status"] = "Low Stock"
         else:
             p["stock_status"] = "Normal"
+
     hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
     def _is_hv_prod(p):
         p_name = norm_product_name(p["name"])
@@ -4855,6 +4858,7 @@ async def create_product(data: ProductIn, user=Depends(get_current_user)):
         "id": str(uuid.uuid4()), "company_id": user["company_id"], "name": name,
         "size": size, "category": data.category or "Solar",
         "unit": unit or "Nos", "min_stock": float(data.min_stock or 0),
+        "opening_stock": float(data.opening_stock or 0.0),
         "rate": rate_val,
         "status": data.status or "Active", "created_at": now_iso(),
     }
@@ -4888,6 +4892,7 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
     patch = {
         "name": new_name, "size": new_size, "category": data.category or "",
         "unit": new_unit or "Nos", "min_stock": float(data.min_stock or 0),
+        "opening_stock": float(data.opening_stock if data.opening_stock is not None else existing.get("opening_stock", 0.0)),
         "rate": rate_val,
         "status": data.status or existing.get("status") or "Active",
         "updated_at": now_iso(),
@@ -6103,24 +6108,33 @@ async def product_stats(product_id: str, user=Depends(get_current_user)):
     p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
-    name = p["name"]
-    size = p.get("size") or ""
-    unit = p.get("unit") or "Nos"
-    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": name, "size": size, "unit": unit})
-    out_count = await db.outward_entries.count_documents({"company_id": cid, "product": name, "size": size, "unit": unit})
+    name = norm_product_name(p["name"])
+    size = norm_str(p.get("size"))
+    
+    inward_query = {"company_id": cid, "product": name, "size": size}
+    outward_query = {"company_id": cid, "product": name, "size": size, "status": {"$nin": ["Pending", "Cancelled"]}}
+
+    in_count = await db.inward_entries.count_documents(inward_query)
+    out_count = await db.outward_entries.count_documents(outward_query)
+
     in_agg = await db.inward_entries.aggregate([
-        {"$match": {"company_id": cid, "product": name, "size": size, "unit": unit}},
+        {"$match": inward_query},
         {"$group": {"_id": None, "qty": {"$sum": "$quantity"}, "last_date": {"$max": "$date"}}}
     ]).to_list(1)
     out_agg = await db.outward_entries.aggregate([
-        {"$match": {"company_id": cid, "product": name, "size": size, "unit": unit, "status": {"$ne": "Pending"}}},
+        {"$match": outward_query},
         {"$group": {"_id": None, "qty": {"$sum": "$quantity"}, "last_date": {"$max": "$date"}}}
     ]).to_list(1)
-    total_in = (in_agg[0]["qty"] if in_agg else 0)
-    total_out = (out_agg[0]["qty"] if out_agg else 0)
+
+    op_stock = float(p.get("opening_stock") or 0.0)
+    total_in = round(float(in_agg[0]["qty"] if in_agg else 0.0), 2)
+    total_out = round(float(out_agg[0]["qty"] if out_agg else 0.0), 2)
+    balance = round(op_stock + total_in - total_out, 2)
+
     return {
         "product": p,
-        "total_in": total_in, "total_out": total_out, "balance": total_in - total_out,
+        "opening_stock": op_stock,
+        "total_in": total_in, "total_out": total_out, "balance": balance,
         "last_inward_date": (in_agg[0]["last_date"] if in_agg else None),
         "last_outward_date": (out_agg[0]["last_date"] if out_agg else None),
         "transaction_count": in_count + out_count,
