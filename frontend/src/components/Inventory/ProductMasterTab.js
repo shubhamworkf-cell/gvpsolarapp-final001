@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Pencil, Trash2, Plus, Boxes, Search } from "lucide-react";
+import { Pencil, Trash2, Plus, Boxes, Search, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Field, SelectField, ConfirmDialog, UNIT_OPTIONS, CATEGORY_OPTIONS } from "./_shared";
 import ProductDrawer from "./ProductDrawer";
@@ -62,24 +62,49 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
   const itemsPerPage = 25;
 
   const filtered = useMemo(() => {
-    const s = (localSearch || globalSearch || "").toLowerCase().trim();
-    if (!s) return products;
+    const rawSearch = (localSearch || globalSearch || "").toLowerCase().trim();
+    if (!rawSearch) return products;
+    const cleanSearch = rawSearch.replace(/\s*[xX×\*]\s*/g, "*");
+    const tokens = cleanSearch.split(/\s+/).filter(Boolean);
+
     return products.filter((p) => {
       const name = (p.name || "").toLowerCase();
-      const size = (p.size || "").toLowerCase();
+      const rawSize = (p.size || "").toLowerCase();
+      const size = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
       const brand = (p.brand || "").toLowerCase();
       const category = (p.category || "").toLowerCase();
       const sku = (p.sku || p.code || p.product_code || p.id || "").toLowerCase();
 
-      return (
-        name.includes(s) ||
-        size.includes(s) ||
-        brand.includes(s) ||
-        category.includes(s) ||
-        sku.includes(s)
-      );
+      const fullText = `${name} ${size} ${rawSize} ${brand} ${category} ${sku}`;
+      return tokens.every((token) => fullText.includes(token));
     });
   }, [products, localSearch, globalSearch]);
+
+  const handleDownloadCSV = () => {
+    if (!filtered || filtered.length === 0) {
+      toast.error("No product data to export");
+      return;
+    }
+    const headers = ["Product Name", "Size", "Category", "Unit", "Min Stock", "Rate", "Current Stock", "Status"];
+    const rows = filtered.map(p => [
+      `"${(p.name || "").replace(/"/g, '""')}"`,
+      `"${(p.size || "").replace(/"/g, '""')}"`,
+      `"${(p.category || "Solar").replace(/"/g, '""')}"`,
+      `"${(p.unit || "Nos").replace(/"/g, '""')}"`,
+      p.min_stock || 0,
+      p.rate || 0,
+      p.balance || 0,
+      `"${(p.stock_status || "Normal").replace(/"/g, '""')}"`
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "Product_Master.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   React.useEffect(() => {
     setCurrentPage(1);
@@ -111,6 +136,10 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
                   data-testid="product-master-search"
                 />
               </div>
+
+              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50" onClick={handleDownloadCSV} data-testid="product-master-download-btn">
+                <Download className="w-4 h-4 mr-1.5 text-blue-600" /> Download
+              </Button>
 
               <Button className="bg-blue-600 hover:bg-blue-700" onClick={startAdd} data-testid="add-product-btn">
                 <Plus className="w-4 h-4 mr-1.5" /> Add Product

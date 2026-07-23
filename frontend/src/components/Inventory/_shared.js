@@ -126,15 +126,21 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
     return { highValueProducts: hv, otherProducts: other };
   }, [products]);
 
-  const filteredHighValue = useMemo(() => {
-    if (!search) return highValueProducts;
-    return highValueProducts.filter(p => (p.name || "").toUpperCase().includes(search.toUpperCase()));
-  }, [highValueProducts, search]);
+  const filterList = (list, query) => {
+    if (!query) return list;
+    const cleanSearch = query.toUpperCase().replace(/\s*[xX×\*]\s*/g, "*");
+    const tokens = cleanSearch.split(/\s+/).filter(Boolean);
+    return list.filter(p => {
+      const name = (p.name || "").toUpperCase();
+      const rawSize = (p.size || "").toUpperCase();
+      const size = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
+      const fullText = `${name} ${size} ${rawSize}`;
+      return tokens.every(token => fullText.includes(token));
+    });
+  };
 
-  const filteredOther = useMemo(() => {
-    if (!search) return otherProducts;
-    return otherProducts.filter(p => (p.name || "").toUpperCase().includes(search.toUpperCase()));
-  }, [otherProducts, search]);
+  const filteredHighValue = useMemo(() => filterList(highValueProducts, search), [highValueProducts, search]);
+  const filteredOther = useMemo(() => filterList(otherProducts, search), [otherProducts, search]);
 
   const handleInputChange = (val) => {
     setSearch(val);

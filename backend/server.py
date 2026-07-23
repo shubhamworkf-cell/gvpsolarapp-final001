@@ -4462,9 +4462,9 @@ class InventoryDefaults(BaseModel):
 def norm_str(s: Optional[str]) -> str:
     if not s:
         return ""
-    val = s.strip()
-    val = re.sub(r'\s*[xX×\*]\s*', '×', val)
-    return val.strip()
+    val = str(s).strip()
+    val = re.sub(r'\s*[xX×\*]\s*', '*', val)
+    return val.strip().upper()
 
 def norm_product_name(s: Optional[str]) -> str:
     if not s:
@@ -4491,14 +4491,14 @@ async def ensure_product(company_id: str, name: str, size: str = "", category: s
     u = norm_unit(unit)
     if not n: return None
     
-    query: Dict[str, Any] = {"company_id": company_id, "name": n, "size": s, "unit": u}
+    query: Dict[str, Any] = {"company_id": company_id, "name": n, "size": s}
     existing = await db.products.find_one(query)
 
     if not existing:
         try:
             all_prods = await db.products.find({"company_id": company_id, "name": n}).to_list(1000)
             for p in all_prods:
-                if norm_str(p.get("size")) == s and norm_unit(p.get("unit")) == u:
+                if norm_str(p.get("size")) == s:
                     existing = p
                     break
         except Exception:
@@ -4840,14 +4840,14 @@ async def list_products(user=Depends(get_current_user)):
 async def create_product(data: ProductIn, user=Depends(get_current_user)):
     if not has_perm(user, "data_management", "create"):
         raise HTTPException(status_code=403, detail="Missing permission: data_management.create")
-    name = (data.name or "").strip().upper()
-    size = (data.size or "").strip()
-    unit = (data.unit or "Nos").strip()
+    name = norm_product_name(data.name)
+    size = norm_str(data.size)
+    unit = norm_unit(data.unit)
     if not name:
         raise HTTPException(status_code=400, detail="Product name required")
-    existing = await db.products.find_one({"company_id": user["company_id"], "name": name, "size": size, "unit": unit})
+    existing = await db.products.find_one({"company_id": user["company_id"], "name": name, "size": size})
     if existing:
-        raise HTTPException(status_code=400, detail="Product variant already exists for this complete specification")
+        raise HTTPException(status_code=400, detail="Product with this name and size specification already exists")
     rate_val = data.rate or 0.0
     _save_local_rate(name, rate_val)
     _save_local_high_value_product(name, data.high_value_goods or False)
@@ -4871,13 +4871,13 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
     existing = await db.products.find_one({"id": product_id, "company_id": cid})
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
-    new_name = (data.name or existing["name"]).strip().upper()
-    new_size = (data.size if data.size is not None else existing.get("size", "")).strip()
-    new_unit = (data.unit if data.unit is not None else existing.get("unit", "Nos")).strip()
-    if new_name != existing["name"] or new_size != existing.get("size", "") or new_unit != existing.get("unit", "Nos"):
-        dup = await db.products.find_one({"company_id": cid, "name": new_name, "size": new_size, "unit": new_unit})
+    new_name = norm_product_name(data.name) if data.name else existing["name"]
+    new_size = norm_str(data.size) if data.size is not None else norm_str(existing.get("size", ""))
+    new_unit = norm_unit(data.unit) if data.unit is not None else norm_unit(existing.get("unit", "Nos"))
+    if new_name != existing["name"] or new_size != norm_str(existing.get("size", "")):
+        dup = await db.products.find_one({"company_id": cid, "name": new_name, "size": new_size})
         if dup and dup["id"] != product_id:
-            raise HTTPException(status_code=400, detail="Another product variant already uses this complete specification")
+            raise HTTPException(status_code=400, detail="Another product with this name and size specification already exists")
         # cascade rename in inward/outward entries
         await db.inward_entries.update_many({"company_id": cid, "product": existing["name"], "size": existing.get("size", ""), "unit": existing.get("unit", "Nos")}, {"$set": {"product": new_name, "size": new_size, "unit": new_unit}})
         await db.outward_entries.update_many({"company_id": cid, "product": existing["name"], "size": existing.get("size", ""), "unit": existing.get("unit", "Nos")}, {"$set": {"product": new_name, "size": new_size, "unit": new_unit}})
@@ -5912,39 +5912,60 @@ async def inv_history(
 
     rows: List[Dict[str, Any]] = []
 
+    def _search_match(rec: Dict[str, Any]) -> bool:
+        if not search or not search.strip():
+            return True
+        clean_s = norm_str(search).lower().strip()
+        tokens = [t for t in clean_s.split() if t]
+        if not tokens:
+            return True
+        
+        prod = norm_product_name(rec.get("product"))
+        raw_size = rec.get("size") or ""
+        sz = norm_str(raw_size)
+        src = (rec.get("source_name") or rec.get("client_name") or "").lower()
+        proj = (rec.get("project_name") or "").lower()
+        ref = (rec.get("reference_number") or rec.get("outward_challan_no") or "").lower()
+        bill = (rec.get("bill_number") or "").lower()
+        rem = (rec.get("remarks") or "").lower()
+        by = (rec.get("created_by_name") or "").lower()
+        
+        full_text = f"{prod} {sz} {raw_size} {src} {proj} {ref} {bill} {rem} {by}".lower()
+        return all(t in full_text for t in tokens)
+
     if (not type or type == "inward") and not status:
         q: Dict[str, Any] = {"company_id": cid}
         if product: q["product"] = _text_filter(product)
-        if size is not None and size != "": q["size"] = size
+        if size is not None and size != "": q["size"] = norm_str(size)
         if vendor: q["source_name"] = _text_filter(vendor)
         if challan: q["reference_number"] = _text_filter(challan)
         if bill_number: q["bill_number"] = _text_filter(bill_number)
         if user_id: q["created_by"] = user_id
-        if search: q["$or"] = _search_or_conditions(["product", "size", "source_name", "reference_number", "bill_number", "remarks"], search)
         inward_rows = await db.inward_entries.find(q, inward_projection).sort([("date", -1), ("created_at", -1)]).to_list(10000)
         for r in inward_rows:
             if not _date_match(r):
                 continue
             enriched = _enrich_inward_with_assets(parse_inward_client_info(r))
             if enriched:
-                rows.append({**enriched, "type": "Inward"})
+                if _search_match(enriched):
+                    rows.append({**enriched, "type": "Inward"})
 
     if (not type or type == "outward") and not bill_number:
         q = {"company_id": cid}
         if product: q["product"] = _text_filter(product)
-        if size is not None and size != "": q["size"] = size
+        if size is not None and size != "": q["size"] = norm_str(size)
         if client: q["client_name"] = _text_filter(client)
         if challan: q["$or"] = [{"outward_challan_no": _text_filter(challan)}, {"reference_number": _text_filter(challan)}]
         if user_id: q["created_by"] = user_id
         if status: q["status"] = status
-        if search: q["$or"] = _search_or_conditions(["product", "size", "client_name", "project_name", "outward_challan_no", "reference_number", "remarks"], search)
         outward_rows = await db.outward_entries.find(q, outward_projection).sort([("date", -1), ("created_at", -1)]).to_list(10000)
         for r in outward_rows:
             if not _date_match(r):
                 continue
             enriched = _enrich_outward_with_assets(r)
             if enriched:
-                rows.append({**enriched, "type": "Outward"})
+                if _search_match(enriched):
+                    rows.append({**enriched, "type": "Outward"})
 
     rows.sort(key=lambda x: (x.get("date") or x.get("created_at") or ""), reverse=True)
     total = len(rows)
