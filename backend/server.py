@@ -516,6 +516,8 @@ class CursorAdapter:
 
 _PRODUCTS_HAS_RATE = True
 _PRODUCTS_HAS_OPENING_STOCK = True
+_PRODUCTS_HAS_HV = True
+_PRODUCTS_HAS_SN_REQ = True
 
 def _clean_products_doc(doc: dict) -> dict:
     cleaned = dict(doc)
@@ -523,6 +525,10 @@ def _clean_products_doc(doc: dict) -> dict:
         cleaned.pop("rate", None)
     if not _PRODUCTS_HAS_OPENING_STOCK:
         cleaned.pop("opening_stock", None)
+    if not _PRODUCTS_HAS_HV:
+        cleaned.pop("high_value_goods", None)
+    if not _PRODUCTS_HAS_SN_REQ:
+        cleaned.pop("serial_number_required", None)
     return cleaned
 
 class CollectionAdapter:
@@ -780,12 +786,16 @@ class CollectionAdapter:
             except Exception as e:
                 err_str = str(e)
                 if self.table_name == "products" and "PGRST204" in err_str:
-                    global _PRODUCTS_HAS_RATE, _PRODUCTS_HAS_OPENING_STOCK
+                    global _PRODUCTS_HAS_RATE, _PRODUCTS_HAS_OPENING_STOCK, _PRODUCTS_HAS_HV, _PRODUCTS_HAS_SN_REQ
                     changed = False
                     if "rate" in err_str and _PRODUCTS_HAS_RATE:
                         _PRODUCTS_HAS_RATE = False; changed = True
                     if "opening_stock" in err_str and _PRODUCTS_HAS_OPENING_STOCK:
                         _PRODUCTS_HAS_OPENING_STOCK = False; changed = True
+                    if "high_value_goods" in err_str and _PRODUCTS_HAS_HV:
+                        _PRODUCTS_HAS_HV = False; changed = True
+                    if "serial_number_required" in err_str and _PRODUCTS_HAS_SN_REQ:
+                        _PRODUCTS_HAS_SN_REQ = False; changed = True
                     if changed:
                         document = _clean_products_doc(document)
                         continue
@@ -5027,9 +5037,12 @@ async def create_product(data: ProductIn, user=Depends(get_current_user)):
         "opening_stock": float(data.opening_stock or 0.0),
         "rate": rate_val,
         "status": data.status or "Active", "created_at": now_iso(),
+        "high_value_goods": data.high_value_goods or False,
+        "serial_number_required": data.serial_number_required or False,
     }
     await db.products.insert_one(doc); doc.pop("_id", None)
     doc["high_value_goods"] = data.high_value_goods or False
+    doc["serial_number_required"] = data.serial_number_required or False
     invalidate_products_cache(user["company_id"])
     await log_activity(user["company_id"], user["id"], user["name"], "Product Created", f"{name} ({size})" if size else name)
     return doc
@@ -5062,6 +5075,8 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
         "opening_stock": float(data.opening_stock if data.opening_stock is not None else existing.get("opening_stock", 0.0)),
         "rate": rate_val,
         "status": data.status or existing.get("status") or "Active",
+        "high_value_goods": data.high_value_goods if data.high_value_goods is not None else existing.get("high_value_goods", False),
+        "serial_number_required": data.serial_number_required if data.serial_number_required is not None else existing.get("serial_number_required", False),
         "updated_at": now_iso(),
     }
     await db.products.update_one({"id": product_id, "company_id": cid}, {"$set": patch})
@@ -5069,7 +5084,7 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
     await log_activity(cid, user["id"], user["name"], "Product Updated", f"{new_name} ({new_size})" if new_size else new_name)
     res = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0})
     if res:
-        res["high_value_goods"] = _load_local_high_value_products().get(new_name, False)
+        res["high_value_goods"] = _load_local_high_value_products().get(new_name, res.get("high_value_goods", False))
     return res
 
 @api_router.delete("/inventory/products/{product_id}")

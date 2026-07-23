@@ -311,25 +311,27 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                     let unitVal = form.unit || "Nos";
                     let rateVal = form.rate || "";
                     let isHighValue = false;
+                    let isSerialRequired = false;
 
                     if (typeof v === "object" && v !== null) {
                       pName = (v.name || "").toUpperCase();
                       sizeVal = v.size || "";
                       unitVal = v.unit || "Nos";
                       rateVal = (v.rate !== undefined && v.rate !== null) ? String(v.rate) : "";
-                      isHighValue = v.high_value_goods || false;
+                      isHighValue = Boolean(v.high_value_goods || v.high_value_asset);
+                      isSerialRequired = Boolean(v.serial_number_required);
                     } else {
                       pName = v.toUpperCase();
-                      const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
-                      isHighValue = highValueKeywords.some(keyword => pName.includes(keyword));
                       const matched = products.find(p => p.name.toUpperCase() === pName);
                       if (matched) {
-                        if (matched.high_value_goods) {
-                          isHighValue = true;
-                        }
+                        isHighValue = Boolean(matched.high_value_goods || matched.high_value_asset);
+                        isSerialRequired = Boolean(matched.serial_number_required);
                         sizeVal = matched.size || "";
                         unitVal = matched.unit || "Nos";
                         rateVal = (matched.rate !== undefined && matched.rate !== null) ? String(matched.rate) : "";
+                      } else {
+                        const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
+                        isHighValue = highValueKeywords.some(keyword => pName.includes(keyword));
                       }
                     }
                     setForm(prev => ({
@@ -339,7 +341,8 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                       unit: unitVal,
                       rate: rateVal,
                       high_value_asset: isHighValue,
-                      high_value_goods: isHighValue
+                      high_value_goods: isHighValue,
+                      serial_number_required: isSerialRequired
                     }));
                   }}
                   products={products}

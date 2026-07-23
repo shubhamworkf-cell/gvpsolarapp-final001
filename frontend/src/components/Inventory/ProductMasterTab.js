@@ -16,7 +16,7 @@ const STATUS_STYLES = {
   "Out Of Stock": "bg-red-50 text-red-700 border-red-200",
 };
 
-const EMPTY = () => ({ name: "", size: "", category: "Solar Panel", unit: "Nos", min_stock: 0, rate: "", status: "Active", high_value_goods: false });
+const EMPTY = () => ({ name: "", size: "", category: "Solar Panel", unit: "Nos", min_stock: 0, rate: "", status: "Active", high_value_goods: false, serial_number_required: false });
 
 export default function ProductMasterTab({ products, onChanged, globalSearch }) {
   const [open, setOpen] = useState(false);
@@ -227,16 +227,39 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
             <Field label="Min Stock (alert level)" type="number" value={form.min_stock} onChange={(v) => setForm({ ...form, min_stock: v })} testid="pm-min" />
             <Field label="Rate / Unit Price" type="number" value={form.rate} onChange={(v) => setForm({ ...form, rate: v })} testid="pm-rate" />
             <SelectField label="Status" value={form.status} onChange={(v) => setForm({ ...form, status: v })} options={["Active", "Inactive"]} testid="pm-status" />
-            <div className="col-span-2 flex items-center gap-2 py-1">
+            <div className="col-span-2 flex flex-col gap-2 py-1">
               <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={form.high_value_goods || false}
-                  onChange={(e) => setForm({ ...form, high_value_goods: e.target.checked })}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setForm(prev => ({
+                      ...prev,
+                      high_value_goods: checked,
+                      serial_number_required: checked ? prev.serial_number_required : false
+                    }));
+                  }}
                   className="w-4 h-4 accent-blue-600 rounded border-slate-300"
+                  data-testid="pm-hv-checkbox"
                 />
-                High Value Goods (Requires serial tracking)
+                High Value Goods
               </label>
+
+              {form.high_value_goods && (
+                <div className="ml-6 flex items-center gap-2 py-1 bg-slate-50 p-2 rounded border border-slate-200 w-fit">
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.serial_number_required || false}
+                      onChange={(e) => setForm(prev => ({ ...prev, serial_number_required: e.target.checked }))}
+                      className="w-3.5 h-3.5 accent-blue-600 rounded border-slate-300"
+                      data-testid="pm-sn-required-checkbox"
+                    />
+                    Serial Number Required (Default = OFF)
+                  </label>
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

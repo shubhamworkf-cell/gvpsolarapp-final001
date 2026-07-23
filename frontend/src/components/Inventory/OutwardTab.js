@@ -158,9 +158,9 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
     if (!form.product?.trim() || !form.quantity || Number(form.quantity) <= 0) {
       toast.error("Product and quantity are required"); return;
     }
-    if (form.high_value_goods) {
+    if (form.high_value_goods && form.serial_number_required) {
       setHvDialogData({
-        serial_number_required: form.serial_number_required || false,
+        serial_number_required: true,
         serial_text: form.serial_text || "",
         serial_numbers: form.serial_numbers || [],
         installation_notes: form.installation_notes || "",
@@ -348,23 +348,25 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                     let sizeVal = form.size || "";
                     let unitVal = form.unit || "Nos";
                     let isHighValue = false;
+                    let isSerialRequired = false;
 
                     if (typeof v === "object" && v !== null) {
                       pName = (v.name || "").toUpperCase();
                       sizeVal = v.size || "";
                       unitVal = v.unit || "Nos";
-                      isHighValue = v.high_value_goods || false;
+                      isHighValue = Boolean(v.high_value_goods || v.high_value_asset);
+                      isSerialRequired = Boolean(v.serial_number_required);
                     } else {
                       pName = v.toUpperCase();
-                      const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
-                      isHighValue = highValueKeywords.some(keyword => pName.includes(keyword));
                       const matched = products.find(p => p.name.toUpperCase() === pName);
                       if (matched) {
-                        if (matched.high_value_goods) {
-                          isHighValue = true;
-                        }
+                        isHighValue = Boolean(matched.high_value_goods || matched.high_value_asset);
+                        isSerialRequired = Boolean(matched.serial_number_required);
                         sizeVal = matched.size || "";
                         unitVal = matched.unit || "Nos";
+                      } else {
+                        const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
+                        isHighValue = highValueKeywords.some(keyword => pName.includes(keyword));
                       }
                     }
                     setForm(prev => ({
@@ -374,7 +376,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                       unit: unitVal,
                       high_value_goods: isHighValue,
                       high_value_asset: isHighValue,
-                      serial_number_required: prev.product === pName ? prev.serial_number_required : false,
+                      serial_number_required: isSerialRequired,
                       serial_numbers: prev.product === pName ? prev.serial_numbers : [],
                       serial_text: prev.product === pName ? prev.serial_text : ""
                     }));

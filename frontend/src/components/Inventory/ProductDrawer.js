@@ -39,7 +39,7 @@ export default function ProductDrawer({ product, open, onClose, onChanged }) {
   useEffect(() => {
     if (!product || !open) return;
     setTab("details");
-    setForm({ name: product.name, size: product.size || "", category: product.category || "Solar Panel", unit: product.unit || "Nos", min_stock: product.min_stock || 0, rate: product.rate || 0, status: product.status || "Active", high_value_goods: product.high_value_goods || false });
+    setForm({ name: product.name, size: product.size || "", category: product.category || "Solar Panel", unit: product.unit || "Nos", min_stock: product.min_stock || 0, rate: product.rate || 0, status: product.status || "Active", high_value_goods: product.high_value_goods || false, serial_number_required: product.serial_number_required || false });
     loadStats();
   }, [product, open, loadStats]);
 
@@ -134,16 +134,37 @@ export default function ProductDrawer({ product, open, onClose, onChanged }) {
                 <Field label="Minimum Stock Level" type="number" value={form.min_stock} onChange={(v) => setForm({ ...form, min_stock: v })} testid="pd-min" />
                 <Field label="Rate / Unit Price" type="number" value={form.rate} onChange={(v) => setForm({ ...form, rate: v })} testid="pd-rate" />
                 <SelectField label="Status" value={form.status} onChange={(v) => setForm({ ...form, status: v })} options={["Active", "Inactive"]} testid="pd-status" />
-                <div className="md:col-span-2 flex items-center gap-2 py-1">
+                <div className="md:col-span-2 flex flex-col gap-2 py-1">
                   <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={form.high_value_goods || false}
-                      onChange={(e) => setForm({ ...form, high_value_goods: e.target.checked })}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setForm(prev => ({
+                          ...prev,
+                          high_value_goods: checked,
+                          serial_number_required: checked ? prev.serial_number_required : false
+                        }));
+                      }}
                       className="w-4 h-4 accent-blue-600 rounded border-slate-300"
                     />
-                    High Value Goods (Requires serial tracking)
+                    High Value Goods
                   </label>
+
+                  {form.high_value_goods && (
+                    <div className="ml-6 flex items-center gap-2 py-1 bg-slate-50 p-2 rounded border border-slate-200 w-fit">
+                      <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={form.serial_number_required || false}
+                          onChange={(e) => setForm(prev => ({ ...prev, serial_number_required: e.target.checked }))}
+                          className="w-3.5 h-3.5 accent-blue-600 rounded border-slate-300"
+                        />
+                        Serial Number Required (Default = OFF)
+                      </label>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex justify-end">
