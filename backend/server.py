@@ -4893,12 +4893,74 @@ def _save_local_high_value_product(product_name: str, is_high_value: bool):
 _PRODUCTS_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
 _PRODUCTS_CACHE_TTL_S = 60.0
 
+# Separate ultra-lightweight cache for the dropdown/search endpoint.
+# Only contains the 6 fields needed for product selection — NO aggregation at all.
+_PRODUCTS_SEARCH_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+_PRODUCTS_SEARCH_CACHE_TTL_S = 300.0  # 5 min – refreshed on every product write
+
 def invalidate_products_cache(company_id: Optional[str] = None):
-    global _PRODUCTS_CACHE
+    global _PRODUCTS_CACHE, _PRODUCTS_SEARCH_CACHE
     if company_id:
         _PRODUCTS_CACHE.pop(company_id, None)
+        _PRODUCTS_SEARCH_CACHE.pop(company_id, None)
     else:
         _PRODUCTS_CACHE.clear()
+        _PRODUCTS_SEARCH_CACHE.clear()
+
+# ---------------------------------------------------------------------------
+# ULTRA-FAST SEARCH ENDPOINT  (dropdown use only — no aggregations)
+# Returns only the 6 fields needed for product selection dropdowns.
+# Backed by a 5-minute in-memory cache, invalidated whenever the product
+# master changes (create / update / delete).
+# ---------------------------------------------------------------------------
+@api_router.get("/inventory/products/search")
+async def search_products_for_dropdown(q: Optional[str] = None, user=Depends(get_current_user)):
+    cid = user["company_id"]
+    now = time.monotonic()
+
+    # Serve from search cache (TTL = 5 min)
+    if cid in _PRODUCTS_SEARCH_CACHE:
+        cache_time, cached_list = _PRODUCTS_SEARCH_CACHE[cid]
+        if now - cache_time < _PRODUCTS_SEARCH_CACHE_TTL_S:
+            if not q:
+                return cached_list
+            qu = q.strip().upper()
+            return [p for p in cached_list if qu in p["name"] or qu in (p.get("size") or "")]
+
+    # Fetch ONLY the 6 required fields — no balance/aggregation queries
+    fields_projection = {"_id": 0, "id": 1, "name": 1, "size": 1, "unit": 1,
+                         "high_value_goods": 1, "serial_number_required": 1}
+    try:
+        rows = await db.products.find({"company_id": cid}, fields_projection).sort("name", 1).to_list(20000)
+    except Exception:
+        rows = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(20000)
+
+    hv_keywords = {"SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"}
+    local_high_values = _load_local_high_value_products()
+
+    slim_list = []
+    for p in rows:
+        p_name = norm_product_name(p.get("name") or "")
+        # Merge high_value from local fallback if column missing in DB
+        hv = bool(p.get("high_value_goods")) or local_high_values.get(p_name, False) \
+             or any(kw in p_name for kw in hv_keywords)
+        slim_list.append({
+            "id": p.get("id") or "",
+            "name": (p.get("name") or "").upper(),
+            "size": p.get("size") or "",
+            "unit": p.get("unit") or "Nos",
+            "high_value_goods": hv,
+            "serial_number_required": bool(p.get("serial_number_required")),
+        })
+
+    # Sort: HV first, then alphabetical
+    slim_list.sort(key=lambda x: (0 if x["high_value_goods"] else 1, x["name"], x.get("size") or ""))
+    _PRODUCTS_SEARCH_CACHE[cid] = (now, slim_list)
+
+    if not q:
+        return slim_list
+    qu = q.strip().upper()
+    return [p for p in slim_list if qu in p["name"] or qu in (p.get("size") or "")]
 
 @api_router.get("/inventory/products")
 async def list_products(user=Depends(get_current_user)):

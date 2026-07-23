@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertTriangle } from "lucide-react";
-import { getCachedProducts, fetchProductsDeduplicated } from "@/lib/productCache";
+import { getCachedProducts, fetchProductsDeduplicated, getCachedSearchProducts, fetchSearchProducts } from "@/lib/productCache";
 
 export const UNIT_OPTIONS = ["Nos", "Pair", "Mtr", "Set", "Box", "Pcs", "Kg", "Ltr", "Roll"];
 export const CATEGORY_OPTIONS = ["Solar Panel", "Inverter", "Battery", "BoS", "Cable", "Structure", "MC4 / Connector", "Earthing", "Net Meter", "Tools", "Other"];
@@ -94,15 +94,44 @@ export function applyDefaults(target, defaults, alwaysKeep = []) {
 
 export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required }) {
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
+  // `inputVal` is the raw typed text — updates synchronously so input feels instant
+  const [inputVal, setInputVal] = useState("");
+  // `debouncedSearch` drives the filter computation — updated 150ms after typing stops
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const debounceRef = useRef(null);
   const containerRef = useRef(null);
 
-  // Fallback to synchronous frontend cache if products prop is not passed or empty
-  const activeProducts = useMemo(() => {
+  // ── Product list source ──────────────────────────────────────────────────
+  // Priority: passed `products` prop → slim search cache → full cache
+  // On first open, trigger background fetch of slim search list if not cached.
+  const [slimProducts, setSlimProducts] = useState(() => {
     if (products && products.length > 0) return products;
-    return getCachedProducts() || [];
+    return getCachedSearchProducts() || getCachedProducts() || [];
+  });
+
+  useEffect(() => {
+    // Keep slimProducts in sync if caller passes a `products` prop
+    if (products && products.length > 0) {
+      setSlimProducts(products);
+      return;
+    }
+    // Otherwise load from slim search cache (fast endpoint)
+    const cached = getCachedSearchProducts();
+    if (cached && cached.length > 0) {
+      setSlimProducts(cached);
+    } else {
+      // Background fetch — does NOT block rendering
+      fetchSearchProducts().then(list => {
+        if (list && list.length > 0) setSlimProducts(list);
+      }).catch(() => {
+        // Fallback to full cache
+        const full = getCachedProducts();
+        if (full && full.length > 0) setSlimProducts(full);
+      });
+    }
   }, [products]);
 
+  // ── Click-outside close ──────────────────────────────────────────────────
   useEffect(() => {
     function handleClickOutside(event) {
       if (containerRef.current && !containerRef.current.contains(event.target)) {
@@ -113,65 +142,77 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Pre-index search tokens once when activeProducts changes
+  // ── Pre-index: builds searchKey once when slimProducts changes ───────────
   const { highValueProducts, otherProducts } = useMemo(() => {
     const hvKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"];
     const hv = [];
     const other = [];
 
-    const list = [...activeProducts];
-    list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-
-    list.forEach(p => {
+    for (const p of slimProducts) {
       const nameUpper = (p.name || "").toUpperCase();
       const rawSize = (p.size || "").toUpperCase();
-      const cleanSize = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
+      const cleanSize = rawSize.replace(/\s*[xX×*]\s*/g, "*");
       const _searchKey = `${nameUpper} ${cleanSize} ${rawSize}`;
       const item = { ...p, _searchKey };
 
       const isHV = p.high_value_goods || hvKeywords.some(kw => nameUpper.includes(kw));
-      if (isHV) {
-        hv.push(item);
-      } else {
-        other.push(item);
-      }
-    });
-
+      if (isHV) hv.push(item);
+      else other.push(item);
+    }
     return { highValueProducts: hv, otherProducts: other };
-  }, [activeProducts]);
+  }, [slimProducts]);
 
+  // ── Debounced search: typing updates inputVal instantly, filter runs 150ms later ──
+  const handleInputChange = useCallback((val) => {
+    setInputVal(val);
+    onChange(val);  // notify parent immediately (value display)
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedSearch(val), 150);
+  }, [onChange]);
+
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+
+  // ── Fast token-based filter ──────────────────────────────────────────────
   const filterList = useCallback((list, query) => {
     if (!query) return list;
-    const cleanSearch = query.toUpperCase().replace(/\s*[xX×\*]\s*/g, "*");
+    const cleanSearch = query.toUpperCase().replace(/\s*[xX×*]\s*/g, "*");
     const tokens = cleanSearch.split(/\s+/).filter(Boolean);
     if (tokens.length === 0) return list;
     return list.filter(p => tokens.every(token => p._searchKey.includes(token)));
   }, []);
 
-  const filteredHighValue = useMemo(() => filterList(highValueProducts, search), [highValueProducts, search, filterList]);
-  const filteredOther = useMemo(() => filterList(otherProducts, search), [otherProducts, search, filterList]);
+  const filteredHighValue = useMemo(
+    () => filterList(highValueProducts, debouncedSearch),
+    [highValueProducts, debouncedSearch, filterList]
+  );
+  const filteredOther = useMemo(
+    () => filterList(otherProducts, debouncedSearch),
+    [otherProducts, debouncedSearch, filterList]
+  );
 
-  // CRITICAL DOM SLICING: Render max 50 HV and 100 Other items to eliminate DOM freeze & lag
+  // DOM slicing: max 50 HV + 100 other to prevent browser freeze
   const displayedHighValue = useMemo(() => filteredHighValue.slice(0, 50), [filteredHighValue]);
   const displayedOther = useMemo(() => filteredOther.slice(0, 100), [filteredOther]);
 
-  const handleInputChange = (val) => {
-    setSearch(val);
-    onChange(val);
-  };
-
-  const handleSelect = (p) => {
+  const handleSelect = useCallback((p) => {
     onChange(p);
-    setSearch("");
+    setInputVal("");
+    setDebouncedSearch("");
     setOpen(false);
-  };
+  }, [onChange]);
 
   return (
     <div ref={containerRef} className="relative w-full">
       <Input
         value={value}
         onChange={(e) => handleInputChange(e.target.value)}
-        onFocus={() => { setOpen(true); setSearch(value || ""); }}
+        onFocus={() => {
+          setOpen(true);
+          const v = value || "";
+          setInputVal(v);
+          // Start filter immediately on focus without waiting for debounce
+          setDebouncedSearch(v);
+        }}
         placeholder={placeholder}
         className={className}
         data-testid={testid}
