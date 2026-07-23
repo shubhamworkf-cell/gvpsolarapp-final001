@@ -2111,6 +2111,9 @@ export function MaterialRequest({ clientId, onDone }) {
   // Use slim 6-field search cache — no balance/aggregation queries
   const [products, setProducts] = useState(() => getCachedSearchProducts() || getCachedProducts() || []);
 
+  // Refs for auto-focus: productRefs[i] → product input of row i
+  const productRefs = useRef({});
+
   useEffect(() => {
     fetchSearchProducts()
       .then((list) => setProducts(list || []))
@@ -2136,6 +2139,29 @@ export function MaterialRequest({ clientId, onDone }) {
     }
     setItems(items.map((x, idx) => idx === i ? { ...x, product: pName, size: sizeVal } : x));
   };
+
+  // Add a new empty row and focus its Product field after render
+  const addRow = useCallback((afterIndex) => {
+    const newItems = [...items, { product: "", size: "", quantity: 1, remarks: "" }];
+    setItems(newItems);
+    const newRowIndex = newItems.length - 1;
+    // Focus the product input of the new row after React renders it
+    setTimeout(() => {
+      const ref = productRefs.current[newRowIndex];
+      if (ref) ref.focus();
+    }, 30);
+  }, [items]);
+
+  // Keyboard handler for Qty field: Enter or Tab → auto-add next row
+  const handleQtyKeyDown = useCallback((e, i) => {
+    if (e.key === "Enter" || e.key === "Tab") {
+      // Only add new row if this is the last row (avoid duplicates mid-list)
+      if (i === items.length - 1) {
+        e.preventDefault();
+        addRow(i);
+      }
+    }
+  }, [items, addRow]);
 
   const submit = async () => {
     const normalizedItems = items
@@ -2166,6 +2192,7 @@ export function MaterialRequest({ clientId, onDone }) {
               placeholder="Product"
               className="h-10 uppercase font-medium"
               testid={`mat-product-${i}`}
+              inputRef={(el) => { productRefs.current[i] = el; }}
             />
           </div>
           <Input 
@@ -2184,7 +2211,8 @@ export function MaterialRequest({ clientId, onDone }) {
             onChange={(e) => {
               const val = e.target.value === "" ? "" : Number(e.target.value);
               setItems(items.map((x, idx) => idx === i ? { ...x, quantity: val } : x));
-            }} 
+            }}
+            onKeyDown={(e) => handleQtyKeyDown(e, i)}
           />
           <Input 
             placeholder="Remarks" 

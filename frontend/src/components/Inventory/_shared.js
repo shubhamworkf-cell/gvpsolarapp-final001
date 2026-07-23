@@ -92,7 +92,7 @@ export function applyDefaults(target, defaults, alwaysKeep = []) {
   return out;
 }
 
-export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required }) {
+export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required, inputRef }) {
   const [open, setOpen] = useState(false);
   // `inputVal` is the raw typed text — updates synchronously so input feels instant
   const [inputVal, setInputVal] = useState("");
@@ -217,6 +217,7 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
         className={className}
         data-testid={testid}
         required={required}
+        ref={inputRef}
       />
       {open && (
         <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto text-xs py-1.5 text-left">
