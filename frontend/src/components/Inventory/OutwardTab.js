@@ -158,9 +158,9 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
     if (!form.product?.trim() || !form.quantity || Number(form.quantity) <= 0) {
       toast.error("Product and quantity are required"); return;
     }
-    if (form.high_value_goods || form.use_serial_number || form.serial_number_required) {
+    if (form.high_value_goods) {
       setHvDialogData({
-        serial_number_required: true,
+        serial_number_required: form.serial_number_required || false,
         serial_text: form.serial_text || "",
         serial_numbers: form.serial_numbers || [],
         installation_notes: form.installation_notes || "",
@@ -392,40 +392,45 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
               <SelectField label="Unit" value={form.unit} onChange={(v) => setForm({ ...form, unit: v })} options={UNIT_OPTIONS} testid="out-unit" />
             </div>
 
-            {/* High Value Goods Indicator */}
+            {/* High Value Goods Checkbox & Inside Sub-option */}
             {form.high_value_goods && (
-              <div className="md:col-span-3 lg:col-span-4 flex flex-col md:flex-row gap-4 py-2 border-t border-slate-100 mt-2">
+              <div className="md:col-span-3 lg:col-span-4 flex flex-col gap-2 py-2 border-t border-slate-100 mt-2">
                 <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={form.high_value_goods || false}
                     onChange={(e) => {
                       const checked = e.target.checked;
-                      setForm(prev => ({ ...prev, high_value_goods: checked, high_value_asset: checked }));
+                      setForm(prev => ({
+                        ...prev,
+                        high_value_goods: checked,
+                        high_value_asset: checked,
+                        serial_number_required: checked ? prev.serial_number_required : false
+                      }));
                     }}
                     className="w-4 h-4 accent-blue-600 rounded border-slate-300"
                   />
                   High Value Goods
                 </label>
+
+                {/* Sub-option inside High Value Goods (Default OFF) */}
+                <div className="ml-6 flex items-center gap-2 py-1 bg-slate-50 p-2 rounded-md border border-slate-200 w-fit">
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.serial_number_required || false}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setForm(prev => ({ ...prev, serial_number_required: checked }));
+                      }}
+                      className="w-3.5 h-3.5 accent-blue-600 rounded border-slate-300"
+                      data-testid="out-serial-number-toggle"
+                    />
+                    Serial No. (ON / OFF)
+                  </label>
+                </div>
               </div>
             )}
-
-            {/* Additional Standalone Use Serial Number Checkbox */}
-            <div className="md:col-span-3 lg:col-span-4 flex items-center gap-2.5 py-2 border-t border-slate-100 mt-2">
-              <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={form.use_serial_number || false}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setForm(prev => ({ ...prev, use_serial_number: checked }));
-                  }}
-                  className="w-4 h-4 accent-blue-600 rounded border-slate-300"
-                  data-testid="out-use-serial-number-toggle"
-                />
-                Use Serial Number
-              </label>
-            </div>
 
             <TextareaField label="Remarks" value={form.remarks} onChange={(v) => setForm({ ...form, remarks: v })} testid="out-remarks" full />
 
@@ -562,7 +567,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                 }}
                 className="w-4 h-4 accent-blue-600 rounded border-slate-300"
               />
-              Serial Number Required
+              Serial No. (ON / OFF)
             </label>
 
             {hvDialogData.serial_number_required && (

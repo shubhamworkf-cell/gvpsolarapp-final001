@@ -97,7 +97,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
     if (!form.product?.trim() || !form.quantity || Number(form.quantity) <= 0) {
       toast.error("Product and quantity are required"); return;
     }
-    const isSNReq = Boolean(form.high_value_asset || form.serial_number_required);
+    const isSNReq = Boolean(form.high_value_asset && form.serial_number_required);
     if (isSNReq) {
       const qty = Math.floor(Number(form.quantity) || 0);
       const serials = (form.serial_numbers || []).map(s => (s || "").trim().toUpperCase());
@@ -369,41 +369,47 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
               <SelectField label="Unit" value={form.unit} onChange={(v) => setForm({ ...form, unit: v })} options={UNIT_OPTIONS} testid="in-unit" />
             </div>
 
-            {/* High Value Asset Checkbox */}
-            <div className="md:col-span-2 lg:col-span-3 flex items-center gap-2 py-1">
+            {/* High Value Asset Checkbox & Inside Sub-option */}
+            <div className="md:col-span-3 lg:col-span-4 flex flex-col gap-2 py-1">
               <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={form.high_value_asset || false}
                   onChange={(e) => {
                     const checked = e.target.checked;
-                    setForm(prev => ({ ...prev, high_value_asset: checked }));
+                    setForm(prev => ({
+                      ...prev,
+                      high_value_asset: checked,
+                      serial_number_required: checked ? prev.serial_number_required : false
+                    }));
                   }}
                   className="w-4 h-4 accent-blue-600 rounded border-slate-300"
                 />
-                High Value Asset (Requires Serial Number Tracking)
+                High Value Asset
               </label>
+
+              {/* Sub-option inside High Value Asset (Default OFF) */}
+              {form.high_value_asset && (
+                <div className="ml-6 flex items-center gap-2 py-1 bg-slate-50 p-2 rounded-md border border-slate-200 w-fit">
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.serial_number_required || false}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setForm(prev => ({ ...prev, serial_number_required: checked }));
+                      }}
+                      className="w-3.5 h-3.5 accent-blue-600 rounded border-slate-300"
+                      data-testid="in-serial-number-toggle"
+                    />
+                    Serial No. (ON / OFF)
+                  </label>
+                </div>
+              )}
             </div>
 
-            {/* Additional Standalone Serial Number Required Checkbox */}
-            <div className="md:col-span-2 lg:col-span-3 flex items-center gap-2 py-1">
-              <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={form.serial_number_required || false}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setForm(prev => ({ ...prev, serial_number_required: checked }));
-                  }}
-                  className="w-4 h-4 accent-blue-600 rounded border-slate-300"
-                  data-testid="in-serial-number-required-toggle"
-                />
-                Serial Number Required
-              </label>
-            </div>
-
-            {/* Serial Numbers Generation Section */}
-            {(form.high_value_asset || form.serial_number_required) && (
+            {/* Serial Numbers Generation Section (Only shown when High Value Asset AND Serial No. ON) */}
+            {form.high_value_asset && form.serial_number_required && (
               <div className="md:col-span-3 lg:col-span-4 p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                   <div>
