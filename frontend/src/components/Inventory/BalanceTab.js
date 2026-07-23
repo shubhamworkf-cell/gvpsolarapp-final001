@@ -18,11 +18,28 @@ export default function BalanceTab({ products, globalSearch }) {
   const [categoryFilter, setCategoryFilter] = useState("all");
 
   const filtered = useMemo(() => {
-    const all = (globalSearch || search || "").toLowerCase();
+    const all = (globalSearch || search || "").toLowerCase().trim();
     return products.filter((p) => {
       if (statusFilter !== "all" && p.stock_status !== statusFilter) return false;
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false;
-      if (all && !(p.name.toLowerCase().includes(all) || (p.size || "").toLowerCase().includes(all) || (p.category || "").toLowerCase().includes(all))) return false;
+      if (all) {
+        const name = (p.name || "").toLowerCase();
+        const size = (p.size || "").toLowerCase();
+        const brand = (p.brand || "").toLowerCase();
+        const category = (p.category || "").toLowerCase();
+        const challan = (p.challan_number || p.challan || p.reference_number || "").toLowerCase();
+        const sku = (p.sku || p.code || p.product_code || "").toLowerCase();
+
+        const match =
+          name.includes(all) ||
+          size.includes(all) ||
+          brand.includes(all) ||
+          category.includes(all) ||
+          challan.includes(all) ||
+          sku.includes(all);
+
+        if (!match) return false;
+      }
       return true;
     });
   }, [products, search, statusFilter, categoryFilter, globalSearch]);

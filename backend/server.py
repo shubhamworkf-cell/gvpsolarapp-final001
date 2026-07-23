@@ -6136,7 +6136,7 @@ async def product_transactions(
 class BulkRow(BaseModel):
     product: str
     size: Optional[str] = ""
-    quantity: float
+    quantity: Optional[Union[float, int, str]] = 0.0
     unit: Optional[str] = "Nos"
     date: Optional[str] = ""
     reference_number: Optional[str] = ""
@@ -6170,8 +6170,12 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
     gd = data.global_defaults or {}  # v2 global defaults
     for r in data.rows:
         pn = (r.product or "").strip().upper()
-        if not pn or r.quantity <= 0:
+        if not pn:
             continue
+        try:
+            qty = float(r.quantity) if r.quantity not in (None, "") else 0.0
+        except (ValueError, TypeError):
+            qty = 0.0
             
         remarks_val = r.remarks or gd.get("remarks", "")
         source_type_val = r.source_type or gd.get("source_type", "Supplier")
@@ -6180,7 +6184,7 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
         inward_data = InwardIn(
             product=pn,
             size=r.size or "",
-            quantity=r.quantity,
+            quantity=qty,
             unit=r.unit or gd.get("unit") or "Nos",
             reference_number=r.reference_number or gd.get("reference_number", ""),
             reference_type=r.reference_type or gd.get("reference_type", "Challan Number"),

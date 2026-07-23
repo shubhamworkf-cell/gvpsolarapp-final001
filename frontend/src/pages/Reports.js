@@ -24,6 +24,8 @@ export default function Reports() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
 
+  const [ledgerSearch, setLedgerSearch] = useState("");
+
   useEffect(() => {
     setCurrentPage(1);
   }, [search]);
@@ -75,6 +77,25 @@ export default function Reports() {
   const paginatedClients = useMemo(() => {
     return filteredClients.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
   }, [filteredClients, currentPage, itemsPerPage]);
+
+  // Filter ledger items by search query (Product Name, Size/Spec, Brand, Challan Number)
+  const filteredLedgerItems = useMemo(() => {
+    if (!ledger?.items) return [];
+    if (!ledgerSearch.trim()) return ledger.items;
+    const s = ledgerSearch.toLowerCase().trim();
+    return ledger.items.filter((item) => {
+      const product = (item.product || item.name || "").toLowerCase();
+      const size = (item.size || "").toLowerCase();
+      const brand = (item.brand || "").toLowerCase();
+      const challan = (item.challan_number || item.challan || item.outward_challan_no || item.reference_number || "").toLowerCase();
+      return (
+        product.includes(s) ||
+        size.includes(s) ||
+        brand.includes(s) ||
+        challan.includes(s)
+      );
+    });
+  }, [ledger, ledgerSearch]);
 
   return (
     <div className="space-y-6">
@@ -193,37 +214,50 @@ export default function Reports() {
               <ArrowLeft className="w-4 h-4 mr-1.5" /> Back to Clients List
             </Button>
 
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-slate-300 text-slate-700"
-                onClick={() => handleExport("excel")}
-                disabled={busyExport.excel || loadingLedger}
-              >
-                <FileSpreadsheet className="w-4 h-4 mr-1.5 text-emerald-600" />
-                {busyExport.excel ? "Exporting Excel…" : "Excel"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-slate-300 text-slate-700"
-                onClick={() => handleExport("csv")}
-                disabled={busyExport.csv || loadingLedger}
-              >
-                <FileText className="w-4 h-4 mr-1.5 text-blue-600" />
-                {busyExport.csv ? "Exporting CSV…" : "CSV"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-slate-300 text-slate-700"
-                onClick={() => handleExport("pdf")}
-                disabled={busyExport.pdf || loadingLedger}
-              >
-                <Download className="w-4 h-4 mr-1.5 text-rose-600" />
-                {busyExport.pdf ? "Exporting PDF…" : "PDF"}
-              </Button>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="relative w-72">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Input
+                  value={ledgerSearch}
+                  onChange={(e) => setLedgerSearch(e.target.value)}
+                  placeholder="Search product, size, brand, challan…"
+                  className="pl-9 bg-white h-9"
+                  data-testid="ledger-report-search"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-slate-300 text-slate-700"
+                  onClick={() => handleExport("excel")}
+                  disabled={busyExport.excel || loadingLedger}
+                >
+                  <FileSpreadsheet className="w-4 h-4 mr-1.5 text-emerald-600" />
+                  {busyExport.excel ? "Exporting Excel…" : "Excel"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-slate-300 text-slate-700"
+                  onClick={() => handleExport("csv")}
+                  disabled={busyExport.csv || loadingLedger}
+                >
+                  <FileText className="w-4 h-4 mr-1.5 text-blue-600" />
+                  {busyExport.csv ? "Exporting CSV…" : "CSV"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-slate-300 text-slate-700"
+                  onClick={() => handleExport("pdf")}
+                  disabled={busyExport.pdf || loadingLedger}
+                >
+                  <Download className="w-4 h-4 mr-1.5 text-rose-600" />
+                  {busyExport.pdf ? "Exporting PDF…" : "PDF"}
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -315,7 +349,14 @@ export default function Reports() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {ledger.items.map((row, idx) => {
+                        {filteredLedgerItems.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">
+                              No ledger items match your search.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredLedgerItems.map((row, idx) => {
                           let statusStyle = "bg-slate-100 text-slate-700";
                           let balanceStyle = "text-slate-900";
                           
@@ -347,7 +388,8 @@ export default function Reports() {
                               </td>
                             </tr>
                           );
-                        })}
+                        })
+                        )}
                       </tbody>
                     </table>
                   </div>
