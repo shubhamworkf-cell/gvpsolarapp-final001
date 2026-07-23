@@ -6134,7 +6134,7 @@ async def product_transactions(
 
 
 class BulkRow(BaseModel):
-    product: str
+    product: Optional[str] = ""
     size: Optional[str] = ""
     quantity: Optional[Union[float, int, str]] = 0.0
     unit: Optional[str] = "Nos"
