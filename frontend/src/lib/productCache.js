@@ -50,8 +50,6 @@ export function fetchProductsDeduplicated(forceRefresh = false) {
     .then(({ data }) => {
       const list = data || [];
       setCachedProducts(list);
-      // Warm the search cache from full data
-      setSearchCache(list.map(slimFields));
       inFlightPromise = null;
       return list;
     })
@@ -68,11 +66,8 @@ export function fetchProductsDeduplicated(forceRefresh = false) {
  */
 export function invalidateFrontendProductCache() {
   inMemoryCache = null;
-  searchCache = null;
-  searchInFlight = null;
   try {
     sessionStorage.removeItem("gvp_products_cache_v1");
-    sessionStorage.removeItem("gvp_products_search_cache_v1");
   } catch (e) {}
 }
 
