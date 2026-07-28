@@ -10,13 +10,19 @@ export function useProductList(filters = {}) {
   return useQuery({
     queryKey: queryKeys.inventory.products(filters),
     queryFn: async () => {
-      return await fetchProductsDeduplicated();
+      const res = await fetchProductsDeduplicated();
+      return Array.isArray(res) ? res : [];
     },
-    initialData: () => getCachedProducts(),
+    initialData: () => {
+      const cached = getCachedProducts();
+      // Only return as initialData if it's a real non-empty array
+      // so React Query knows to still fetch if cache is empty
+      return (Array.isArray(cached) && cached.length > 0) ? cached : undefined;
+    },
     staleTime: STALE_TIME,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    refetchOnMount: true,
   });
 }
 
@@ -33,7 +39,10 @@ export function useInventoryStats() {
 
 export function useInvalidateInventory() {
   const queryClient = useQueryClient();
-  return () => queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all() });
+  return () => {
+    invalidateFrontendProductCache();
+    queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all() });
+  };
 }
 
 export function useInventoryHistory(params = {}) {
