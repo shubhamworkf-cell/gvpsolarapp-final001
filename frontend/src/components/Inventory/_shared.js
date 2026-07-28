@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertTriangle } from "lucide-react";
-import { getCachedProducts, fetchProductsDeduplicated, getCachedSearchProducts, fetchSearchProducts } from "@/lib/productCache";
+import { getCachedProducts, fetchProductsDeduplicated } from "@/lib/productCache";
 
 export const UNIT_OPTIONS = ["Nos", "Pair", "Mtr", "Set", "Box", "Pcs", "Kg", "Ltr", "Roll"];
 export const CATEGORY_OPTIONS = ["Solar Panel", "Inverter", "Battery", "BoS", "Cable", "Structure", "MC4 / Connector", "Earthing", "Net Meter", "Tools", "Other"];
@@ -92,27 +92,17 @@ export function applyDefaults(target, defaults, alwaysKeep = []) {
   return out;
 }
 
-export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required, inputRef }) {
+export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required }) {
   const [open, setOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [search, setSearch] = useState("");
   const containerRef = useRef(null);
 
-  // ── Product list source ──────────────────────────────────────────────────
-  const productList = useMemo(() => {
-    if (Array.isArray(products) && products.length > 0) return products;
-    return getCachedSearchProducts() || getCachedProducts() || [];
+  // Fallback to synchronous frontend cache if products prop is not passed or empty
+  const activeProducts = useMemo(() => {
+    if (products && products.length > 0) return products;
+    return getCachedProducts() || [];
   }, [products]);
 
-  // ── Background fetch fallback ───────────────────────────────────────────
-  useEffect(() => {
-    if (!products || products.length === 0) {
-      if (!getCachedSearchProducts() && !getCachedProducts()) {
-        fetchSearchProducts().catch(() => {});
-      }
-    }
-  }, [products]);
-
-  // ── Click-outside close ──────────────────────────────────────────────────
   useEffect(() => {
     function handleClickOutside(event) {
       if (containerRef.current && !containerRef.current.contains(event.target)) {
@@ -123,81 +113,78 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // ── Categorize & Pre-index products ──────────────────────────────────────
+  // Pre-index search tokens once when activeProducts changes
   const { highValueProducts, otherProducts } = useMemo(() => {
     const hvKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"];
     const hv = [];
     const other = [];
 
-    for (const p of productList) {
+    const list = [...activeProducts];
+    list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+    list.forEach(p => {
       const nameUpper = (p.name || "").toUpperCase();
       const rawSize = (p.size || "").toUpperCase();
-      const cleanSize = rawSize.replace(/\s*[xX×*]\s*/g, "*");
-      const searchKey = `${nameUpper} ${cleanSize} ${rawSize}`;
-      const item = { ...p, _searchKey: searchKey };
+      const cleanSize = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
+      const _searchKey = `${nameUpper} ${cleanSize} ${rawSize}`;
+      const item = { ...p, _searchKey };
 
-      const isHV = Boolean(p.high_value_goods || p.high_value_asset) || hvKeywords.some(kw => nameUpper.includes(kw));
-      if (isHV) hv.push(item);
-      else other.push(item);
-    }
+      const isHV = p.high_value_goods || hvKeywords.some(kw => nameUpper.includes(kw));
+      if (isHV) {
+        hv.push(item);
+      } else {
+        other.push(item);
+      }
+    });
+
     return { highValueProducts: hv, otherProducts: other };
-  }, [productList]);
+  }, [activeProducts]);
 
-  // ── Token-based filtering ─────────────────────────────────────────────────
   const filterList = useCallback((list, query) => {
     if (!query) return list;
-    const cleanSearch = query.toUpperCase().replace(/\s*[xX×*]\s*/g, "*");
+    const cleanSearch = query.toUpperCase().replace(/\s*[xX×\*]\s*/g, "*");
     const tokens = cleanSearch.split(/\s+/).filter(Boolean);
     if (tokens.length === 0) return list;
     return list.filter(p => tokens.every(token => p._searchKey.includes(token)));
   }, []);
 
-  const filteredHighValue = useMemo(
-    () => filterList(highValueProducts, searchQuery),
-    [highValueProducts, searchQuery, filterList]
-  );
-  const filteredOther = useMemo(
-    () => filterList(otherProducts, searchQuery),
-    [otherProducts, searchQuery, filterList]
-  );
+  const filteredHighValue = useMemo(() => filterList(highValueProducts, search), [highValueProducts, search, filterList]);
+  const filteredOther = useMemo(() => filterList(otherProducts, search), [otherProducts, search, filterList]);
 
+  // CRITICAL DOM SLICING: Render max 50 HV and 100 Other items to eliminate DOM freeze & lag
   const displayedHighValue = useMemo(() => filteredHighValue.slice(0, 50), [filteredHighValue]);
   const displayedOther = useMemo(() => filteredOther.slice(0, 100), [filteredOther]);
 
   const handleInputChange = (val) => {
+    setSearch(val);
     onChange(val);
-    setSearchQuery(val);
-  };
-
-  const handleFocus = () => {
-    setOpen(true);
-    // On focus, if value matches exact product name, reset search query so user sees full suggestions
-    const currentVal = (value || "").toString().toUpperCase().trim();
-    const isExactMatch = productList.some(p => (p.name || "").toUpperCase().trim() === currentVal);
-    if (isExactMatch) {
-      setSearchQuery("");
-    } else {
-      setSearchQuery(currentVal);
-    }
   };
 
   const handleSelect = (p) => {
     onChange(p);
-    setSearchQuery("");
+    setSearch("");
     setOpen(false);
   };
 
   return (
     <div ref={containerRef} className="relative w-full">
       <Input
-        value={value ?? ""}
+        value={value}
         onChange={(e) => handleInputChange(e.target.value)}
-        onFocus={handleFocus}
+        onFocus={() => {
+          setOpen(true);
+          const currentVal = (value || "").toString().toUpperCase().trim();
+          const isExactMatch = activeProducts.some(p => (p.name || "").toUpperCase().trim() === currentVal);
+          if (isExactMatch) {
+            setSearch("");
+          } else {
+            setSearch(currentVal);
+          }
+        }}
         placeholder={placeholder}
         className={className}
         data-testid={testid}
         required={required}
-        ref={inputRef}
       />
       {open && (
         <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto text-xs py-1.5 text-left">

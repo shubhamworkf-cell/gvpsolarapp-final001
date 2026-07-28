@@ -4,7 +4,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { toast } from "sonner";
 import { getCachedProducts, fetchProductsDeduplicated, invalidateFrontendProductCache } from "@/lib/productCache";
 
-const STALE_TIME = 2 * 60 * 1000; // 2 min stale time
+const STALE_TIME = 15 * 60 * 1000; // 15 min - inventory changes infrequently
 
 export function useProductList(filters = {}) {
   return useQuery({
@@ -16,7 +16,7 @@ export function useProductList(filters = {}) {
     staleTime: STALE_TIME,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    refetchOnMount: true,
+    refetchOnMount: false,
   });
 }
 
