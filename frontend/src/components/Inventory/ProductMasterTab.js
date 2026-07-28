@@ -62,12 +62,13 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
   const itemsPerPage = 25;
 
   const filtered = useMemo(() => {
+    const list = Array.isArray(products) ? products : [];
     const rawSearch = (localSearch || globalSearch || "").toLowerCase().trim();
-    if (!rawSearch) return products;
+    if (!rawSearch) return list;
     const cleanSearch = rawSearch.replace(/\s*[xX×\*]\s*/g, "*");
     const tokens = cleanSearch.split(/\s+/).filter(Boolean);
 
-    return products.filter((p) => {
+    return list.filter((p) => {
       const name = (p.name || "").toLowerCase();
       const rawSize = (p.size || "").toLowerCase();
       const size = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
@@ -122,7 +123,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-slate-100">
             <div>
               <div className="text-base font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>Product Master</div>
-              <div className="text-xs text-slate-500">{filtered.length} of {products.length} products</div>
+              <div className="text-xs text-slate-500">{filtered.length} of {(products || []).length} products</div>
             </div>
 
             <div className="flex items-center gap-3 flex-wrap">

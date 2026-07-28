@@ -20,11 +20,12 @@ export default function BalanceTab({ products, globalSearch }) {
   const [categoryFilter, setCategoryFilter] = useState("all");
 
   const filtered = useMemo(() => {
+    const list = Array.isArray(products) ? products : [];
     const rawSearch = (globalSearch || search || "").toLowerCase().trim();
     const cleanSearch = rawSearch.replace(/\s*[xX×\*]\s*/g, "*");
     const tokens = cleanSearch.split(/\s+/).filter(Boolean);
 
-    return products.filter((p) => {
+    return list.filter((p) => {
       if (statusFilter !== "all" && p.stock_status !== statusFilter) return false;
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false;
       if (tokens.length > 0) {

@@ -94,40 +94,21 @@ export function applyDefaults(target, defaults, alwaysKeep = []) {
 
 export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required, inputRef }) {
   const [open, setOpen] = useState(false);
-  // `inputVal` is the raw typed text — updates synchronously so input feels instant
-  const [inputVal, setInputVal] = useState("");
-  // `debouncedSearch` drives the filter computation — updated 150ms after typing stops
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const debounceRef = useRef(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const containerRef = useRef(null);
 
   // ── Product list source ──────────────────────────────────────────────────
-  // Priority: passed `products` prop → slim search cache → full cache
-  // On first open, trigger background fetch of slim search list if not cached.
-  const [slimProducts, setSlimProducts] = useState(() => {
-    if (products && products.length > 0) return products;
+  const productList = useMemo(() => {
+    if (Array.isArray(products) && products.length > 0) return products;
     return getCachedSearchProducts() || getCachedProducts() || [];
-  });
+  }, [products]);
 
+  // ── Background fetch fallback ───────────────────────────────────────────
   useEffect(() => {
-    // Keep slimProducts in sync if caller passes a `products` prop
-    if (products && products.length > 0) {
-      setSlimProducts(products);
-      return;
-    }
-    // Otherwise load from slim search cache (fast endpoint)
-    const cached = getCachedSearchProducts();
-    if (cached && cached.length > 0) {
-      setSlimProducts(cached);
-    } else {
-      // Background fetch — does NOT block rendering
-      fetchSearchProducts().then(list => {
-        if (list && list.length > 0) setSlimProducts(list);
-      }).catch(() => {
-        // Fallback to full cache
-        const full = getCachedProducts();
-        if (full && full.length > 0) setSlimProducts(full);
-      });
+    if (!products || products.length === 0) {
+      if (!getCachedSearchProducts() && !getCachedProducts()) {
+        fetchSearchProducts().catch(() => {});
+      }
     }
   }, [products]);
 
@@ -142,37 +123,27 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // ── Pre-index: builds searchKey once when slimProducts changes ───────────
+  // ── Categorize & Pre-index products ──────────────────────────────────────
   const { highValueProducts, otherProducts } = useMemo(() => {
     const hvKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"];
     const hv = [];
     const other = [];
 
-    for (const p of slimProducts) {
+    for (const p of productList) {
       const nameUpper = (p.name || "").toUpperCase();
       const rawSize = (p.size || "").toUpperCase();
       const cleanSize = rawSize.replace(/\s*[xX×*]\s*/g, "*");
-      const _searchKey = `${nameUpper} ${cleanSize} ${rawSize}`;
-      const item = { ...p, _searchKey };
+      const searchKey = `${nameUpper} ${cleanSize} ${rawSize}`;
+      const item = { ...p, _searchKey: searchKey };
 
-      const isHV = p.high_value_goods || hvKeywords.some(kw => nameUpper.includes(kw));
+      const isHV = Boolean(p.high_value_goods || p.high_value_asset) || hvKeywords.some(kw => nameUpper.includes(kw));
       if (isHV) hv.push(item);
       else other.push(item);
     }
     return { highValueProducts: hv, otherProducts: other };
-  }, [slimProducts]);
+  }, [productList]);
 
-  // ── Debounced search: typing updates inputVal instantly, filter runs 150ms later ──
-  const handleInputChange = useCallback((val) => {
-    setInputVal(val);
-    onChange(val);  // notify parent immediately (value display)
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setDebouncedSearch(val), 150);
-  }, [onChange]);
-
-  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
-
-  // ── Fast token-based filter ──────────────────────────────────────────────
+  // ── Token-based filtering ─────────────────────────────────────────────────
   const filterList = useCallback((list, query) => {
     if (!query) return list;
     const cleanSearch = query.toUpperCase().replace(/\s*[xX×*]\s*/g, "*");
@@ -182,37 +153,46 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
   }, []);
 
   const filteredHighValue = useMemo(
-    () => filterList(highValueProducts, debouncedSearch),
-    [highValueProducts, debouncedSearch, filterList]
+    () => filterList(highValueProducts, searchQuery),
+    [highValueProducts, searchQuery, filterList]
   );
   const filteredOther = useMemo(
-    () => filterList(otherProducts, debouncedSearch),
-    [otherProducts, debouncedSearch, filterList]
+    () => filterList(otherProducts, searchQuery),
+    [otherProducts, searchQuery, filterList]
   );
 
-  // DOM slicing: max 50 HV + 100 other to prevent browser freeze
   const displayedHighValue = useMemo(() => filteredHighValue.slice(0, 50), [filteredHighValue]);
   const displayedOther = useMemo(() => filteredOther.slice(0, 100), [filteredOther]);
 
-  const handleSelect = useCallback((p) => {
+  const handleInputChange = (val) => {
+    onChange(val);
+    setSearchQuery(val);
+  };
+
+  const handleFocus = () => {
+    setOpen(true);
+    // On focus, if value matches exact product name, reset search query so user sees full suggestions
+    const currentVal = (value || "").toString().toUpperCase().trim();
+    const isExactMatch = productList.some(p => (p.name || "").toUpperCase().trim() === currentVal);
+    if (isExactMatch) {
+      setSearchQuery("");
+    } else {
+      setSearchQuery(currentVal);
+    }
+  };
+
+  const handleSelect = (p) => {
     onChange(p);
-    setInputVal("");
-    setDebouncedSearch("");
+    setSearchQuery("");
     setOpen(false);
-  }, [onChange]);
+  };
 
   return (
     <div ref={containerRef} className="relative w-full">
       <Input
-        value={value}
+        value={value ?? ""}
         onChange={(e) => handleInputChange(e.target.value)}
-        onFocus={() => {
-          setOpen(true);
-          const v = value || "";
-          setInputVal(v);
-          // Start filter immediately on focus without waiting for debounce
-          setDebouncedSearch(v);
-        }}
+        onFocus={handleFocus}
         placeholder={placeholder}
         className={className}
         data-testid={testid}

@@ -35,7 +35,9 @@ export function setCachedProducts(products) {
  * Deduplicated, cached full-product fetcher.
  */
 export function fetchProductsDeduplicated(forceRefresh = false) {
-  if (!forceRefresh) {
+  if (forceRefresh) {
+    invalidateFrontendProductCache();
+  } else {
     const cached = getCachedProducts();
     if (cached && cached.length > 0) {
       return Promise.resolve(cached);
@@ -68,6 +70,7 @@ export function fetchProductsDeduplicated(forceRefresh = false) {
  */
 export function invalidateFrontendProductCache() {
   inMemoryCache = null;
+  inFlightPromise = null;
   searchCache = null;
   searchInFlight = null;
   try {

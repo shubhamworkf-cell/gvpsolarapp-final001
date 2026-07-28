@@ -4719,6 +4719,7 @@ async def sync_inventory_master(company_id: Optional[str] = None):
             cid, pn, ps, pu = key
             if key not in spec_to_prods or len(spec_to_prods[key]) == 0:
                 await ensure_product(cid, pn, size=ps, unit=pu, category=h_data.get("category"), brand=h_data.get("brand"))
+        invalidate_products_cache(company_id)
     except Exception as e:
         logger.warning(f"sync_inventory_master error: {e}")
 
