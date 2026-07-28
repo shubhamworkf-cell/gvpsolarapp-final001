@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertTriangle } from "lucide-react";
 import { getCachedProducts, fetchProductsDeduplicated } from "@/lib/productCache";
+import { useProductList } from "@/hooks/useInventory";
 
 export const UNIT_OPTIONS = ["Nos", "Pair", "Mtr", "Set", "Box", "Pcs", "Kg", "Ltr", "Roll"];
 export const CATEGORY_OPTIONS = ["Solar Panel", "Inverter", "Battery", "BoS", "Cable", "Structure", "MC4 / Connector", "Earthing", "Net Meter", "Tools", "Other"];
@@ -92,18 +93,20 @@ export function applyDefaults(target, defaults, alwaysKeep = []) {
   return out;
 }
 
-export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required }) {
+export function ProductAutocompleteInput({ value, onChange, products: overrideProducts, placeholder, className, testid, required }) {
+  const { data: hookProducts = [] } = useProductList();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const containerRef = useRef(null);
 
-  // Fallback to synchronous frontend cache if products prop is not passed or empty
+  // Fallback to React Query hook and synchronous cache if products prop is not passed or empty
   const activeProducts = useMemo(() => {
-    if (Array.isArray(products) && (products?.length ?? 0) > 0) return products;
+    if (Array.isArray(overrideProducts) && overrideProducts.length > 0) return overrideProducts;
+    if (Array.isArray(hookProducts) && hookProducts.length > 0) return hookProducts;
     const cached = getCachedProducts();
-    if (Array.isArray(cached) && (cached?.length ?? 0) > 0) return cached;
+    if (Array.isArray(cached) && cached.length > 0) return cached;
     return [];
-  }, [products]);
+  }, [overrideProducts, hookProducts]);
 
   useEffect(() => {
     function handleClickOutside(event) {
