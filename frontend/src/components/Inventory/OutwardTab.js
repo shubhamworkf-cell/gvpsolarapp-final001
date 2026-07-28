@@ -84,7 +84,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
   useEffect(() => { localStorage.setItem("inv_auto_continue_outward", JSON.stringify(autoContinue)); }, [autoContinue]);
   useEffect(() => { localStorage.setItem("inv_carry_outward", JSON.stringify(carryFields)); }, [carryFields]);
 
-  const { data: clients = [] } = useClientList();
+
   const { data: allAssets = [] } = useAssetList();
   const availableSerials = useMemo(() => {
     if (!form.product) return [];
