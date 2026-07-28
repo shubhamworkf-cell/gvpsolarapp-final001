@@ -6,8 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertTriangle } from "lucide-react";
-import { getCachedProducts, fetchProductsDeduplicated, getCachedSearchProducts, fetchSearchProducts } from "@/lib/productCache";
-
+import { getCachedProducts, fetchProductsDeduplicated } from "@/lib/productCache";
+import { useProductList } from "@/hooks/useInventory";
 export const UNIT_OPTIONS = ["Nos", "Pair", "Mtr", "Set", "Box", "Pcs", "Kg", "Ltr", "Roll"];
 export const CATEGORY_OPTIONS = ["Solar Panel", "Inverter", "Battery", "BoS", "Cable", "Structure", "MC4 / Connector", "Earthing", "Net Meter", "Tools", "Other"];
 export const REF_TYPES = ["Challan Number", "Invoice Number", "Book Number", "GRN Number", "Transport Number"];
@@ -93,43 +93,25 @@ export function applyDefaults(target, defaults, alwaysKeep = []) {
 }
 
 export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required, inputRef }) {
+  const { data: hookProducts = [] } = useProductList();
   const [open, setOpen] = useState(false);
-  // `inputVal` is the raw typed text — updates synchronously so input feels instant
-  const [inputVal, setInputVal] = useState("");
-  // `debouncedSearch` drives the filter computation — updated 150ms after typing stops
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const debounceRef = useRef(null);
+  const [inputVal, setInputVal] = useState(value || "");
+  const [debouncedSearch, setDebouncedSearch] = useState(value || "");
+  const [slimProducts, setSlimProducts] = useState([]);
   const containerRef = useRef(null);
+  const debounceRef = useRef(null);
 
-  // ── Product list source ──────────────────────────────────────────────────
-  // Priority: passed `products` prop → slim search cache → full cache
-  // On first open, trigger background fetch of slim search list if not cached.
-  const [slimProducts, setSlimProducts] = useState(() => {
-    if (products && products.length > 0) return products;
-    return getCachedSearchProducts() || getCachedProducts() || [];
-  });
+  // Sync incoming value to input if controlled from outside
+  useEffect(() => { setInputVal(value || ""); }, [value]);
 
+  // ── Unified Product Source ────────────────────────────────────────────────
   useEffect(() => {
-    // Keep slimProducts in sync if caller passes a `products` prop
-    if (products && products.length > 0) {
-      setSlimProducts(products);
-      return;
+    // If parent provides products, use them. Otherwise use the hook products.
+    const sourceList = (products && products.length > 0) ? products : hookProducts;
+    if (sourceList && sourceList.length > 0) {
+      setSlimProducts(sourceList);
     }
-    // Otherwise load from slim search cache (fast endpoint)
-    const cached = getCachedSearchProducts();
-    if (cached && cached.length > 0) {
-      setSlimProducts(cached);
-    } else {
-      // Background fetch — does NOT block rendering
-      fetchSearchProducts().then(list => {
-        if (list && list.length > 0) setSlimProducts(list);
-      }).catch(() => {
-        // Fallback to full cache
-        const full = getCachedProducts();
-        if (full && full.length > 0) setSlimProducts(full);
-      });
-    }
-  }, [products]);
+  }, [products, hookProducts]);
 
   // ── Click-outside close ──────────────────────────────────────────────────
   useEffect(() => {
@@ -155,7 +137,7 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
       const _searchKey = `${nameUpper} ${cleanSize} ${rawSize}`;
       const item = { ...p, _searchKey };
 
-      const isHV = p.high_value_goods || hvKeywords.some(kw => nameUpper.includes(kw));
+      const isHV = p.high_value_goods || p.high_value_asset || hvKeywords.some(kw => nameUpper.includes(kw));
       if (isHV) hv.push(item);
       else other.push(item);
     }

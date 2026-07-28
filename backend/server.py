@@ -4915,77 +4915,7 @@ def invalidate_products_cache(company_id: Optional[str] = None):
         _PRODUCTS_CACHE.clear()
         _PRODUCTS_SEARCH_CACHE.clear()
 
-# ---------------------------------------------------------------------------
-# ULTRA-FAST SEARCH ENDPOINT  (dropdown use only — NO CursorAdapter, NO local merge)
-# Calls Supabase directly in a thread to avoid blocking the event loop.
-# Backed by a 5-minute in-memory cache, invalidated whenever the product
-# master changes (create / update / delete).
-# ---------------------------------------------------------------------------
-def _fetch_slim_products_sync(cid: str) -> List[Dict[str, Any]]:
-    """Synchronous Supabase call — runs in a thread executor."""
-    client = default_supabase
-    if client is None:
-        return []
-    try:
-        res = client.table("products") \
-            .select("id,name,size,unit,high_value_goods,serial_number_required") \
-            .eq("company_id", cid) \
-            .order("name") \
-            .limit(20000) \
-            .execute()
-        return res.data or []
-    except Exception as e:
-        logger.warning(f"slim products fetch failed: {e}")
-        return []
 
-@api_router.get("/inventory/products/search")
-async def search_products_for_dropdown(q: Optional[str] = None, user=Depends(get_current_user)):
-    cid = user["company_id"]
-    now = time.monotonic()
-
-    # ── Serve from 5-minute in-memory cache (0ms) ───────────────────────────
-    if cid in _PRODUCTS_SEARCH_CACHE:
-        cache_time, cached_list = _PRODUCTS_SEARCH_CACHE[cid]
-        if now - cache_time < _PRODUCTS_SEARCH_CACHE_TTL_S:
-            if not q:
-                return cached_list
-            qu = q.strip().upper()
-            return [p for p in cached_list if qu in p["name"] or qu in (p.get("size") or "")]
-
-    # ── Call Supabase directly in a thread (no CursorAdapter, no local merge) ──
-    loop = asyncio.get_event_loop()
-    rows = await loop.run_in_executor(None, _fetch_slim_products_sync, cid)
-
-    # ── Fallback: read from local_storage/products.json if Supabase returned nothing ──
-    if not rows:
-        local_col = LocalFileCollection("products")
-        rows = await local_col.find({"company_id": cid}, {"_id": 0}).to_list(20000)
-
-    hv_keywords = {"SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"}
-    local_high_values = _load_local_high_value_products()
-
-    slim_list = []
-    for p in rows:
-        p_name = norm_product_name(p.get("name") or "")
-        hv = bool(p.get("high_value_goods")) or local_high_values.get(p_name, False) \
-             or any(kw in p_name for kw in hv_keywords)
-        slim_list.append({
-            "id": p.get("id") or "",
-            "name": (p.get("name") or "").upper(),
-            "size": p.get("size") or "",
-            "unit": p.get("unit") or "Nos",
-            "high_value_goods": hv,
-            "serial_number_required": bool(p.get("serial_number_required")),
-        })
-
-    # Sort: HV first, then alphabetical
-    slim_list.sort(key=lambda x: (0 if x["high_value_goods"] else 1, x["name"], x.get("size") or ""))
-    _PRODUCTS_SEARCH_CACHE[cid] = (now, slim_list)
-
-    if not q:
-        return slim_list
-    qu = q.strip().upper()
-    return [p for p in slim_list if qu in p["name"] or qu in (p.get("size") or "")]
 
 @api_router.get("/inventory/products")
 async def list_products(user=Depends(get_current_user)):
