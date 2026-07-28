@@ -432,6 +432,8 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
           source_name,
           remarks: globalDefaults.remarks || "",
           status: globalDefaults.status || "Dispatched",
+          high_value_goods: globalDefaults.high_value_goods || false,
+          high_value_asset: globalDefaults.high_value_goods || false,
         };
       });
     });
@@ -722,6 +724,19 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
                     </div>
                   )}
                   <datalist id="manual-client-list">{clientOptions.map((name) => <option key={name} value={name} />)}</datalist>
+                  {mode === "inward" && (
+                    <div className="col-span-1 lg:col-span-2 space-y-1.5 flex items-center pt-2">
+                      <Label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={globalDefaults.high_value_goods || false}
+                          onChange={(e) => setGlobalDefaults({ ...globalDefaults, high_value_goods: e.target.checked })}
+                          className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                        />
+                        High Value Goods Tracking (Apply to all rows)
+                      </Label>
+                    </div>
+                  )}
                   <div className="col-span-1 lg:col-span-2 space-y-1.5"><Label>Remarks</Label><Textarea value={globalDefaults.remarks} onChange={(e) => setGlobalDefaults({ ...globalDefaults, remarks: e.target.value })} rows={3} /></div>
                 </div>
               </div>

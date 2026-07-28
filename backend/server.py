@@ -441,6 +441,8 @@ class CursorAdapter:
         select_cols = "*"
         if self.projection and isinstance(self.projection, dict):
             inclusions = [k for k, v in self.projection.items() if (v == 1 or v is True) and "->" not in k and "." not in k]
+            if self.collection.table_name == "products" and not _PRODUCTS_HAS_OPENING_STOCK and "opening_stock" in inclusions:
+                inclusions.remove("opening_stock")
             if inclusions:
                 select_cols = ",".join(inclusions)
         builder = supabase.table(self.collection.table_name).select(select_cols)
@@ -4785,7 +4787,7 @@ async def inv_stats(user=Depends(get_current_user)):
             {"$match": {"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}},
             {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
         ]).to_list(5000),
-        db.products.find({"company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1, "min_stock": 1, "opening_stock": 1}).to_list(5000)
+        db.products.find({"company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1, "min_stock": 1}).to_list(5000)
     )
 
     in_agg_list = in_agg if isinstance(in_agg, list) else []
@@ -5310,6 +5312,7 @@ async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str,
         
     if not skip_activity_log:
         await log_activity(company_id, user_id, user_name, "Inward Entry", f"{pn} × {data.quantity}")
+    invalidate_products_cache(company_id)
     return doc
 
 async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = ""):
