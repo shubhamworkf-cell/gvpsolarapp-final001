@@ -13,7 +13,7 @@ export default function Layout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const isAdmin = user?.role === "Admin";
-  const allowed = (page) => isAdmin || user?.permissions?.[page]?.view;
+  const allowed = (page) => isAdmin || (user?.permissions?.[page]?.view === true);
   const ALWAYS_VISIBLE = new Set(["complaints"]);
 
   const items = [

@@ -1700,6 +1700,7 @@ async def get_current_user(request: Request) -> dict:
 
     # Store in cache so subsequent requests in next 5 min skip Supabase round-trips
     _cache_put_user(token, user)
+    logger.error(f"DEBUG: get_current_user returning {user.get('role')} with perms: {user.get('permissions')}")
     return user
 
 # ---------- Models ----------
@@ -2001,8 +2002,8 @@ def has_perm(user: Dict[str, Any], page: str, action: str) -> bool:
     val = page_perms.get(action)
     if val is None and page == "project_execution" and action in PROJ_EXEC_TABS:
         # Fallback to main project_execution view permission for backward compatibility
-        return bool(page_perms.get("view"))
-    return bool(val)
+        return page_perms.get("view") is True
+    return val is True
 
 
 def require_perm(page: str, action: str):
@@ -8101,7 +8102,7 @@ async def calculate_client_ledger(company_id: str, client_id: str):
     }
 
 @api_router.get("/inventory/ledger/{client_id}")
-async def get_client_ledger(client_id: str, user=Depends(get_current_user)):
+async def get_client_ledger(client_id: str, user=Depends(require_perm("reports", "view"))):
     ledger = await calculate_client_ledger(user["company_id"], client_id)
     if not ledger:
         raise HTTPException(status_code=404, detail="Client not found")

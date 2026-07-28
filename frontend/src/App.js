@@ -84,7 +84,7 @@ function AccessDenied() {
 function PermissionRoute({ page, children }) {
   const { user } = useAuth();
   const isAdmin = user?.role === "Admin";
-  const hasPerm = isAdmin || user?.permissions?.[page]?.view;
+  const hasPerm = isAdmin || (user?.permissions?.[page]?.view === true);
   
   if (!hasPerm) {
     return <AccessDenied />;
