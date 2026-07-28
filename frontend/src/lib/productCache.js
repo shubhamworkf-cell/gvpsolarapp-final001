@@ -1,6 +1,6 @@
 import api from "./api";
 
-let inMemoryCache = null;
+let inMemoryCache = [];
 let inFlightPromise = null;
 
 /**
@@ -8,7 +8,7 @@ let inFlightPromise = null;
  * Returns products array immediately in 0ms if cached in memory or sessionStorage.
  */
 export function getCachedProducts() {
-  if (Array.isArray(inMemoryCache)) return inMemoryCache;
+  if (Array.isArray(inMemoryCache) && inMemoryCache.length > 0) return inMemoryCache;
   try {
     const raw = sessionStorage.getItem("gvp_products_cache_v1");
     if (raw) {
@@ -19,7 +19,7 @@ export function getCachedProducts() {
       }
     }
   } catch (e) {}
-  return null;
+  return [];
 }
 
 /**
@@ -41,7 +41,7 @@ export function fetchProductsDeduplicated(forceRefresh = false) {
     invalidateFrontendProductCache();
   } else {
     const cached = getCachedProducts();
-    if (Array.isArray(cached) && (cached?.length ?? 0) > 0) {
+    if (Array.isArray(cached) && cached.length > 0) {
       return Promise.resolve(cached);
     }
   }
@@ -52,14 +52,14 @@ export function fetchProductsDeduplicated(forceRefresh = false) {
 
   inFlightPromise = api.get("/inventory/products")
     .then(({ data }) => {
-      const list = data || [];
+      const list = Array.isArray(data) ? data : [];
       setCachedProducts(list);
       inFlightPromise = null;
       return list;
     })
     .catch((err) => {
       inFlightPromise = null;
-      throw err;
+      return [];
     });
 
   return inFlightPromise;
@@ -69,7 +69,7 @@ export function fetchProductsDeduplicated(forceRefresh = false) {
  * Manually invalidate frontend product cache.
  */
 export function invalidateFrontendProductCache() {
-  inMemoryCache = null;
+  inMemoryCache = [];
   inFlightPromise = null;
   try {
     sessionStorage.removeItem("gvp_products_cache_v1");

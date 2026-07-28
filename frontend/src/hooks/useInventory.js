@@ -15,7 +15,7 @@ export function useProductList(filters = {}) {
     },
     initialData: () => {
       const cached = getCachedProducts();
-      return Array.isArray(cached) && cached.length > 0 ? cached : undefined;
+      return Array.isArray(cached) && cached.length > 0 ? cached : [];
     },
     staleTime: STALE_TIME,
     gcTime: 30 * 60 * 1000,
