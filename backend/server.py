@@ -1690,6 +1690,15 @@ async def get_current_user(request: Request) -> dict:
     if not user or not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="User not found")
 
+    if user.get("role") == "Installer":
+        perms = user.get("permissions")
+        if not isinstance(perms, dict):
+            user["permissions"] = {}
+            perms = user["permissions"]
+        if not isinstance(perms.get("reports"), dict):
+            perms["reports"] = {}
+        perms["reports"]["view"] = False
+
     # Store in cache so subsequent requests in next 5 min skip Supabase round-trips
     _cache_put_user(token, user)
     return user
@@ -2303,6 +2312,15 @@ async def login(data: LoginIn, response: Response):
         raise HTTPException(status_code=403, detail="Account is inactive")
 
     response.set_cookie("access_token", token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
+
+    if user.get("role") == "Installer":
+        perms = user.get("permissions")
+        if not isinstance(perms, dict):
+            user["permissions"] = {}
+            perms = user["permissions"]
+        if not isinstance(perms.get("reports"), dict):
+            perms["reports"] = {}
+        perms["reports"]["view"] = False
 
     cid = str(user.get("company_id") or "")
     logger.info(f"[LOGIN] step=company_lookup_start cid={cid} elapsed={_elapsed()}ms")
