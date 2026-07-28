@@ -212,15 +212,11 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
     } catch (e) { toast.error(formatApiError(e)); }
   };
 
-  const selectClient = (id) => {
-    const c = clients.find((x) => x.id === id);
-    if (c) setForm({ ...form, client_id: c.id, client_name: c.full_name, project_id: c.id, project_name: c.full_name });
-  };
-
   const filtered = useMemo(() => {
-    if (!globalSearch) return entries;
+    const list = Array.isArray(entries) ? entries : [];
+    if (!globalSearch) return list;
     const s = globalSearch.toLowerCase();
-    return entries.filter((e) =>
+    return list.filter((e) =>
       (e.product || "").toLowerCase().includes(s) ||
       (e.client_name || "").toLowerCase().includes(s) ||
       (e.project_name || "").toLowerCase().includes(s) ||
@@ -229,7 +225,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
     );
   }, [entries, globalSearch]);
 
-  const pendingCount = entries.filter((e) => e.status === "Pending").length;
+  const pendingCount = (Array.isArray(entries) ? entries : []).filter((e) => e.status === "Pending").length;
 
   const saveDefaults = () => { onSaveDefaults?.(defaultsForm); setDefaultsOpen(false); };
 

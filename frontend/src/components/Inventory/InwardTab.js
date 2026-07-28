@@ -167,9 +167,10 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
   };
 
   const filtered = useMemo(() => {
-    if (!globalSearch) return entries;
+    const list = Array.isArray(entries) ? entries : [];
+    if (!globalSearch) return list;
     const s = globalSearch.toLowerCase();
-    return entries.filter((e) =>
+    return list.filter((e) =>
       (e.product || "").toLowerCase().includes(s) ||
       (e.source_name || "").toLowerCase().includes(s) ||
       (e.reference_number || "").toLowerCase().includes(s) ||

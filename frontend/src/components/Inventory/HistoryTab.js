@@ -85,7 +85,7 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
 
   const exportSelectedCsv = () => {
     if (selected.size === 0) return;
-    const sel = data.rows.filter((r) => selected.has(`${r.type}:${r.id}`));
+    const sel = (data?.rows || []).filter((r) => selected.has(`${r.type}:${r.id}`));
     const headers = ["Date", "Type", "Product", "Size", "Quantity", "Unit", "Reference / Challan", "Bill / Outward No", "Vendor / Client", "Project", "Status", "Remarks", "Created By"];
     const lines = [headers.join(",")];
     sel.forEach((r) => {
