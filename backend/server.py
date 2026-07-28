@@ -762,7 +762,7 @@ class CollectionAdapter:
         return CursorAdapter(self, filter, projection)
 
     async def insert_one(self, document):
-        global _PRODUCTS_HAS_RATE
+        global _PRODUCTS_HAS_RATE, _PRODUCTS_HAS_OPENING_STOCK, _PRODUCTS_HAS_HV, _PRODUCTS_HAS_SN_REQ
         if "id" not in document and self.table_name not in ["counters", "inventory_defaults", "password_reset_tokens"]:
             document["id"] = str(uuid.uuid4())
         document = self._clean_empty_fks(document)
@@ -794,7 +794,6 @@ class CollectionAdapter:
             except Exception as e:
                 err_str = str(e)
                 if self.table_name == "products" and "PGRST204" in err_str:
-                    global _PRODUCTS_HAS_RATE, _PRODUCTS_HAS_OPENING_STOCK, _PRODUCTS_HAS_HV, _PRODUCTS_HAS_SN_REQ
                     changed = False
                     if "rate" in err_str and _PRODUCTS_HAS_RATE:
                         _PRODUCTS_HAS_RATE = False; changed = True
@@ -4617,14 +4616,14 @@ class InventoryDefaults(BaseModel):
 def norm_str(s: Optional[str]) -> str:
     if not s:
         return ""
-    val = str(s).strip()
+    val = s.strip()
     val = re.sub(r'\s*[xX×\*]\s*', '*', val)
     return val.strip().upper()
 
 def norm_product_name(s: Optional[str]) -> str:
     if not s:
         return ""
-    return str(s).strip().upper()
+    return s.strip().upper()
 
 def norm_unit(u: Optional[str]) -> str:
     if not u:
@@ -5068,8 +5067,8 @@ async def create_product(data: ProductIn, user=Depends(get_current_user)):
     doc = {
         "id": str(uuid.uuid4()), "company_id": user["company_id"], "name": name,
         "size": size, "category": data.category or "Solar",
-        "unit": unit or "Nos", "min_stock": float(data.min_stock or 0),
-        "opening_stock": float(data.opening_stock or 0.0),
+        "unit": unit or "Nos", "min_stock": data.min_stock or 0.0,
+        "opening_stock": data.opening_stock or 0.0,
         "rate": rate_val,
         "status": data.status or "Active", "created_at": now_iso(),
         "high_value_goods": data.high_value_goods or False,
