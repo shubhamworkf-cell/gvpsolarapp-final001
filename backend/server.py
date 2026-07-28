@@ -8091,7 +8091,7 @@ async def get_client_ledger(client_id: str, user=Depends(get_current_user)):
     return ledger
 
 @api_router.get("/inventory/ledger/{client_id}/export")
-async def export_client_ledger(client_id: str, format: str = "csv", user=Depends(get_current_user)):
+async def export_client_ledger(client_id: str, format: str = "csv", user=Depends(require_perm("reports", "view"))):
     cid = user["company_id"]
     ledger = await calculate_client_ledger(cid, client_id)
     if not ledger or not isinstance(ledger, dict):

@@ -160,7 +160,7 @@ function App() {
             <Route path="/tax-invoice" element={<Protected><PermissionRoute page="sales_documents"><TaxInvoice /></PermissionRoute></Protected>} />
             <Route path="/delivery-bill" element={<Protected><PermissionRoute page="sales_documents"><DeliveryBill /></PermissionRoute></Protected>} />
             <Route path="/sales-documents" element={<Protected><PermissionRoute page="sales_documents"><SalesDocuments /></PermissionRoute></Protected>} />
-            <Route path="/reports" element={<Protected><MainTabShell activeTab="reports" /></Protected>} />
+            <Route path="/reports" element={<Protected><PermissionRoute page="reports"><MainTabShell activeTab="reports" /></PermissionRoute></Protected>} />
             <Route path="/client-data" element={<Protected><MainTabShell activeTab="client-data" /></Protected>} />
             <Route path="/client-data/:id" element={<Protected><ClientDataDetail /></Protected>} />
             <Route path="/complaints" element={<Protected><Complaints /></Protected>} />

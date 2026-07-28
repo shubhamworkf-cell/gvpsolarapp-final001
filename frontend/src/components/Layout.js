@@ -14,7 +14,7 @@ export default function Layout({ children }) {
 
   const isAdmin = user?.role === "Admin";
   const allowed = (page) => isAdmin || user?.permissions?.[page]?.view;
-  const ALWAYS_VISIBLE = new Set(["complaints", "reports"]);
+  const ALWAYS_VISIBLE = new Set(["complaints"]);
 
   const items = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, key: "dashboard" },
