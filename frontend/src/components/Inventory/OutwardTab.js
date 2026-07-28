@@ -213,11 +213,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
     } catch (e) { toast.error(formatApiError(e)); }
   };
 
-  const selectClient = (id) => {
-    const c = (clients || []).find((x) => x.id === id);
-    if (c) setForm({ ...form, client_id: c.id, client_name: c.full_name, project_id: c.id, project_name: c.full_name });
-    else setForm({ ...form, client_id: "", client_name: "" });
-  };
+
 
   const filtered = useMemo(() => {
     const list = Array.isArray(entries) ? entries : [];
@@ -336,7 +332,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
             <SelectField label="Status" value={form.status} onChange={(v) => setForm({ ...form, status: v })} options={STATUSES} testid="out-status" />
 
             <div className="md:col-span-2">
-              <SelectField label="Client" value={form.client_id} onChange={selectClient} options={clients.map((c) => ({ value: c.id, label: c.full_name }))} allowEmpty placeholder="Select client" testid="out-client" />
+              <SelectField label="Client" value={form.client_id} onChange={(id) => { const c = (clients || []).find((x) => x.id === id); if (c) setForm({ ...form, client_id: c.id, client_name: c.full_name, project_id: c.id, project_name: c.full_name }); else setForm({ ...form, client_id: "", client_name: "" }); }} options={clients.map((c) => ({ value: c.id, label: c.full_name }))} allowEmpty placeholder="Select client" testid="out-client" />
               {!form.client_id && form.client_name && <div className="text-[10px] text-slate-400 mt-1">Free text: {form.client_name}</div>}
             </div>
             <Field label="Project" value={form.project_name} onChange={(v) => setForm({ ...form, project_name: v })} placeholder="Project label" testid="out-project" />
