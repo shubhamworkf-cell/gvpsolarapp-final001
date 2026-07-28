@@ -323,7 +323,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                       isSerialRequired = Boolean(v.serial_number_required);
                     } else {
                       pName = v.toUpperCase();
-                      const matched = products.find(p => p.name.toUpperCase() === pName);
+                      const matched = (Array.isArray(products) ? products : []).find(p => (p.name || "").toUpperCase() === pName);
                       if (matched) {
                         isHighValue = Boolean(matched.high_value_goods || matched.high_value_asset);
                         isSerialRequired = Boolean(matched.serial_number_required);
