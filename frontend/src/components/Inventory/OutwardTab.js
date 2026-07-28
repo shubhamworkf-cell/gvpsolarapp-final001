@@ -210,6 +210,8 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
       setConfirmDel(null);
       load(); onChanged?.();
     } catch (e) { toast.error(formatApiError(e)); }
+  };
+
   const selectClient = (id) => {
     const c = (clients || []).find((x) => x.id === id);
     if (c) setForm({ ...form, client_id: c.id, client_name: c.full_name, project_id: c.id, project_name: c.full_name });
