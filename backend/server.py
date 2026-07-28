@@ -4642,7 +4642,7 @@ def norm_unit(u: Optional[str]) -> str:
         return "Kg"
     return u.strip().capitalize() or "Nos"
 
-async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "Nos", min_stock: float = 0, brand: str = ""):
+async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "Nos", min_stock: float = 0, brand: str = "", high_value_goods: bool = False):
     n = norm_product_name(name)
     s = norm_str(size)
     u = norm_unit(unit)
@@ -4664,6 +4664,7 @@ async def ensure_product(company_id: str, name: str, size: str = "", category: s
     if existing:
         patch = {}
         if not existing.get("category") and category: patch["category"] = category
+        if high_value_goods and not existing.get("high_value_goods"): patch["high_value_goods"] = True
         if patch:
             await db.products.update_one({"id": existing["id"]}, {"$set": patch})
         return existing
@@ -4677,6 +4678,7 @@ async def ensure_product(company_id: str, name: str, size: str = "", category: s
         "unit": u or "Nos",
         "min_stock": float(min_stock or 0),
         "status": "Active",
+        "high_value_goods": high_value_goods,
         "created_at": now_iso()
     }
     await db.products.insert_one(doc)
@@ -5200,7 +5202,8 @@ def _enrich_outward_with_assets(outward_doc: Optional[dict]) -> Optional[dict]:
 
 async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = "", skip_activity_log: bool = False):
     pn = data.product.strip().upper()
-    await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos", brand=data.source_name or "")
+    is_hv = data.high_value_asset or data.high_value_goods or _load_local_high_value_products().get(pn, False) or any(kw in pn for kw in ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"])
+    await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos", brand=data.source_name or "", high_value_goods=is_hv)
     
     source_type_val = data.source_type or "Supplier"
     source_name_val = data.source_name or ""

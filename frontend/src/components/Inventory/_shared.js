@@ -97,7 +97,6 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
   const [open, setOpen] = useState(false);
   const [inputVal, setInputVal] = useState(value || "");
   const [debouncedSearch, setDebouncedSearch] = useState(value || "");
-  const [slimProducts, setSlimProducts] = useState([]);
   const containerRef = useRef(null);
   const debounceRef = useRef(null);
 
@@ -105,12 +104,8 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
   useEffect(() => { setInputVal(value || ""); }, [value]);
 
   // ── Unified Product Source ────────────────────────────────────────────────
-  useEffect(() => {
-    // If parent provides products, use them. Otherwise use the hook products.
-    const sourceList = (products && products.length > 0) ? products : hookProducts;
-    if (sourceList && sourceList.length > 0) {
-      setSlimProducts(sourceList);
-    }
+  const sourceList = useMemo(() => {
+    return (products && products.length > 0) ? products : hookProducts;
   }, [products, hookProducts]);
 
   // ── Click-outside close ──────────────────────────────────────────────────
@@ -124,13 +119,13 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // ── Pre-index: builds searchKey once when slimProducts changes ───────────
+  // ── Pre-index: builds searchKey once when sourceList changes ───────────
   const { highValueProducts, otherProducts } = useMemo(() => {
     const hvKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"];
     const hv = [];
     const other = [];
 
-    for (const p of slimProducts) {
+    for (const p of sourceList) {
       const nameUpper = (p.name || "").toUpperCase();
       const rawSize = (p.size || "").toUpperCase();
       const cleanSize = rawSize.replace(/\s*[xX×*]\s*/g, "*");
@@ -142,7 +137,7 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
       else other.push(item);
     }
     return { highValueProducts: hv, otherProducts: other };
-  }, [slimProducts]);
+  }, [sourceList]);
 
   // ── Debounced search: typing updates inputVal instantly, filter runs 150ms later ──
   const handleInputChange = useCallback((val) => {
