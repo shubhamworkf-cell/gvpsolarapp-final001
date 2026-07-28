@@ -29,7 +29,8 @@ const StatCard = ({ label, value, sub, icon: Ic, accent }) => (
 );
 
 export default function Inventory() {
-  const { data: products = [], isLoading: productsLoading } = useProductList();
+  const { data: rawProducts = [], isLoading: productsLoading } = useProductList();
+  const products = Array.isArray(rawProducts) ? rawProducts : [];
   const invalidateInventory = useInvalidateInventory();
   const queryClient = useQueryClient();
   const [stats, setStats] = useState(null);

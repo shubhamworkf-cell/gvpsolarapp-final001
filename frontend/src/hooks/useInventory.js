@@ -7,17 +7,26 @@ import { getCachedProducts, fetchProductsDeduplicated, invalidateFrontendProduct
 const STALE_TIME = 15 * 60 * 1000; // 15 min - inventory changes infrequently
 
 export function useProductList(filters = {}) {
-  return useQuery({
+  const query = useQuery({
     queryKey: queryKeys.inventory.products(filters),
     queryFn: async () => {
-      return await fetchProductsDeduplicated();
+      const res = await fetchProductsDeduplicated();
+      return Array.isArray(res) ? res : [];
     },
-    initialData: () => getCachedProducts(),
+    initialData: () => {
+      const cached = getCachedProducts();
+      return Array.isArray(cached) && cached.length > 0 ? cached : undefined;
+    },
     staleTime: STALE_TIME,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    refetchOnMount: true,
   });
+
+  return {
+    ...query,
+    data: Array.isArray(query.data) ? query.data : [],
+  };
 }
 
 export function useInventoryStats() {

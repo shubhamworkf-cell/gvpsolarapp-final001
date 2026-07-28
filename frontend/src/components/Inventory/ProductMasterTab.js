@@ -111,9 +111,9 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
     setCurrentPage(1);
   }, [localSearch, globalSearch]);
 
-  const totalPages = Math.ceil(filtered.length / itemsPerPage);
+  const totalPages = Math.ceil((filtered?.length ?? 0) / itemsPerPage);
   const paginated = useMemo(() => {
-    return filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+    return (filtered || []).slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
   }, [filtered, currentPage, itemsPerPage]);
 
   return (
@@ -123,7 +123,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-slate-100">
             <div>
               <div className="text-base font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>Product Master</div>
-              <div className="text-xs text-slate-500">{filtered.length} of {(products || []).length} products</div>
+              <div className="text-xs text-slate-500">{(filtered?.length ?? 0)} of {(products?.length ?? 0)} products</div>
             </div>
 
             <div className="flex items-center gap-3 flex-wrap">
@@ -163,7 +163,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {(filtered?.length ?? 0) === 0 ? (
                   <tr><td colSpan={9} className="px-4 py-16 text-center">
                     <Boxes className="w-10 h-10 mx-auto text-slate-300 mb-2" />
                     <div className="text-sm font-semibold text-slate-700">No products yet</div>
@@ -204,7 +204,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
           {totalPages > 1 && (
             <div className="p-4 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 bg-white">
               <div className="text-xs text-slate-500">
-                Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filtered.length)} of {filtered.length} products
+                Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, (filtered?.length ?? 0))} of {(filtered?.length ?? 0)} products
               </div>
               <div className="flex gap-1">
                 <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</Button>

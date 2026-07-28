@@ -121,7 +121,7 @@ export default function BalanceTab({ products, globalSearch }) {
           <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
             <div>
               <div className="text-base font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>Balance Report</div>
-              <div className="text-xs text-slate-500">{filtered.length} products · {totals.low} low · {totals.out_stock} out of stock</div>
+              <div className="text-xs text-slate-500">{(filtered?.length ?? 0)} products · {totals.low} low · {totals.out_stock} out of stock</div>
             </div>
             <Button variant="outline" size="sm" className="border-slate-300 text-slate-700 hover:bg-slate-50 h-8" onClick={handleDownloadCSV} data-testid="balance-download-btn">
               <Download className="w-4 h-4 mr-1.5 text-emerald-600" /> Download
@@ -142,7 +142,7 @@ export default function BalanceTab({ products, globalSearch }) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {(filtered?.length ?? 0) === 0 ? (
                   <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-400">
                     <Activity className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                     No products match filters

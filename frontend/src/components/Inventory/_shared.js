@@ -99,8 +99,10 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
 
   // Fallback to synchronous frontend cache if products prop is not passed or empty
   const activeProducts = useMemo(() => {
-    if (products && products.length > 0) return products;
-    return getCachedProducts() || [];
+    if (Array.isArray(products) && (products?.length ?? 0) > 0) return products;
+    const cached = getCachedProducts();
+    if (Array.isArray(cached) && (cached?.length ?? 0) > 0) return cached;
+    return [];
   }, [products]);
 
   useEffect(() => {
@@ -119,7 +121,7 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
     const hv = [];
     const other = [];
 
-    const list = [...activeProducts];
+    const list = Array.isArray(activeProducts) ? [...activeProducts] : [];
     list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
     list.forEach(p => {
@@ -144,16 +146,16 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
     if (!query) return list;
     const cleanSearch = query.toUpperCase().replace(/\s*[xX×\*]\s*/g, "*");
     const tokens = cleanSearch.split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return list;
-    return list.filter(p => tokens.every(token => p._searchKey.includes(token)));
+    if ((tokens?.length ?? 0) === 0) return list;
+    return (list || []).filter(p => tokens.every(token => p._searchKey.includes(token)));
   }, []);
 
   const filteredHighValue = useMemo(() => filterList(highValueProducts, search), [highValueProducts, search, filterList]);
   const filteredOther = useMemo(() => filterList(otherProducts, search), [otherProducts, search, filterList]);
 
   // CRITICAL DOM SLICING: Render max 50 HV and 100 Other items to eliminate DOM freeze & lag
-  const displayedHighValue = useMemo(() => filteredHighValue.slice(0, 50), [filteredHighValue]);
-  const displayedOther = useMemo(() => filteredOther.slice(0, 100), [filteredOther]);
+  const displayedHighValue = useMemo(() => (filteredHighValue || []).slice(0, 50), [filteredHighValue]);
+  const displayedOther = useMemo(() => (filteredOther || []).slice(0, 100), [filteredOther]);
 
   const handleInputChange = (val) => {
     setSearch(val);
@@ -190,9 +192,9 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
         <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto text-xs py-1.5 text-left">
           <div className="px-2.5 py-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
             <span>HIGH VALUE GOODS</span>
-            {filteredHighValue.length > 50 && <span className="text-[9px] text-slate-400 font-normal">Showing 50 of {filteredHighValue.length}</span>}
+            {(filteredHighValue?.length ?? 0) > 50 && <span className="text-[9px] text-slate-400 font-normal">Showing 50 of {filteredHighValue.length}</span>}
           </div>
-          {displayedHighValue.length === 0 ? (
+          {(displayedHighValue?.length ?? 0) === 0 ? (
             <div className="px-4 py-1.5 text-slate-400 italic">No high value goods found</div>
           ) : (
             displayedHighValue.map((p) => (
@@ -214,9 +216,9 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
 
           <div className="px-2.5 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
             <span>OTHER PRODUCTS (A-Z)</span>
-            {filteredOther.length > 100 && <span className="text-[9px] text-slate-400 font-normal">Showing 100 of {filteredOther.length}</span>}
+            {(filteredOther?.length ?? 0) > 100 && <span className="text-[9px] text-slate-400 font-normal">Showing 100 of {filteredOther.length}</span>}
           </div>
-          {displayedOther.length === 0 ? (
+          {(displayedOther?.length ?? 0) === 0 ? (
             <div className="px-4 py-1.5 text-slate-400 italic">No other products found</div>
           ) : (
             displayedOther.map((p) => (

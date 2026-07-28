@@ -8,12 +8,15 @@ let inFlightPromise = null;
  * Returns products array immediately in 0ms if cached in memory or sessionStorage.
  */
 export function getCachedProducts() {
-  if (inMemoryCache) return inMemoryCache;
+  if (Array.isArray(inMemoryCache)) return inMemoryCache;
   try {
     const raw = sessionStorage.getItem("gvp_products_cache_v1");
     if (raw) {
-      inMemoryCache = JSON.parse(raw);
-      return inMemoryCache;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        inMemoryCache = parsed;
+        return inMemoryCache;
+      }
     }
   } catch (e) {}
   return null;
@@ -23,9 +26,9 @@ export function getCachedProducts() {
  * Store updated product list in memory and sessionStorage.
  */
 export function setCachedProducts(products) {
-  inMemoryCache = products;
+  inMemoryCache = Array.isArray(products) ? products : [];
   try {
-    sessionStorage.setItem("gvp_products_cache_v1", JSON.stringify(products));
+    sessionStorage.setItem("gvp_products_cache_v1", JSON.stringify(inMemoryCache));
   } catch (e) {}
 }
 
@@ -38,7 +41,7 @@ export function fetchProductsDeduplicated(forceRefresh = false) {
     invalidateFrontendProductCache();
   } else {
     const cached = getCachedProducts();
-    if (cached && cached.length > 0) {
+    if (Array.isArray(cached) && (cached?.length ?? 0) > 0) {
       return Promise.resolve(cached);
     }
   }
