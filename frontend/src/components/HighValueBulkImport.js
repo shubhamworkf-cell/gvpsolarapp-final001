@@ -361,6 +361,10 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
     setStep("importing");
     setImportProgress(0);
 
+    const CHUNK_SIZE = 25;
+    const totalRows = validRows.length;
+    let importedCount = 0;
+
     try {
       const payloadRows = validRows.map((r) => ({
         product: (r.product || "").toUpperCase().trim(),
@@ -381,14 +385,24 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
         high_value_asset: true,
       }));
 
-      const res = await api.post("/inventory/bulk-inward-high-value", {
-        rows: payloadRows,
-        global_defaults: globalDefaults,
-        source: "high-value-manual-import",
-      });
+      for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
+        const chunk = payloadRows.slice(i, i + CHUNK_SIZE);
+        await api.post(
+          "/inventory/bulk-inward-high-value",
+          {
+            rows: chunk,
+            global_defaults: globalDefaults,
+            source: "high-value-manual-import",
+          },
+          { timeout: 120000 }
+        );
+        importedCount += chunk.length;
+        setImportProgress(Math.round((importedCount / totalRows) * 100));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
 
       setImportProgress(100);
-      toast.success(res.data?.message || `Successfully imported ${payloadRows.length} High Value Goods!`);
+      toast.success(`Successfully imported ${payloadRows.length} High Value Goods!`);
       setStep("done");
       onImported?.();
     } catch (err) {
