@@ -121,7 +121,7 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
 
   // ── Pre-index: builds searchKey once when sourceList changes ───────────
   const { highValueProducts, otherProducts } = useMemo(() => {
-    const hvKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"];
+    const hvKeywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY", "MODULE", "TRANSFORMER"];
     const hv = [];
     const other = [];
 
@@ -132,7 +132,7 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
       const _searchKey = `${nameUpper} ${cleanSize} ${rawSize}`;
       const item = { ...p, _searchKey };
 
-      const isHV = p.high_value_goods || p.high_value_asset || hvKeywords.some(kw => nameUpper.includes(kw));
+      const isHV = Boolean(p.high_value_goods || p.high_value_asset || hvKeywords.some(kw => nameUpper.includes(kw)));
       if (isHV) hv.push(item);
       else other.push(item);
     }

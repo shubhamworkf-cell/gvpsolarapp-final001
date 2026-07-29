@@ -5078,14 +5078,21 @@ async def list_products(user=Depends(get_current_user)):
     items, _, _, _ = await _compute_inventory_balances(cid)
 
     hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
+    local_hv = _load_local_high_value_products()
     def _is_hv_prod(p):
-        p_name = norm_product_name(p["name"])
-        if p.get("high_value_goods") or p.get("high_value_asset"):
+        p_name = norm_product_name(p.get("name"))
+        if p.get("high_value_goods") or p.get("high_value_asset") or local_hv.get(p_name):
             return True
         if any(kw in p_name for kw in hv_keywords):
             return True
         return False
-    items.sort(key=lambda p: (0 if _is_hv_prod(p) else 1, p["name"], p.get("size") or ""))
+
+    for p in items:
+        is_hv = _is_hv_prod(p)
+        p["high_value_goods"] = is_hv
+        p["high_value_asset"] = is_hv
+
+    items.sort(key=lambda p: (0 if p.get("high_value_goods") else 1, p.get("name") or "", p.get("size") or ""))
     _PRODUCTS_CACHE[cid] = (now, items)
     return items
 
@@ -5153,11 +5160,13 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
         ps = (p.get("size") or "").strip()
         ps_norm = norm_str(ps)
         
+        hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
         is_hv = (
             local_hv.get(pn_norm, False) is True or
             bool(p.get("high_value_goods")) or
             bool(p.get("high_value_asset")) or
-            pn_norm in hv_inward_product_names
+            pn_norm in hv_inward_product_names or
+            any(kw in pn_norm for kw in hv_keywords)
         )
         if is_hv and pn_norm:
             if search_term and search_term not in pn.lower() and search_term not in ps.lower():
