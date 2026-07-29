@@ -5,11 +5,12 @@ import { useClientList } from "@/hooks/useClients";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Save, RotateCcw, Settings, Pencil, Trash2, Paperclip, ChevronDown, ChevronUp, FileText, FileImage, FileSpreadsheet, Wand2 } from "lucide-react";
+import { Save, RotateCcw, Settings, Pencil, Trash2, Paperclip, ChevronDown, ChevronUp, FileText, FileImage, FileSpreadsheet, Wand2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
 import { Field, SelectField, TextareaField, ConfirmDialog, UNIT_OPTIONS, REF_TYPES, SRC_TYPES, today, applyDefaults, digitsOnly, ProductAutocompleteInput } from "./_shared";
 import ManualBulkImport from "@/components/ManualBulkImport";
+import HighValueBulkImport from "@/components/HighValueBulkImport";
 import { usePermission } from "@/lib/permissions";
 
 const CARRY_FORWARD_FIELDS = [
@@ -44,6 +45,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
   const [editing, setEditing] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [hvManualOpen, setHvManualOpen] = useState(false);
   const [defaultsOpen, setDefaultsOpen] = useState(false);
   const [defaultsForm, setDefaultsForm] = useState(defaults);
   const [autoContinue, setAutoContinue] = useState(() => {
@@ -486,12 +488,20 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
             </Button>
             <div className="flex-1" />
             {canCreate && (
-              <Button variant="outline" className="border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                onClick={() => setManualOpen(true)}
-                data-testid="manual-import-inward-btn"
-              >
-                <FileSpreadsheet className="w-4 h-4 mr-1.5" /> Manual Bulk Import
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" className="border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                  onClick={() => setManualOpen(true)}
+                  data-testid="manual-import-inward-btn"
+                >
+                  <FileSpreadsheet className="w-4 h-4 mr-1.5" /> Manual Bulk Import
+                </Button>
+                <Button variant="outline" className="border-amber-300 bg-amber-50/80 text-amber-900 hover:bg-amber-100 font-semibold"
+                  onClick={() => setHvManualOpen(true)}
+                  data-testid="hv-manual-import-inward-btn"
+                >
+                  <ShieldCheck className="w-4 h-4 mr-1.5 text-amber-600" /> High Value Manual Import
+                </Button>
+              </div>
             )}          </div>
         </CardContent>
       </Card>
@@ -558,6 +568,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
       </Card>
 
       <ManualBulkImport open={manualOpen} onOpenChange={setManualOpen} mode="inward" products={products} onImported={() => { load(); onChanged?.(); }} />
+      <HighValueBulkImport open={hvManualOpen} onOpenChange={setHvManualOpen} products={products} onImported={() => { load(); onChanged?.(); }} />
 
       <ConfirmDialog
         open={!!confirmDel}

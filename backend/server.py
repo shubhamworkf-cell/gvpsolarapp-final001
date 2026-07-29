@@ -823,20 +823,22 @@ class CollectionAdapter:
         try:
             res = supabase.table(self.table_name).insert(documents, returning="minimal").execute()
         except Exception as e:
-            if self.table_name == "products" and any("rate" in doc for doc in documents):
-                err_str = str(e)
-                if "PGRST204" in err_str or "rate" in err_str:
-                    logger.warning("Supabase table products does not have rate column. Disabling rate writes.")
-                    _PRODUCTS_HAS_RATE = False
-                    docs_copy = []
-                    for doc in documents:
-                        docs_copy.append({k: v for k, v in doc.items() if k != "rate"})
-                    res = supabase.table(self.table_name).insert(docs_copy, returning="minimal").execute()
-                else:
-                    raise e
+            err_str = str(e)
+            if "PGRST204" in err_str or "Could not find the" in err_str:
+                missing_col = None
+                match = re.search(r"Could not find the '([^']+)' column", err_str)
+                if match:
+                    missing_col = match.group(1)
+                docs_copy = []
+                for doc in documents:
+                    if missing_col:
+                        docs_copy.append({k: v for k, v in doc.items() if k != missing_col})
+                    else:
+                        docs_copy.append({k: v for k, v in doc.items() if k not in ["high_value_asset", "high_value_goods", "serial_number_required", "rate", "opening_stock"]})
+                res = supabase.table(self.table_name).insert(docs_copy, returning="minimal").execute()
             else:
                 raise e
-        return InsertManyResult([doc["id"] for doc in documents])
+        return InsertManyResult([doc.get("id") for doc in documents])
 
     async def update_one(self, filter, update, upsert=False):
         global _PRODUCTS_HAS_RATE
@@ -6488,6 +6490,7 @@ async def product_transactions(
 class BulkRow(BaseModel):
     product: Optional[str] = ""
     size: Optional[str] = ""
+    brand: Optional[str] = ""
     quantity: Optional[Union[float, int, str]] = 0.0
     unit: Optional[str] = "Nos"
     date: Optional[str] = ""
@@ -6495,12 +6498,14 @@ class BulkRow(BaseModel):
     reference_type: Optional[str] = "Challan Number"
     source_type: Optional[str] = "Supplier"
     source_name: Optional[str] = ""
+    vendor: Optional[str] = ""
     client_id: Optional[str] = ""
     client_name: Optional[str] = ""
     bill_number: Optional[str] = ""
     remarks: Optional[str] = ""
     high_value_asset: Optional[bool] = False
     high_value_goods: Optional[bool] = False
+    serial_number_required: Optional[bool] = False
     serial_numbers: Optional[List[str]] = []
 
 class BulkInwardIn(BaseModel):
@@ -6662,6 +6667,153 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
         asyncio.create_task(sync_inventory_master(cid))
 
     return {"inserted": len(inserted_ids), "ids": inserted_ids}
+
+
+@api_router.post("/inventory/bulk-inward-high-value")
+async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_user)):
+    if not has_perm(user, "data_management", "create"):
+        raise HTTPException(status_code=403, detail="Missing permission: data_management.create")
+    if not data.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+    
+    cid = user["company_id"]
+    inserted_ids: List[str] = []
+    gd = data.global_defaults or {}
+    docs_to_insert = []
+    new_assets = []
+    all_assets = _load_local_assets()
+    hv_products = _load_local_high_value_products()
+    
+    prod_cache: Dict[Tuple[str, str, str, str], Any] = {}
+    existing_prods = await db.products.find({"company_id": cid}).to_list(10000)
+    for p in (existing_prods or []):
+        pn_n = norm_product_name(p.get("name"))
+        ps_n = norm_str(p.get("size"))
+        pu_n = norm_unit(p.get("unit"))
+        if cid and pn_n:
+            prod_cache[(cid, pn_n, ps_n, pu_n)] = p
+
+    for r in data.rows:
+        pn = (r.product or "").strip().upper()
+        if not pn:
+            continue
+        try:
+            qty = float(r.quantity) if r.quantity not in (None, "") else 0.0
+        except (ValueError, TypeError):
+            qty = 0.0
+            
+        ps = (r.size or "").strip()
+        pu = (r.unit or gd.get("unit") or "Nos").strip()
+        brand_val = (getattr(r, 'brand', None) or r.source_name or gd.get("vendor") or gd.get("source_name") or "Unknown").strip()
+        source_name_val = (r.source_name or getattr(r, 'vendor', None) or gd.get("vendor") or gd.get("source_name") or "").strip()
+        source_type_val = r.source_type or gd.get("source_type", "Supplier")
+        ref_num = r.reference_number or r.bill_number or gd.get("bill_number") or gd.get("reference_number", "")
+        bill_num = r.bill_number or r.reference_number or gd.get("bill_number", "")
+        date_val = r.date or gd.get("date", "") or now_iso()
+        remarks_val = r.remarks or gd.get("remarks", "")
+
+        # Always force High Value Goods flag
+        _save_local_high_value_product(pn, True)
+        hv_products[pn] = True
+
+        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
+        if cache_key not in prod_cache:
+            prod_doc = await ensure_product(cid, pn, size=ps, unit=pu, brand=brand_val)
+            prod_cache[cache_key] = prod_doc
+        else:
+            prod_doc = prod_cache[cache_key]
+        
+        # Ensure high_value_goods flag is saved on product doc
+        if prod_doc and prod_doc.get("id"):
+            try:
+                await db.products.update_one(
+                    {"id": prod_doc["id"], "company_id": cid},
+                    {"$set": {"high_value_goods": True, "high_value_asset": True}}
+                )
+            except Exception:
+                pass
+
+        entry_id = str(uuid.uuid4())
+        doc = {
+            "id": entry_id,
+            "company_id": cid,
+            "product": pn,
+            "size": ps,
+            "quantity": qty,
+            "unit": pu,
+            "reference_number": numeric_only(ref_num),
+            "reference_type": r.reference_type or gd.get("reference_type", "Challan Number"),
+            "bill_number": numeric_only(bill_num),
+            "source_type": source_type_val,
+            "source_name": source_name_val,
+            "date": date_val,
+            "remarks": remarks_val,
+            "attachment_file_id": "",
+            "attachment_filename": "",
+            "source": "high-value-manual-import",
+            "created_by": user["id"],
+            "created_by_name": user["name"],
+            "created_at": now_iso()
+        }
+
+        docs_to_insert.append(doc)
+        inserted_ids.append(entry_id)
+
+        # High value assets tracking
+        sns = [sn.strip().upper() for sn in (r.serial_numbers or []) if sn.strip()]
+        if sns:
+            for sn in sns:
+                new_assets.append({
+                    "id": str(uuid.uuid4()),
+                    "company_id": cid,
+                    "inward_entry_id": entry_id,
+                    "product_name": pn,
+                    "brand": brand_val,
+                    "size_model": ps,
+                    "quantity": 1.0,
+                    "serial_number": sn,
+                    "vendor": source_name_val or brand_val,
+                    "purchase_date": date_val[:10],
+                    "challan_number": ref_num,
+                    "client_id": None,
+                    "client_name": None,
+                    "installation_date": None,
+                    "warranty_status": "Active",
+                    "status": "Available",
+                    "created_at": now_iso()
+                })
+        else:
+            new_assets.append({
+                "id": str(uuid.uuid4()),
+                "company_id": cid,
+                "inward_entry_id": entry_id,
+                "product_name": pn,
+                "brand": brand_val,
+                "size_model": ps,
+                "quantity": qty,
+                "serial_number": "",
+                "vendor": source_name_val or brand_val,
+                "purchase_date": date_val[:10],
+                "challan_number": ref_num,
+                "client_id": None,
+                "client_name": None,
+                "installation_date": None,
+                "warranty_status": "Active",
+                "status": "Available",
+                "created_at": now_iso()
+            })
+
+    if docs_to_insert:
+        await db.inward_entries.insert_many(docs_to_insert)
+        if new_assets:
+            all_assets.extend(new_assets)
+            _save_local_assets(all_assets)
+        await log_activity(cid, user["id"], user["name"], "High Value Manual Import", f"{len(docs_to_insert)} high value entries")
+        await push_notification(cid, "admin", "High Value Manual Import", f"{user['name']} imported {len(docs_to_insert)} high value goods entries")
+        asyncio.create_task(sync_inventory_master(cid))
+
+    return {"inserted": len(inserted_ids), "ids": inserted_ids, "message": f"Successfully imported {len(inserted_ids)} High Value Goods"}
+
 
 
 # ---- AI Bulk Import (Outward) ----
