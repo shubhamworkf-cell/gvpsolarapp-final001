@@ -4958,63 +4958,97 @@ def invalidate_products_cache(company_id: Optional[str] = None):
 
 
 
-@api_router.get("/inventory/products")
-async def list_products(user=Depends(get_current_user)):
-    cid = user["company_id"]
-    now = time.monotonic()
-    if cid in _PRODUCTS_CACHE:
-        cache_time, cached_items = _PRODUCTS_CACHE[cid]
-        if now - cache_time < _PRODUCTS_CACHE_TTL_S:
-            return cached_items
-
+async def _compute_inventory_balances(cid: str):
     items = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(10000)
-    in_agg = await db.inward_entries.aggregate([
-        {"$match": {"company_id": cid}},
-        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
-    ]).to_list(10000)
-    out_agg = await db.outward_entries.aggregate([
-        {"$match": {"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}},
-        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
-    ]).to_list(10000)
-    
-    in_map = {}
-    for x in in_agg:
-        _id = x.get("_id") or {}
-        if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
-        else:
-            p_k = (norm_product_name(str(_id)), "")
-        in_map[p_k] = in_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
+    inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
+    outward_entries = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
 
-    out_map = {}
-    for x in out_agg:
-        _id = x.get("_id") or {}
-        if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
-        else:
-            p_k = (norm_product_name(str(_id)), "")
-        out_map[p_k] = out_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
+    # Product Maps for resolution
+    prod_id_map: Dict[str, Dict] = {}
+    prod_key_map: Dict[Tuple[str, str], Dict] = {}
+    prod_name_map: Dict[str, List[Dict]] = {}
 
-    # Auto-heal: Ensure any product specification present in History exists in Product Master items
-    all_history_keys = set(in_map.keys()) | set(out_map.keys())
-    existing_items_keys = {
-        (norm_product_name(p["name"]), norm_str(p.get("size")))
-        for p in items
-    }
-    missing_keys = all_history_keys - existing_items_keys
-    if missing_keys:
-        for (m_name, m_size) in missing_keys:
-            if m_name:
-                try:
-                    new_prod = await ensure_product(cid, m_name, size=m_size)
-                    if new_prod and isinstance(new_prod, dict):
-                        if not any(it.get("id") == new_prod.get("id") for it in items):
-                            items.append(new_prod)
-                except Exception as e:
-                    logger.warning(f"Auto-heal product creation failed for {m_name}: {e}")
+    for p in items:
+        p_name = norm_product_name(p.get("name"))
+        p_size = norm_str(p.get("size"))
+        if p.get("id"):
+            prod_id_map[p["id"]] = p
+        if p_name:
+            key = (p_name, p_size)
+            prod_key_map[key] = p
+            prod_name_map.setdefault(p_name, []).append(p)
+
+    in_map: Dict[Tuple[str, str], float] = {}
+    out_map: Dict[Tuple[str, str], float] = {}
+    ret_map: Dict[Tuple[str, str], float] = {}
+
+    def _resolve_product(entry: Dict[str, Any]) -> Tuple[str, str]:
+        # Priority 1: Match by product_id
+        pid = entry.get("product_id")
+        if pid and pid in prod_id_map:
+            target = prod_id_map[pid]
+            return (norm_product_name(target.get("name")), norm_str(target.get("size")))
+        
+        raw_pn = entry.get("product") or ""
+        raw_ps = entry.get("size") or ""
+        pn_n = norm_product_name(raw_pn)
+        ps_n = norm_str(raw_ps)
+        
+        # Priority 2: Match by exact normalized (name, size)
+        if (pn_n, ps_n) in prod_key_map:
+            return (pn_n, ps_n)
+            
+        # Priority 3: Match by product name if single product match in master
+        if pn_n in prod_name_map and len(prod_name_map[pn_n]) == 1:
+            target = prod_name_map[pn_n][0]
+            return (pn_n, norm_str(target.get("size")))
+
+        return (pn_n, ps_n)
+
+    # Process Inward Entries
+    for ie in inward_entries:
+        st = str(ie.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+            
+        qty = float(ie.get("quantity") or 0.0)
+        pk = _resolve_product(ie)
+        in_map[pk] = in_map.get(pk, 0.0) + qty
+
+        # Check for client return
+        src_t = str(ie.get("source_type") or "").lower()
+        src = str(ie.get("source") or "").lower()
+        if "return" in src_t or "client-return" in src:
+            ret_map[pk] = ret_map.get(pk, 0.0) + qty
+
+    # Process Outward Entries
+    for oe in outward_entries:
+        st = str(oe.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+            
+        qty = float(oe.get("quantity") or 0.0)
+        pk = _resolve_product(oe)
+        out_map[pk] = out_map.get(pk, 0.0) + qty
+
+    # Auto-heal: Ensure any product present in transactions exists in Product Master
+    all_trans_keys = set(in_map.keys()) | set(out_map.keys())
+    existing_keys = set(prod_key_map.keys())
+    missing = all_trans_keys - existing_keys
+
+    for m_name, m_size in missing:
+        if m_name:
+            try:
+                new_prod = await ensure_product(cid, m_name, size=m_size)
+                if new_prod and isinstance(new_prod, dict):
+                    if not any(it.get("id") == new_prod.get("id") for it in items):
+                        items.append(new_prod)
+            except Exception as e:
+                logger.warning(f"Auto-heal product creation failed for {m_name}: {e}")
 
     local_rates = _load_local_rates()
     local_high_values = _load_local_high_value_products()
+
     for p in items:
         p_name = norm_product_name(p["name"])
         p_size = norm_str(p.get("size"))
@@ -5028,6 +5062,7 @@ async def list_products(user=Depends(get_current_user)):
         p["opening_stock"] = op_stock
         p["total_in"] = tot_in
         p["total_out"] = tot_out
+        p["returned"] = round(float(ret_map.get(k, 0.0)), 2)
         p["balance"] = bal
 
         p["rate"] = local_rates.get(p_name, float(p.get("rate") or 0.0))
@@ -5037,6 +5072,7 @@ async def list_products(user=Depends(get_current_user)):
             p["high_value_goods"] = bool(p.get("high_value_goods") or p.get("high_value_asset"))
             if p["high_value_goods"]:
                 _save_local_high_value_product(p_name, True)
+
         mn = float(p.get("min_stock") or 0.0)
         if bal <= 0:
             p["stock_status"] = "Out Of Stock"
@@ -5044,6 +5080,19 @@ async def list_products(user=Depends(get_current_user)):
             p["stock_status"] = "Low Stock"
         else:
             p["stock_status"] = "Normal"
+
+    return items, in_map, out_map, ret_map
+
+@api_router.get("/inventory/products")
+async def list_products(user=Depends(get_current_user)):
+    cid = user["company_id"]
+    now = time.monotonic()
+    if cid in _PRODUCTS_CACHE:
+        cache_time, cached_items = _PRODUCTS_CACHE[cid]
+        if now - cache_time < _PRODUCTS_CACHE_TTL_S:
+            return cached_items
+
+    items, _, _, _ = await _compute_inventory_balances(cid)
 
     hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
     def _is_hv_prod(p):
@@ -5062,14 +5111,14 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
     cid = user["company_id"]
     search_term = (search or "").strip().lower()
     
+    items, in_map, out_map, ret_map = await _compute_inventory_balances(cid)
     local_hv = _load_local_high_value_products()
-    all_products = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(10000)
     
     hv_product_docs = []
     hv_keys = set()
     hv_names = set()
     
-    for p in (all_products or []):
+    for p in items:
         pn = (p.get("name") or "").strip()
         pn_norm = norm_product_name(pn)
         ps = (p.get("size") or "").strip()
@@ -5087,50 +5136,8 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
             hv_keys.add((pn_norm, ps_norm))
             hv_names.add(pn_norm)
 
-    in_agg = await db.inward_entries.aggregate([
-        {"$match": {"company_id": cid}},
-        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
-    ]).to_list(10000)
-    
-    out_agg = await db.outward_entries.aggregate([
-        {"$match": {"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}},
-        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
-    ]).to_list(10000)
-    
-    ret_agg = await db.inward_entries.aggregate([
-        {"$match": {"company_id": cid, "$or": [{"source_type": "Return From Client"}, {"source": "client-return"}]}},
-        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
-    ]).to_list(10000)
-
-    in_map: Dict[Tuple[str, str], float] = {}
-    for x in in_agg:
-        _id = x.get("_id") or {}
-        if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
-        else:
-            p_k = (norm_product_name(str(_id)), "")
-        in_map[p_k] = in_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
-
-    out_map: Dict[Tuple[str, str], float] = {}
-    for x in out_agg:
-        _id = x.get("_id") or {}
-        if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
-        else:
-            p_k = (norm_product_name(str(_id)), "")
-        out_map[p_k] = out_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
-
-    ret_map: Dict[Tuple[str, str], float] = {}
-    for x in ret_agg:
-        _id = x.get("_id") or {}
-        if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
-        else:
-            p_k = (norm_product_name(str(_id)), "")
-        ret_map[p_k] = ret_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
-
     all_inward_records = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
-    all_outward_records = await db.outward_entries.find({"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}, {"_id": 0}).sort("date", -1).to_list(10000)
+    all_outward_records = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
 
     last_movement_map = {}
     last_inward_info = {}
@@ -5148,6 +5155,9 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
             last_movement_map[pk] = f"Inward {date_str}" if date_str else "Inward"
 
     for oe in all_outward_records:
+        st = str(oe.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
         pk = (norm_product_name(oe.get("product")), norm_str(oe.get("size")))
         date_str = (oe.get("date") or "")[:10]
         if pk not in last_movement_map or "Inward" in last_movement_map[pk]:
@@ -5163,11 +5173,10 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
         ps_n = norm_str(ps)
         pk = (pn_n, ps_n)
         
-        op_stock = float(p.get("opening_stock") or 0.0)
-        tot_in = round(float(in_map.get(pk, 0.0)), 2)
-        tot_out = round(float(out_map.get(pk, 0.0)), 2)
-        ret_qty = round(float(ret_map.get(pk, 0.0)), 2)
-        avail = round(op_stock + tot_in - tot_out, 2)
+        tot_in = p.get("total_in", 0.0)
+        tot_out = p.get("total_out", 0.0)
+        ret_qty = p.get("returned", 0.0)
+        avail = p.get("balance", 0.0)
         
         last_mov = last_movement_map.get(pk, "No Movement")
         in_info = last_inward_info.get(pk, {})
@@ -5212,6 +5221,10 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
 
     dispatched = []
     for oe in all_outward_records:
+        st = str(oe.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+
         p_n = norm_product_name(oe.get("product"))
         s_n = norm_str(oe.get("size"))
         is_hv_out = (p_n, s_n) in hv_keys or p_n in hv_names or oe.get("high_value_goods") or oe.get("high_value_asset")
@@ -5353,9 +5366,11 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
         dup = await db.products.find_one({"company_id": cid, "name": new_name, "size": new_size})
         if dup and dup["id"] != product_id:
             raise HTTPException(status_code=400, detail="Another product with this name and size specification already exists")
-        # cascade rename in inward/outward entries
-        await db.inward_entries.update_many({"company_id": cid, "product": existing["name"], "size": existing.get("size", ""), "unit": existing.get("unit", "Nos")}, {"$set": {"product": new_name, "size": new_size, "unit": new_unit}})
-        await db.outward_entries.update_many({"company_id": cid, "product": existing["name"], "size": existing.get("size", ""), "unit": existing.get("unit", "Nos")}, {"$set": {"product": new_name, "size": new_size, "unit": new_unit}})
+        # cascade rename in inward/outward entries and link product_id
+        old_pname = existing["name"]
+        old_psize = existing.get("size", "")
+        await db.inward_entries.update_many({"company_id": cid, "$or": [{"product_id": product_id}, {"product": old_pname, "size": old_psize}]}, {"$set": {"product": new_name, "size": new_size, "unit": new_unit, "product_id": product_id}})
+        await db.outward_entries.update_many({"company_id": cid, "$or": [{"product_id": product_id}, {"product": old_pname, "size": old_psize}]}, {"$set": {"product": new_name, "size": new_size, "unit": new_unit, "product_id": product_id}})
     rate_val = data.rate or 0.0
     _save_local_rate(new_name, rate_val)
     if data.high_value_goods is not None:
@@ -6662,35 +6677,32 @@ async def product_stats(product_id: str, user=Depends(get_current_user)):
     p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
-    name = norm_product_name(p["name"])
-    size = norm_str(p.get("size"))
-    
-    inward_query = {"company_id": cid, "product": name, "size": size}
-    outward_query = {"company_id": cid, "product": name, "size": size, "status": {"$nin": ["Pending", "Cancelled"]}}
+    items, _, _, _ = await _compute_inventory_balances(cid)
+    matched_p = next((item for item in items if item.get("id") == product_id), None)
+    if not matched_p:
+        name = norm_product_name(p["name"])
+        size = norm_str(p.get("size"))
+        matched_p = next((item for item in items if norm_product_name(item.get("name")) == name and norm_str(item.get("size")) == size), p)
 
-    in_count = await db.inward_entries.count_documents(inward_query)
-    out_count = await db.outward_entries.count_documents(outward_query)
+    op_stock = float(matched_p.get("opening_stock") or 0.0)
+    total_in = matched_p.get("total_in", 0.0)
+    total_out = matched_p.get("total_out", 0.0)
+    balance = matched_p.get("balance", 0.0)
 
-    in_agg = await db.inward_entries.aggregate([
-        {"$match": inward_query},
-        {"$group": {"_id": None, "qty": {"$sum": "$quantity"}, "last_date": {"$max": "$date"}}}
-    ]).to_list(1)
-    out_agg = await db.outward_entries.aggregate([
-        {"$match": outward_query},
-        {"$group": {"_id": None, "qty": {"$sum": "$quantity"}, "last_date": {"$max": "$date"}}}
-    ]).to_list(1)
-
-    op_stock = float(p.get("opening_stock") or 0.0)
-    total_in = round(float(in_agg[0]["qty"] if in_agg else 0.0), 2)
-    total_out = round(float(out_agg[0]["qty"] if out_agg else 0.0), 2)
-    balance = round(op_stock + total_in - total_out, 2)
+    # Fetch last dates
+    p_name = norm_product_name(matched_p.get("name"))
+    p_size = norm_str(matched_p.get("size"))
+    last_in_rows = await db.inward_entries.find({"company_id": cid, "product": p_name, "size": p_size}, {"_id": 0, "date": 1}).sort("date", -1).to_list(1)
+    last_out_rows = await db.outward_entries.find({"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled"]}, "product": p_name, "size": p_size}, {"_id": 0, "date": 1}).sort("date", -1).to_list(1)
+    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": p_name, "size": p_size})
+    out_count = await db.outward_entries.count_documents({"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled"]}, "product": p_name, "size": p_size})
 
     return {
-        "product": p,
+        "product": matched_p,
         "opening_stock": op_stock,
         "total_in": total_in, "total_out": total_out, "balance": balance,
-        "last_inward_date": (in_agg[0]["last_date"] if in_agg else None),
-        "last_outward_date": (out_agg[0]["last_date"] if out_agg else None),
+        "last_inward_date": (last_in_rows[0].get("date") if last_in_rows else None),
+        "last_outward_date": (last_out_rows[0].get("date") if last_out_rows else None),
         "transaction_count": in_count + out_count,
         "inward_count": in_count, "outward_count": out_count,
     }
