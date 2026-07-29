@@ -299,9 +299,11 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
   const getRowErrors = (row, allSelectedRows) => {
     const errs = [];
     if (!row.product?.trim()) errs.push("Product required");
-    if (!row.size?.trim()) errs.push("Size required");
+    // TEMPORARY RELAXATION strictly for High Value Manual Import:
+    // 1. Size is NOT mandatory (can be blank).
+    // 2. Quantity allows 0 (qty >= 0).
     const qty = Number(row.quantity);
-    if (isNaN(qty) || qty <= 0) errs.push("Quantity > 0 required");
+    if (isNaN(qty) || qty < 0) errs.push("Quantity >= 0 required");
 
     if (row.serial_number_required) {
       const serials = (row.serial_numbers || []).map(s => s.toUpperCase());
@@ -568,9 +570,9 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
                       <tr>
                         <th className="px-3 py-2 w-8">☑</th>
                         <th className="px-3 py-2">Product *</th>
-                        <th className="px-3 py-2">Size / Spec *</th>
+                        <th className="px-3 py-2">Size / Spec</th>
                         <th className="px-3 py-2">Brand / Make</th>
-                        <th className="px-3 py-2 w-20">Qty *</th>
+                        <th className="px-3 py-2 w-20">Qty</th>
                         <th className="px-3 py-2 w-24">Unit</th>
                         <th className="px-3 py-2">Vendor</th>
                         <th className="px-3 py-2">Bill No.</th>
@@ -596,15 +598,14 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
                                 {hasErr && rowErrs.includes("Product required") && <div className="text-[10px] text-red-600 mt-0.5">Product required</div>}
                               </td>
                               <td className="px-3 py-2 align-top min-w-[140px]">
-                                <Input value={row.size} onChange={(e) => updateCell(idx, "size", e.target.value)} className="h-8 text-xs" placeholder="e.g. 540W" />
-                                {hasErr && rowErrs.includes("Size required") && <div className="text-[10px] text-red-600 mt-0.5">Size required</div>}
+                                <Input value={row.size} onChange={(e) => updateCell(idx, "size", e.target.value)} className="h-8 text-xs" placeholder="e.g. 540W (Optional)" />
                               </td>
                               <td className="px-3 py-2 align-top min-w-[130px]">
                                 <Input value={row.brand} onChange={(e) => updateCell(idx, "brand", e.target.value)} className="h-8 text-xs" placeholder="e.g. Waaree" />
                               </td>
                               <td className="px-3 py-2 align-top">
-                                <Input type="number" min="1" value={row.quantity} onChange={(e) => updateCell(idx, "quantity", e.target.value)} className="h-8 text-xs w-20" />
-                                {hasErr && rowErrs.includes("Quantity > 0 required") && <div className="text-[10px] text-red-600 mt-0.5">Qty &gt; 0 required</div>}
+                                <Input type="number" min="0" value={row.quantity} onChange={(e) => updateCell(idx, "quantity", e.target.value)} className="h-8 text-xs w-20" />
+                                {hasErr && rowErrs.includes("Quantity >= 0 required") && <div className="text-[10px] text-red-600 mt-0.5">Qty &gt;= 0 required</div>}
                               </td>
                               <td className="px-3 py-2 align-top">
                                 <Select value={row.unit} onValueChange={(v) => updateCell(idx, "unit", v)}>
