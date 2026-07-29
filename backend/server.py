@@ -6691,6 +6691,7 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
     all_assets = _load_local_assets()
     hv_products = _load_local_high_value_products()
     
+    # 1. Pre-fetch all existing products for company in 1 single bulk query
     prod_cache: Dict[Tuple[str, str, str, str], Any] = {}
     existing_prods = await db.products.find({"company_id": cid}).to_list(10000)
     for p in (existing_prods or []):
@@ -6700,6 +6701,39 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
         if cid and pn_n:
             prod_cache[(cid, pn_n, ps_n, pu_n)] = p
 
+    # 2. Pre-pass: Resolve products & bulk update high_value_goods flag in 1 DB query
+    prod_ids_to_hv = set()
+    for r in data.rows:
+        pn = (r.product or "").strip().upper()
+        if not pn:
+            continue
+        ps = (r.size or "").strip()
+        pu = (r.unit or gd.get("unit") or "Nos").strip()
+        brand_val = (getattr(r, 'brand', None) or r.source_name or gd.get("vendor") or gd.get("source_name") or "Unknown").strip()
+
+        _save_local_high_value_product(pn, True)
+        hv_products[pn] = True
+
+        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
+        if cache_key not in prod_cache:
+            prod_doc = await ensure_product(cid, pn, size=ps, unit=pu, brand=brand_val)
+            prod_cache[cache_key] = prod_doc
+        else:
+            prod_doc = prod_cache[cache_key]
+
+        if prod_doc and prod_doc.get("id"):
+            prod_ids_to_hv.add(prod_doc["id"])
+
+    if prod_ids_to_hv:
+        try:
+            await db.products.update_many(
+                {"id": {"$in": list(prod_ids_to_hv)}, "company_id": cid},
+                {"$set": {"high_value_goods": True, "high_value_asset": True}}
+            )
+        except Exception:
+            pass
+
+    # 3. Build documents in-memory with ZERO database queries inside loop
     for r in data.rows:
         pn = (r.product or "").strip().upper()
         if not pn:
@@ -6718,27 +6752,6 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
         bill_num = r.bill_number or r.reference_number or gd.get("bill_number", "")
         date_val = r.date or gd.get("date", "") or now_iso()
         remarks_val = r.remarks or gd.get("remarks", "")
-
-        # Always force High Value Goods flag
-        _save_local_high_value_product(pn, True)
-        hv_products[pn] = True
-
-        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
-        if cache_key not in prod_cache:
-            prod_doc = await ensure_product(cid, pn, size=ps, unit=pu, brand=brand_val)
-            prod_cache[cache_key] = prod_doc
-        else:
-            prod_doc = prod_cache[cache_key]
-        
-        # Ensure high_value_goods flag is saved on product doc
-        if prod_doc and prod_doc.get("id"):
-            try:
-                await db.products.update_one(
-                    {"id": prod_doc["id"], "company_id": cid},
-                    {"$set": {"high_value_goods": True, "high_value_asset": True}}
-                )
-            except Exception:
-                pass
 
         entry_id = str(uuid.uuid4())
         doc = {
@@ -6810,6 +6823,7 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
                 "created_at": now_iso()
             })
 
+    # 4. Bulk DB Insertion (1 single DB query)
     if docs_to_insert:
         await db.inward_entries.insert_many(docs_to_insert)
         if new_assets:
