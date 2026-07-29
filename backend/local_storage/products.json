@@ -1575,5 +1575,27 @@
     "min_stock": 0.0,
     "status": "Active",
     "created_at": "2026-07-29T08:35:51.801511+00:00"
+  },
+  {
+    "id": "57a9efb9-b59e-4404-a50e-da4c24b4eb0e",
+    "company_id": "test_co_del_501cfb33",
+    "name": "TEST_DEL_PANEL_AB3006",
+    "size": "450W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-07-29T08:59:28.929789+00:00"
+  },
+  {
+    "id": "9661d82e-60d9-4c58-a69e-3f1280dd0b31",
+    "company_id": "test_co_del_ef7ed952",
+    "name": "TEST_DEL_PANEL_F1F4BB",
+    "size": "450W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-07-29T08:59:49.882950+00:00"
   }
 ]

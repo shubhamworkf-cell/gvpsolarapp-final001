@@ -762,9 +762,10 @@ class CollectionAdapter:
                 return await LocalFileCollection(self.table_name).find_one(filter, projection)
             raise e
 
-        local_doc = await LocalFileCollection(self.table_name).find_one(filter, projection)
-        if local_doc:
-            return local_doc
+        if self.table_name != "products":
+            local_doc = await LocalFileCollection(self.table_name).find_one(filter, projection)
+            if local_doc:
+                return local_doc
         return None
 
     def find(self, filter=None, projection=None):
@@ -971,24 +972,28 @@ class CollectionAdapter:
             builder = supabase.table(self.table_name).delete()
             builder = self._apply_filters(builder, filter)
             res = builder.execute()
-            return DeleteResult(len(res.data) if res.data else 0)
         except Exception as e:
             err_str = str(e).lower()
             if "pgrst205" in err_str or "does not exist" in err_str or "schema cache" in err_str:
-                return DeleteResult(0)
-            raise e
+                pass
+            elif "42501" not in err_str and "unauthorized" not in err_str:
+                raise e
+        await LocalFileCollection(self.table_name).delete_one(filter)
+        return DeleteResult(1)
 
     async def delete_many(self, filter):
         try:
             builder = supabase.table(self.table_name).delete()
             builder = self._apply_filters(builder, filter)
             res = builder.execute()
-            return DeleteResult(len(res.data) if res.data else 0)
         except Exception as e:
             err_str = str(e).lower()
             if "pgrst205" in err_str or "does not exist" in err_str or "schema cache" in err_str:
-                return DeleteResult(0)
-            raise e
+                pass
+            elif "42501" not in err_str and "unauthorized" not in err_str:
+                raise e
+        await LocalFileCollection(self.table_name).delete_many(filter)
+        return DeleteResult(1)
 
     async def count_documents(self, filter=None):
         builder = supabase.table(self.table_name).select("*", count="exact")
@@ -4753,12 +4758,6 @@ async def sync_inventory_master(company_id: Optional[str] = None):
                     except Exception:
                         pass
                 spec_to_prods[key] = [primary]
-
-        # Auto-create missing
-        for key, h_data in history_specs.items():
-            cid, pn, ps, pu = key
-            if key not in spec_to_prods or len(spec_to_prods[key]) == 0:
-                await ensure_product(cid, pn, size=ps, unit=pu, category=h_data.get("category"), brand=h_data.get("brand"))
     except Exception as e:
         logger.warning(f"sync_inventory_master error: {e}")
 
@@ -5029,21 +5028,6 @@ async def _compute_inventory_balances(cid: str):
         qty = float(oe.get("quantity") or 0.0)
         pk = _resolve_product(oe)
         out_map[pk] = out_map.get(pk, 0.0) + qty
-
-    # Auto-heal: Ensure any product present in transactions exists in Product Master
-    all_trans_keys = set(in_map.keys()) | set(out_map.keys())
-    existing_keys = set(prod_key_map.keys())
-    missing = all_trans_keys - existing_keys
-
-    for m_name, m_size in missing:
-        if m_name:
-            try:
-                new_prod = await ensure_product(cid, m_name, size=m_size)
-                if new_prod and isinstance(new_prod, dict):
-                    if not any(it.get("id") == new_prod.get("id") for it in items):
-                        items.append(new_prod)
-            except Exception as e:
-                logger.warning(f"Auto-heal product creation failed for {m_name}: {e}")
 
     local_rates = _load_local_rates()
     local_high_values = _load_local_high_value_products()
