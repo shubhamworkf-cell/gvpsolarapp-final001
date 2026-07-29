@@ -5056,6 +5056,234 @@ async def list_products(user=Depends(get_current_user)):
     items.sort(key=lambda p: (0 if _is_hv_prod(p) else 1, p["name"], p.get("size") or ""))
     _PRODUCTS_CACHE[cid] = (now, items)
     return items
+
+@api_router.get("/inventory/high-value-ledger")
+async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_current_user)):
+    cid = user["company_id"]
+    search_term = (search or "").strip().lower()
+    
+    local_hv = _load_local_high_value_products()
+    all_products = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(10000)
+    
+    hv_product_docs = []
+    hv_keys = set()
+    hv_names = set()
+    
+    for p in (all_products or []):
+        pn = (p.get("name") or "").strip()
+        pn_norm = norm_product_name(pn)
+        ps = (p.get("size") or "").strip()
+        ps_norm = norm_str(ps)
+        
+        is_hv = (
+            local_hv.get(pn_norm, False) is True or
+            bool(p.get("high_value_goods")) or
+            bool(p.get("high_value_asset"))
+        )
+        if is_hv and pn_norm:
+            if search_term and search_term not in pn.lower() and search_term not in ps.lower():
+                continue
+            hv_product_docs.append(p)
+            hv_keys.add((pn_norm, ps_norm))
+            hv_names.add(pn_norm)
+
+    in_agg = await db.inward_entries.aggregate([
+        {"$match": {"company_id": cid}},
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+    ]).to_list(10000)
+    
+    out_agg = await db.outward_entries.aggregate([
+        {"$match": {"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}},
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+    ]).to_list(10000)
+    
+    ret_agg = await db.inward_entries.aggregate([
+        {"$match": {"company_id": cid, "$or": [{"source_type": "Return From Client"}, {"source": "client-return"}]}},
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+    ]).to_list(10000)
+
+    in_map: Dict[Tuple[str, str], float] = {}
+    for x in in_agg:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
+        else:
+            p_k = (norm_product_name(str(_id)), "")
+        in_map[p_k] = in_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
+
+    out_map: Dict[Tuple[str, str], float] = {}
+    for x in out_agg:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
+        else:
+            p_k = (norm_product_name(str(_id)), "")
+        out_map[p_k] = out_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
+
+    ret_map: Dict[Tuple[str, str], float] = {}
+    for x in ret_agg:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
+        else:
+            p_k = (norm_product_name(str(_id)), "")
+        ret_map[p_k] = ret_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
+
+    all_inward_records = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
+    all_outward_records = await db.outward_entries.find({"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}, {"_id": 0}).sort("date", -1).to_list(10000)
+
+    last_movement_map = {}
+    last_inward_info = {}
+
+    for ie in all_inward_records:
+        pk = (norm_product_name(ie.get("product")), norm_str(ie.get("size")))
+        if pk not in last_inward_info:
+            last_inward_info[pk] = {
+                "date": ie.get("date") or "",
+                "vendor": ie.get("source_name") or ie.get("vendor") or "Supplier",
+                "challan": ie.get("reference_number") or ie.get("bill_number") or ""
+            }
+        if pk not in last_movement_map:
+            date_str = (ie.get("date") or "")[:10]
+            last_movement_map[pk] = f"Inward {date_str}" if date_str else "Inward"
+
+    for oe in all_outward_records:
+        pk = (norm_product_name(oe.get("product")), norm_str(oe.get("size")))
+        date_str = (oe.get("date") or "")[:10]
+        if pk not in last_movement_map or "Inward" in last_movement_map[pk]:
+            last_movement_map[pk] = f"Outward {date_str}" if date_str else "Outward"
+
+    all_goods = []
+    available = []
+
+    for p in hv_product_docs:
+        pn = p.get("name") or ""
+        pn_n = norm_product_name(pn)
+        ps = p.get("size") or ""
+        ps_n = norm_str(ps)
+        pk = (pn_n, ps_n)
+        
+        op_stock = float(p.get("opening_stock") or 0.0)
+        tot_in = round(float(in_map.get(pk, 0.0)), 2)
+        tot_out = round(float(out_map.get(pk, 0.0)), 2)
+        ret_qty = round(float(ret_map.get(pk, 0.0)), 2)
+        avail = round(op_stock + tot_in - tot_out, 2)
+        
+        last_mov = last_movement_map.get(pk, "No Movement")
+        in_info = last_inward_info.get(pk, {})
+        status = "Available" if avail > 0 else "Out of Stock"
+        
+        row_all = {
+            "id": p.get("id") or str(uuid.uuid4()),
+            "product": pn,
+            "size": ps,
+            "unit": p.get("unit") or "Nos",
+            "total_in": tot_in,
+            "total_out": tot_out,
+            "returned": ret_qty,
+            "available_qty": avail,
+            "last_movement": last_mov,
+            "status": status
+        }
+        all_goods.append(row_all)
+        
+        if avail > 0:
+            parts = [in_info.get("challan"), in_info.get("vendor")]
+            challan_vendor_str = " / ".join([str(p).strip() for p in parts if p and str(p).strip()])
+            row_avail = {
+                "id": p.get("id") or str(uuid.uuid4()),
+                "product": pn,
+                "size": ps,
+                "unit": p.get("unit") or "Nos",
+                "available_qty": avail,
+                "last_inward": (in_info.get("date") or "")[:10],
+                "challan_vendor": challan_vendor_str or "—",
+                "status": "Available"
+            }
+            available.append(row_avail)
+
+    client_map = {}
+    raw_clients = await db.clients.find({"company_id": cid}, {"_id": 0}).to_list(10000)
+    for c in (raw_clients or []):
+        if c.get("id"):
+            client_map[c["id"]] = c
+        if c.get("full_name"):
+            client_map[c["full_name"].strip().lower()] = c
+
+    dispatched = []
+    for oe in all_outward_records:
+        p_n = norm_product_name(oe.get("product"))
+        s_n = norm_str(oe.get("size"))
+        is_hv_out = (p_n, s_n) in hv_keys or p_n in hv_names or oe.get("high_value_goods") or oe.get("high_value_asset")
+        if not is_hv_out:
+            continue
+
+        if search_term and search_term not in (oe.get("product") or "").lower() and search_term not in (oe.get("size") or "").lower() and search_term not in (oe.get("client_name") or "").lower():
+            continue
+            
+        c_info = client_map.get(oe.get("client_id")) or client_map.get(str(oe.get("source_name") or "").strip().lower()) or {}
+        c_name = oe.get("client_name") or oe.get("source_name") or c_info.get("full_name") or "Direct Outward"
+        site_val = c_info.get("city") or c_info.get("address") or oe.get("site_name") or "—"
+        
+        req_by = oe.get("requested_by") or oe.get("issued_to") or oe.get("created_by_name") or "Inventory Admin"
+        ref_val = oe.get("reference_number") or oe.get("bill_number") or oe.get("remarks") or "Outward Entry"
+        
+        dispatched.append({
+            "id": oe.get("id") or str(uuid.uuid4()),
+            "date": (oe.get("date") or now_iso())[:10],
+            "product": oe.get("product") or "",
+            "size": oe.get("size") or "",
+            "quantity": float(oe.get("quantity") or 0.0),
+            "unit": oe.get("unit") or "Nos",
+            "challan_number": oe.get("reference_number") or oe.get("bill_number") or "—",
+            "client_name": c_name,
+            "site": site_val,
+            "requested_by": req_by,
+            "reference": ref_val,
+            "status": oe.get("status") or "Dispatched"
+        })
+
+    returned = []
+    for ie in all_inward_records:
+        src_t = str(ie.get("source_type") or "")
+        src = str(ie.get("source") or "")
+        if src_t != "Return From Client" and "client-return" not in src and "return" not in src_t.lower():
+            continue
+            
+        p_n = norm_product_name(ie.get("product"))
+        s_n = norm_str(ie.get("size"))
+        is_hv_ret = (p_n, s_n) in hv_keys or p_n in hv_names or ie.get("high_value_goods") or ie.get("high_value_asset")
+        if not is_hv_ret:
+            continue
+
+        if search_term and search_term not in (ie.get("product") or "").lower() and search_term not in (ie.get("size") or "").lower() and search_term not in (ie.get("source_name") or "").lower():
+            continue
+            
+        c_info = client_map.get(ie.get("client_id")) or client_map.get(str(ie.get("source_name") or "").strip().lower()) or {}
+        c_name = ie.get("source_name") or c_info.get("full_name") or "Client"
+        site_val = c_info.get("city") or c_info.get("address") or "—"
+        
+        returned.append({
+            "id": ie.get("id") or str(uuid.uuid4()),
+            "return_date": (ie.get("date") or now_iso())[:10],
+            "product": ie.get("product") or "",
+            "size": ie.get("size") or "",
+            "quantity": float(ie.get("quantity") or 0.0),
+            "unit": ie.get("unit") or "Nos",
+            "client_name": c_name,
+            "site": site_val,
+            "original_challan": ie.get("reference_number") or ie.get("bill_number") or "—",
+            "return_reason": ie.get("remarks") or "Material Returned From Client",
+            "status": "Returned"
+        })
+
+    return {
+        "all_goods": all_goods,
+        "available": available,
+        "dispatched": dispatched,
+        "returned": returned
+    }
+
 @api_router.get("/inventory/available-serials")
 async def get_available_serials(product: Optional[str] = None, size: Optional[str] = None, user=Depends(get_current_user)):
     cid = user["company_id"]
@@ -5569,6 +5797,7 @@ async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: st
         _save_local_assets(all_assets)
         
     await log_activity(company_id, user_id, user_name, "Outward Entry", f"{pn} × {data.quantity}")
+    invalidate_products_cache(company_id)
     return doc
 
 @api_router.post("/inventory/inward")

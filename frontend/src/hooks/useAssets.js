@@ -1,7 +1,22 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 
-const STALE_TIME = 5 * 60 * 1000;
+export function useHighValueLedger(search = "") {
+  const query = useQuery({
+    queryKey: ["high-value-ledger", search],
+    queryFn: async () => {
+      const { data } = await api.get("/inventory/high-value-ledger", { params: { search } });
+      return data || { all_goods: [], available: [], dispatched: [], returned: [] };
+    },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
+
+  return {
+    ...query,
+    data: query.data || { all_goods: [], available: [], dispatched: [], returned: [] },
+  };
+}
 
 export function useAssetList(filters = {}) {
   const query = useQuery({
@@ -10,7 +25,7 @@ export function useAssetList(filters = {}) {
       const { data } = await api.get("/assets", { params: filters });
       return Array.isArray(data) ? data : [];
     },
-    staleTime: STALE_TIME,
+    staleTime: 0,
   });
 
   return {
@@ -21,5 +36,9 @@ export function useAssetList(filters = {}) {
 
 export function useInvalidateAssets() {
   const queryClient = useQueryClient();
-  return () => queryClient.invalidateQueries({ queryKey: ["high-value-assets"] });
+  return () => {
+    queryClient.invalidateQueries({ queryKey: ["high-value-ledger"] });
+    queryClient.invalidateQueries({ queryKey: ["high-value-assets"] });
+    queryClient.invalidateQueries({ queryKey: ["inventory"] });
+  };
 }
