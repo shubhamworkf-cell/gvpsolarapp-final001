@@ -172,14 +172,21 @@ async def _record_workflow_details(task: dict, user: dict):
         project_id = proj.get("id") or project_id
 
     # Form details object
+    photos = submission.get("photos") or submission.get("attachments") or {}
     details = {
         "completed_by": user.get("name") or "",
         "completed_by_id": user.get("id") or "",
+        "assigned_to_name": task.get("assigned_to_name") or user.get("name") or "",
         "assigned_by": task.get("assigned_by_name") or "",
+        "assigned_by_name": task.get("assigned_by_name") or "",
         "completed_date": submission.get("submitted_at") or now_iso(),
+        "submitted_at": submission.get("submitted_at") or now_iso(),
         "notes": submission.get("notes") or submission.get("remarks") or task.get("remarks") or "",
+        "gps": submission.get("gps") or "",
+        "manual_location": submission.get("manual_location") or "",
         "checklist": submission.get("checklist") or [],
-        "attachments": submission.get("attachments") or submission.get("photos") or {},
+        "photos": photos,
+        "attachments": photos,
         "task_status": "completed",
     }
 
@@ -7209,7 +7216,61 @@ async def get_client_data_detail(
     if tab in ("all", "tickets"):
         coros["tickets"] = db.service_tickets.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
     if tab in ("all", "survey"):
-        coros["surveys"] = db.surveys.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+        async def get_client_surveys():
+            raw_surveys = await db.surveys.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+            completed_tasks = await db.tasks.find({
+                "company_id": cid,
+                "client_id": client_id,
+                "task_type": "Survey",
+                "status": "completed"
+            }, {"_id": 0}).to_list(100)
+            
+            existing_task_ids = {s.get("task_id") for s in raw_surveys if s.get("task_id")}
+            for t in completed_tasks:
+                if t.get("id") not in existing_task_ids:
+                    sub = t.get("submission") or {}
+                    photos = sub.get("photos") or sub.get("attachments") or {}
+                    doc = {
+                        "id": str(uuid.uuid4()),
+                        "company_id": cid,
+                        "client_id": client_id,
+                        "project_id": client_id,
+                        "task_id": t["id"],
+                        "employee_id": t.get("assigned_to"),
+                        "details": {
+                            "completed_by": t.get("assigned_to_name") or "",
+                            "completed_by_id": t.get("assigned_to") or "",
+                            "assigned_to_name": t.get("assigned_to_name") or "",
+                            "assigned_by": t.get("assigned_by_name") or "",
+                            "assigned_by_name": t.get("assigned_by_name") or "",
+                            "completed_date": sub.get("submitted_at") or t.get("updated_at") or now_iso(),
+                            "submitted_at": sub.get("submitted_at") or t.get("updated_at") or now_iso(),
+                            "notes": sub.get("notes") or sub.get("remarks") or t.get("remarks") or "",
+                            "gps": sub.get("gps") or "",
+                            "manual_location": sub.get("manual_location") or "",
+                            "checklist": sub.get("checklist") or [],
+                            "photos": photos,
+                            "attachments": photos,
+                            "task_status": "completed",
+                        },
+                        "created_at": t.get("created_at") or now_iso(),
+                        "updated_at": t.get("updated_at") or now_iso(),
+                    }
+                    raw_surveys.append(doc)
+                    try:
+                        await db.surveys.insert_one(doc)
+                    except Exception:
+                        pass
+
+            for s in raw_surveys:
+                d = s.get("details") or {}
+                photos = d.get("photos") or d.get("attachments") or {}
+                d["photos"] = photos
+                d["attachments"] = photos
+                s["details"] = d
+            return raw_surveys
+
+        coros["surveys"] = get_client_surveys()
     if tab in ("all", "material"):
         coros["material_deliveries"] = db.material_deliveries.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
     if tab in ("all", "documents"):

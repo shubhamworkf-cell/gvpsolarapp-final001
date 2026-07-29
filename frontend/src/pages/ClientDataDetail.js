@@ -1104,11 +1104,26 @@ function SurveyDetailsSection({ surveys, onZoom }) {
     );
   }
 
-  const s = surveys[selectedIdx];
-  const details = s.details || {};
-  const checklist = details.checklist || [];
-  const photos = details.photos || {};
-  const photoEntries = Object.entries(photos);
+  const s = surveys[selectedIdx] || {};
+  const details = s.details || s.submission || {};
+  const checklist = details.checklist || s.submission?.checklist || [];
+  
+  // Combine all possible photo sources so no survey photo is ever missed
+  const rawPhotos = {
+    ...(s.submission?.photos || {}),
+    ...(s.submission?.attachments || {}),
+    ...(s.details?.attachments || {}),
+    ...(s.details?.photos || {}),
+    ...(s.attachments || {}),
+    ...(s.photos || {}),
+  };
+  
+  const photoEntries = Object.entries(rawPhotos).filter(([_, val]) => {
+    if (!val) return false;
+    if (typeof val === "string") return val.trim().length > 0;
+    if (typeof val === "object") return Boolean(val.file_id || val.id || val.url);
+    return false;
+  });
 
   return (
     <div className="space-y-4">
