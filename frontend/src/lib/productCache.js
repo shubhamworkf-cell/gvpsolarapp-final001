@@ -69,6 +69,41 @@ export function invalidateFrontendProductCache() {
   try {
     sessionStorage.removeItem("gvp_products_cache_v1");
   } catch (e) {}
+  if (typeof searchCache !== "undefined" && searchCache?.clear) {
+    searchCache.clear();
+  }
 }
 
-// Removed search cache functions to ensure single source of truth for products
+// ─────────────────────────────────────────────────────────────────────────────
+// SEARCH CACHE SAFE IMPLEMENTATION (Prevents ReferenceError: searchCache is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+export const searchCache = {
+  _store: new Map(),
+  get(key) {
+    return this._store.get(key) || null;
+  },
+  set(key, val) {
+    this._store.set(key, val);
+  },
+  has(key) {
+    return this._store.has(key);
+  },
+  delete(key) {
+    return this._store.delete(key);
+  },
+  clear() {
+    this._store.clear();
+  },
+  invalidate() {
+    this.clear();
+  }
+};
+
+export function invalidateSearchCache() {
+  searchCache.clear();
+}
+
+if (typeof window !== "undefined") {
+  window.searchCache = searchCache;
+  window.invalidateSearchCache = invalidateSearchCache;
+}

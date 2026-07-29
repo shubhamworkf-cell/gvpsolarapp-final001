@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import "@/index.css";
+import "@/lib/productCache";
 import App from "@/App";
 
 const queryClient = new QueryClient({

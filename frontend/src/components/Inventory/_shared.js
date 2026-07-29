@@ -92,7 +92,7 @@ export function applyDefaults(target, defaults, alwaysKeep = []) {
   return out;
 }
 
-export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required, inputRef }) {
+export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required, inputRef, highValueOnly = false }) {
   const { data: hookProducts = [] } = useProductList();
   const [open, setOpen] = useState(false);
   const [inputVal, setInputVal] = useState(value || "");
@@ -220,28 +220,32 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
             ))
           )}
 
-          <div className="border-t border-slate-100 my-1"></div>
+          {!highValueOnly && (
+            <>
+              <div className="border-t border-slate-100 my-1"></div>
 
-          <div className="px-2.5 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
-            <span>OTHER PRODUCTS (A-Z)</span>
-            {filteredOther.length > 100 && <span className="text-[9px] text-slate-400 font-normal">Showing 100 of {filteredOther.length}</span>}
-          </div>
-          {displayedOther.length === 0 ? (
-            <div className="px-4 py-1.5 text-slate-400 italic">No other products found</div>
-          ) : (
-            displayedOther.map((p) => (
-              <button
-                key={p.id || `${p.name}-${p.size}`}
-                type="button"
-                className="w-full text-left px-4 py-1.5 hover:bg-slate-100 text-slate-700 transition-colors"
-                onClick={() => handleSelect(p)}
-              >
-                <div className="flex flex-col">
-                  <span>{p.name}</span>
-                  {p.size && <span className="text-[10px] text-slate-400 font-normal mt-0.5">{p.size}</span>}
-                </div>
-              </button>
-            ))
+              <div className="px-2.5 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
+                <span>OTHER PRODUCTS (A-Z)</span>
+                {filteredOther.length > 100 && <span className="text-[9px] text-slate-400 font-normal">Showing 100 of {filteredOther.length}</span>}
+              </div>
+              {displayedOther.length === 0 ? (
+                <div className="px-4 py-1.5 text-slate-400 italic">No other products found</div>
+              ) : (
+                displayedOther.map((p) => (
+                  <button
+                    key={p.id || `${p.name}-${p.size}`}
+                    type="button"
+                    className="w-full text-left px-4 py-1.5 hover:bg-slate-100 text-slate-700 transition-colors"
+                    onClick={() => handleSelect(p)}
+                  >
+                    <div className="flex flex-col">
+                      <span>{p.name}</span>
+                      {p.size && <span className="text-[10px] text-slate-400 font-normal mt-0.5">{p.size}</span>}
+                    </div>
+                  </button>
+                ))
+              )}
+            </>
           )}
         </div>
       )}

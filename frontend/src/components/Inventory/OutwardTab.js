@@ -346,24 +346,24 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                     let pName = "";
                     let sizeVal = form.size || "";
                     let unitVal = form.unit || "Nos";
-                    let isHighValue = false;
+                    let isHighValue = form.high_value_goods || false;
                     let isSerialRequired = false;
 
                     if (typeof v === "object" && v !== null) {
                       pName = (v.name || "").toUpperCase();
                       sizeVal = v.size || "";
                       unitVal = v.unit || "Nos";
-                      isHighValue = Boolean(v.high_value_goods || v.high_value_asset);
+                      isHighValue = Boolean(form.high_value_goods || v.high_value_goods || v.high_value_asset);
                       isSerialRequired = Boolean(v.serial_number_required);
                     } else {
-                      pName = v.toUpperCase();
+                      pName = String(v || "").toUpperCase();
                       const matched = (Array.isArray(products) ? products : []).find(p => (p.name || "").toUpperCase() === pName);
                       if (matched) {
-                        isHighValue = Boolean(matched.high_value_goods || matched.high_value_asset);
+                        isHighValue = Boolean(form.high_value_goods || matched.high_value_goods || matched.high_value_asset);
                         isSerialRequired = Boolean(matched.serial_number_required);
                         sizeVal = matched.size || "";
                         unitVal = matched.unit || "Nos";
-                      } else {
+                      } else if (!form.high_value_goods) {
                         const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
                         isHighValue = highValueKeywords.some(keyword => pName.includes(keyword));
                       }
@@ -381,6 +381,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                     }));
                   }}
                   products={products}
+                  highValueOnly={form.high_value_goods || false}
                   placeholder="e.g. WAAREE PANEL 540W"
                   testid="out-product"
                   required
@@ -394,27 +395,28 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
             </div>
 
             {/* High Value Goods Checkbox & Inside Sub-option */}
-            {form.high_value_goods && (
-              <div className="md:col-span-3 lg:col-span-4 flex flex-col gap-2 py-2 border-t border-slate-100 mt-2">
-                <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={form.high_value_goods || false}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setForm(prev => ({
-                        ...prev,
-                        high_value_goods: checked,
-                        high_value_asset: checked,
-                        serial_number_required: checked ? prev.serial_number_required : false
-                      }));
-                    }}
-                    className="w-4 h-4 accent-blue-600 rounded border-slate-300"
-                  />
-                  High Value Goods
-                </label>
+            <div className="md:col-span-3 lg:col-span-4 flex flex-col gap-2 py-2 border-t border-slate-100 mt-2">
+              <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={form.high_value_goods || false}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setForm(prev => ({
+                      ...prev,
+                      high_value_goods: checked,
+                      high_value_asset: checked,
+                      serial_number_required: checked ? prev.serial_number_required : false
+                    }));
+                  }}
+                  className="w-4 h-4 accent-blue-600 rounded border-slate-300"
+                  data-testid="out-hv-checkbox"
+                />
+                High Value Goods
+              </label>
 
-                {/* Sub-option inside High Value Goods (Default OFF) */}
+              {/* Sub-option inside High Value Goods (Default OFF) */}
+              {form.high_value_goods && (
                 <div className="ml-6 flex items-center gap-2 py-1 bg-slate-50 p-2 rounded-md border border-slate-200 w-fit">
                   <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
                     <input
@@ -430,8 +432,8 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                     Serial No. (ON / OFF)
                   </label>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             <TextareaField label="Remarks" value={form.remarks} onChange={(v) => setForm({ ...form, remarks: v })} testid="out-remarks" full />
 

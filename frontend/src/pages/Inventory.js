@@ -113,14 +113,16 @@ export default function Inventory() {
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
-        <TabsList className="bg-slate-100 p-1 sticky top-2 z-10 shadow-sm">
-          <TabsTrigger value="inward" data-testid="tab-inward"><ArrowDownToLine className="w-3.5 h-3.5 mr-1.5" /> Inward</TabsTrigger>
-          <TabsTrigger value="outward" data-testid="tab-outward"><ArrowUpFromLine className="w-3.5 h-3.5 mr-1.5" /> Outward</TabsTrigger>
-          <TabsTrigger value="products" data-testid="tab-products"><Boxes className="w-3.5 h-3.5 mr-1.5" /> Product Master</TabsTrigger>
-          <TabsTrigger value="balance" data-testid="tab-balance"><Activity className="w-3.5 h-3.5 mr-1.5" /> Balance Report</TabsTrigger>
-          <TabsTrigger value="history" data-testid="tab-history"><History className="w-3.5 h-3.5 mr-1.5" /> History</TabsTrigger>
-          <TabsTrigger value="high-value-goods" data-testid="tab-high-value-goods"><ClipboardList className="w-3.5 h-3.5 mr-1.5" /> High Value Goods</TabsTrigger>
-        </TabsList>
+        <div className="sticky top-2 z-10 w-full overflow-x-auto scrollbar-none touch-pan-x bg-slate-100/95 backdrop-blur rounded-lg p-1 shadow-sm border border-slate-200/60">
+          <TabsList className="bg-transparent p-0 h-auto w-max min-w-full flex items-center justify-start flex-nowrap gap-1">
+            <TabsTrigger value="inward" data-testid="tab-inward" className="shrink-0 whitespace-nowrap"><ArrowDownToLine className="w-3.5 h-3.5 mr-1.5" /> Inward</TabsTrigger>
+            <TabsTrigger value="outward" data-testid="tab-outward" className="shrink-0 whitespace-nowrap"><ArrowUpFromLine className="w-3.5 h-3.5 mr-1.5" /> Outward</TabsTrigger>
+            <TabsTrigger value="products" data-testid="tab-products" className="shrink-0 whitespace-nowrap"><Boxes className="w-3.5 h-3.5 mr-1.5" /> Product Master</TabsTrigger>
+            <TabsTrigger value="balance" data-testid="tab-balance" className="shrink-0 whitespace-nowrap"><Activity className="w-3.5 h-3.5 mr-1.5" /> Balance Report</TabsTrigger>
+            <TabsTrigger value="history" data-testid="tab-history" className="shrink-0 whitespace-nowrap"><History className="w-3.5 h-3.5 mr-1.5" /> History</TabsTrigger>
+            <TabsTrigger value="high-value-goods" data-testid="tab-high-value-goods" className="shrink-0 whitespace-nowrap"><ClipboardList className="w-3.5 h-3.5 mr-1.5" /> High Value Goods</TabsTrigger>
+          </TabsList>
+        </div>
 
         <div style={{ display: tab === "inward" ? "block" : "none" }}>
           {visitedTabs.has("inward") && <InwardTab products={products} defaults={defaults.inward || {}} onSaveDefaults={(d) => saveDefaults({ inward: d })} onChanged={bump} globalSearch={search} />}

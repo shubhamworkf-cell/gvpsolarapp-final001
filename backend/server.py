@@ -868,17 +868,27 @@ class CollectionAdapter:
             builder = self._apply_filters(builder, filter)
             res = builder.execute()
         except Exception as e:
-            if self.table_name == "products" and "rate" in patch:
+            if self.table_name == "products":
                 err_str = str(e)
-                if "PGRST204" in err_str or "rate" in err_str:
-                    logger.warning("Supabase table products does not have rate column. Disabling rate writes.")
-                    _PRODUCTS_HAS_RATE = False
-                    patch_copy = {k: v for k, v in patch.items() if k != "rate"}
+                if "PGRST204" in err_str or any(col in err_str.lower() for col in ["rate", "opening_stock", "high_value_goods", "serial_number_required"]):
+                    logger.warning(f"Supabase products table missing columns. Handling locally: {err_str}")
+                    p_name = patch.get("name") or (filter.get("name") if isinstance(filter, dict) else None)
+                    if p_name:
+                        if "high_value_goods" in patch:
+                            _save_local_high_value_product(p_name, bool(patch["high_value_goods"]))
+                        if "rate" in patch:
+                            _save_local_rate(p_name, patch["rate"])
+                    unsupported = {"high_value_goods", "serial_number_required", "opening_stock", "rate"}
+                    patch_copy = {k: v for k, v in patch.items() if k not in unsupported}
                     if not patch_copy:
                         return UpdateResult(1, 1)
-                    builder = supabase.table(self.table_name).update(patch_copy)
-                    builder = self._apply_filters(builder, filter)
-                    res = builder.execute()
+                    try:
+                        builder = supabase.table(self.table_name).update(patch_copy)
+                        builder = self._apply_filters(builder, filter)
+                        res = builder.execute()
+                    except Exception as sub_e:
+                        logger.warning(f"Fallback update for products: {sub_e}")
+                        return UpdateResult(1, 1)
                 else:
                     raise e
             else:
@@ -5012,7 +5022,12 @@ async def list_products(user=Depends(get_current_user)):
         p["balance"] = bal
 
         p["rate"] = local_rates.get(p_name, float(p.get("rate") or 0.0))
-        p["high_value_goods"] = local_high_values.get(p_name, False)
+        if p_name in local_high_values:
+            p["high_value_goods"] = bool(local_high_values[p_name])
+        else:
+            p["high_value_goods"] = bool(p.get("high_value_goods") or p.get("high_value_asset"))
+            if p["high_value_goods"]:
+                _save_local_high_value_product(p_name, True)
         mn = float(p.get("min_stock") or 0.0)
         if bal <= 0:
             p["stock_status"] = "Out Of Stock"
@@ -5946,6 +5961,82 @@ async def list_assets(
 ):
     cid = user["company_id"]
     all_assets = _load_local_assets()
+    hv_products = _load_local_high_value_products()
+    hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
+
+    # Reconcile missing assets for high value inward entries
+    try:
+        inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(10000)
+        existing_inward_ids = {a.get("inward_entry_id") for a in all_assets if a.get("inward_entry_id")}
+        assets_changed = False
+
+        for ie in inward_entries:
+            pn = norm_product_name(ie.get("product"))
+            is_hv = (
+                ie.get("high_value_asset") or 
+                ie.get("high_value_goods") or 
+                hv_products.get(pn, False) or 
+                any(kw in pn for kw in hv_keywords)
+            )
+            if is_hv and ie.get("id") not in existing_inward_ids:
+                qty = float(ie.get("quantity") or 1.0)
+                sns = [sn.strip().upper() for sn in (ie.get("serial_numbers") or []) if sn.strip()]
+                vendor_val = ie.get("source_name") or ""
+                date_val = (ie.get("date") or now_iso())[:10]
+                challan_val = ie.get("reference_number") or ""
+                size_val = ie.get("size") or ""
+
+                if sns:
+                    for sn in sns:
+                        asset_doc = {
+                            "id": str(uuid.uuid4()),
+                            "company_id": cid,
+                            "inward_entry_id": ie["id"],
+                            "product_name": pn,
+                            "brand": vendor_val or "Unknown",
+                            "size_model": size_val,
+                            "quantity": 1.0,
+                            "serial_number": sn,
+                            "vendor": vendor_val,
+                            "purchase_date": date_val,
+                            "challan_number": challan_val,
+                            "client_id": None,
+                            "client_name": None,
+                            "installation_date": None,
+                            "warranty_status": "Active",
+                            "status": "Available",
+                            "created_at": now_iso()
+                        }
+                        all_assets.append(asset_doc)
+                else:
+                    asset_doc = {
+                        "id": str(uuid.uuid4()),
+                        "company_id": cid,
+                        "inward_entry_id": ie["id"],
+                        "product_name": pn,
+                        "brand": vendor_val or "Unknown",
+                        "size_model": size_val,
+                        "quantity": qty,
+                        "serial_number": "",
+                        "vendor": vendor_val,
+                        "purchase_date": date_val,
+                        "challan_number": challan_val,
+                        "client_id": None,
+                        "client_name": None,
+                        "installation_date": None,
+                        "warranty_status": "Active",
+                        "status": "Available",
+                        "created_at": now_iso()
+                    }
+                    all_assets.append(asset_doc)
+                assets_changed = True
+                existing_inward_ids.add(ie["id"])
+
+        if assets_changed:
+            _save_local_assets(all_assets)
+    except Exception as e:
+        logger.warning(f"Error reconciling assets: {e}")
+
     filtered = [a for a in all_assets if a.get("company_id") == cid]
 
     if search:
