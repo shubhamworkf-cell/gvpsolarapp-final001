@@ -22,5 +22,29 @@
     "created_by": "u_test_123",
     "created_by_name": "Test Admin",
     "created_at": "2026-07-29T08:35:55.569243+00:00"
+  },
+  {
+    "id": "cd3e08c9-f3ab-4b47-b1d2-006c6cc58dc0",
+    "company_id": "test_co_hv_rec_d9d1393e",
+    "product": "TEST_HV_REC_PANEL_275BF1",
+    "size": "450W",
+    "quantity": 3.0,
+    "unit": "Nos",
+    "client_id": "c_test_rec_99",
+    "client_name": "BETA SOLAR SITE",
+    "project_id": "c_test_rec_99",
+    "project_name": "BETA SOLAR SITE",
+    "outward_challan_no": "CH-OUT-REC-55",
+    "reference_number": "CH-OUT-REC-55",
+    "reference_type": "Challan Number",
+    "date": "2026-07-29",
+    "remarks": "Dispatch for project site",
+    "status": "Dispatched",
+    "attachment_file_id": null,
+    "attachment_filename": "",
+    "source": "manual",
+    "created_by": "u_test_rec_1",
+    "created_by_name": "HV Rec Tester",
+    "created_at": "2026-07-29T09:22:55.845310+00:00"
   }
 ]

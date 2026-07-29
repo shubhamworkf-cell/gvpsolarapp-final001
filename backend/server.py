@@ -5137,6 +5137,16 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
     hv_names = set()
     hv_ids = set()
     
+    all_inward_records = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
+    all_outward_records = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
+
+    hv_inward_product_names = set()
+    for ie in all_inward_records:
+        if ie.get("source") in ["high-value-manual-import", "bulk-inward-high-value"] or ie.get("high_value_goods") or ie.get("high_value_asset"):
+            pn_n = norm_product_name(ie.get("product"))
+            if pn_n:
+                hv_inward_product_names.add(pn_n)
+
     for p in items:
         pn = (p.get("name") or "").strip()
         pn_norm = norm_product_name(pn)
@@ -5146,7 +5156,8 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
         is_hv = (
             local_hv.get(pn_norm, False) is True or
             bool(p.get("high_value_goods")) or
-            bool(p.get("high_value_asset"))
+            bool(p.get("high_value_asset")) or
+            pn_norm in hv_inward_product_names
         )
         if is_hv and pn_norm:
             if search_term and search_term not in pn.lower() and search_term not in ps.lower():
@@ -5163,13 +5174,15 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
             return True
         if bool(entry.get("high_value_goods")) or bool(entry.get("high_value_asset")):
             return True
+        if entry.get("source") in ["high-value-manual-import", "bulk-inward-high-value"]:
+            return True
+        pn_n = norm_product_name(entry.get("product"))
+        if local_hv.get(pn_n, False) is True or pn_n in hv_inward_product_names:
+            return True
         pk = _resolve_entry_product(entry)
         if pk in hv_keys or pk[0] in hv_names:
             return True
         return False
-
-    all_inward_records = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
-    all_outward_records = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
 
     last_movement_map = {}
     last_inward_info = {}
