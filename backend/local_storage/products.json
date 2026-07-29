@@ -1520,5 +1520,60 @@
     "status": "Active",
     "high_value_goods": true,
     "created_at": "2026-07-29T07:53:33.352962+00:00"
+  },
+  {
+    "id": "b225f87e-b6c7-4037-a5f6-5dcac4dde1b2",
+    "company_id": "test_co_hv_import_4a1b1031",
+    "name": "TEST_HV_PANEL_46549B",
+    "size": "450W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-07-29T08:34:02.102964+00:00"
+  },
+  {
+    "id": "1b60001d-5a16-44a7-a122-0b61a6a73cad",
+    "company_id": "test_co_hv_import_7ac1994a",
+    "name": "TEST_HV_PANEL_95AB69",
+    "size": "450W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-07-29T08:34:49.121085+00:00"
+  },
+  {
+    "id": "c533db12-0942-4149-abf0-d1974555af81",
+    "company_id": "test_co_hv_import_a80c7c78",
+    "name": "TEST_HV_PANEL_223EE8",
+    "size": "450W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-07-29T08:35:10.249776+00:00"
+  },
+  {
+    "id": "204fb9a4-c609-45c1-8946-0b044498ca21",
+    "company_id": "test_co_hv_import_694a9bea",
+    "name": "TEST_HV_PANEL_C90E68",
+    "size": "450W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-07-29T08:35:27.158460+00:00"
+  },
+  {
+    "id": "b73853a8-d0a4-4f9a-a848-cf98223c69eb",
+    "company_id": "test_co_hv_import_adf3026f",
+    "name": "TEST_HV_PANEL_4E0386",
+    "size": "450W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-07-29T08:35:51.801511+00:00"
   }
 ]

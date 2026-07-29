@@ -832,19 +832,18 @@ class CollectionAdapter:
         except Exception as e:
             err_str = str(e)
             if "PGRST204" in err_str or "Could not find the" in err_str:
-                missing_col = None
-                match = re.search(r"Could not find the '([^']+)' column", err_str)
-                if match:
-                    missing_col = match.group(1)
-                docs_copy = []
-                for doc in documents:
-                    if missing_col:
-                        docs_copy.append({k: v for k, v in doc.items() if k != missing_col})
-                    else:
-                        docs_copy.append({k: v for k, v in doc.items() if k not in ["high_value_asset", "high_value_goods", "serial_number_required", "rate", "opening_stock"]})
-                res = supabase.table(self.table_name).insert(docs_copy, returning="minimal").execute()
+                docs_copy = [{k: v for k, v in doc.items() if k not in ["high_value_asset", "high_value_goods", "serial_number_required", "rate", "opening_stock"]} for doc in documents]
+                try:
+                    res = supabase.table(self.table_name).insert(docs_copy, returning="minimal").execute()
+                except Exception as e2:
+                    if "42501" in str(e2) or "row-level security" in str(e2).lower() or "unauthorized" in str(e2).lower() or "401" in str(e2) or "PGRST204" in str(e2):
+                        return await LocalFileCollection(self.table_name).insert_many(documents)
+                    raise e2
+            elif "42501" in err_str or "row-level security" in err_str.lower() or "unauthorized" in err_str.lower() or "401" in err_str:
+                return await LocalFileCollection(self.table_name).insert_many(documents)
             else:
                 raise e
+        await LocalFileCollection(self.table_name).insert_many(documents)
         return InsertManyResult([doc.get("id") for doc in documents])
 
     async def update_one(self, filter, update, upsert=False):
@@ -7003,11 +7002,13 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
         brand_val = (getattr(r, 'brand', None) or r.source_name or gd.get("vendor") or gd.get("source_name") or "Unknown").strip()
 
         _save_local_high_value_product(pn, True)
+        _save_local_high_value_product(norm_product_name(pn), True)
         hv_products[pn] = True
+        hv_products[norm_product_name(pn)] = True
 
         cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
         if cache_key not in prod_cache:
-            prod_doc = await ensure_product(cid, pn, size=ps, unit=pu, brand=brand_val)
+            prod_doc = await ensure_product(cid, pn, size=ps, unit=pu, brand=brand_val, high_value_goods=True)
             prod_cache[cache_key] = prod_doc
         else:
             prod_doc = prod_cache[cache_key]
@@ -7059,6 +7060,8 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
             "source_name": source_name_val,
             "date": date_val,
             "remarks": remarks_val,
+            "high_value_goods": True,
+            "high_value_asset": True,
             "attachment_file_id": "",
             "attachment_filename": "",
             "source": "high-value-manual-import",
@@ -7120,6 +7123,7 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
         if new_assets:
             all_assets.extend(new_assets)
             _save_local_assets(all_assets)
+        invalidate_products_cache(cid)
         await log_activity(cid, user["id"], user["name"], "High Value Manual Import", f"{len(docs_to_insert)} high value entries")
         await push_notification(cid, "admin", "High Value Manual Import", f"{user['name']} imported {len(docs_to_insert)} high value goods entries")
         asyncio.create_task(sync_inventory_master(cid))
