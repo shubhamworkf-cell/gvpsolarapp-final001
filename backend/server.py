@@ -6834,8 +6834,11 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
     all_assets = _load_local_assets()
     hv_products = _load_local_high_value_products()
     
-    # 1. Pre-fetch existing products for company in 1 single query
-    existing_prods = await db.products.find({"company_id": cid}).to_list(10000)
+    # 1. Pre-fetch existing products and clients for company in bulk
+    existing_prods, existing_clients = await asyncio.gather(
+        db.products.find({"company_id": cid}).to_list(10000),
+        db.clients.find({"company_id": cid}, {"_id": 0, "id": 1, "full_name": 1}).to_list(10000)
+    )
     for p in (existing_prods or []):
         pn_n = norm_product_name(p.get("name"))
         ps_n = norm_str(p.get("size"))
@@ -6843,7 +6846,42 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
         if cid and pn_n:
             prod_cache[(cid, pn_n, ps_n, pu_n)] = p
 
-    # 2. Build documents and ensure products as needed
+    client_map = {}
+    for c in (existing_clients or []):
+        if c.get("full_name"):
+            client_map[c["full_name"].strip().lower()] = c
+
+    # 2. Pre-pass: Resolve & bulk-insert missing products in 1 batch query
+    new_prods_to_insert = []
+    for r in data.rows:
+        pn = (r.product or "").strip().upper()
+        if not pn:
+            continue
+        ps = r.size or ""
+        pu = r.unit or gd.get("unit") or "Nos"
+        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
+        if cache_key not in prod_cache:
+            prod_doc = {
+                "id": str(uuid.uuid4()),
+                "company_id": cid,
+                "name": pn,
+                "size": ps,
+                "category": "Solar",
+                "unit": pu or "Nos",
+                "min_stock": 0.0,
+                "status": "Active",
+                "created_at": now_iso()
+            }
+            prod_cache[cache_key] = prod_doc
+            new_prods_to_insert.append(prod_doc)
+            
+    if new_prods_to_insert:
+        try:
+            await db.products.insert_many(new_prods_to_insert)
+        except Exception:
+            pass
+
+    # 3. Build documents in-memory
     for r in data.rows:
         pn = (r.product or "").strip().upper()
         if not pn:
@@ -6861,21 +6899,13 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
         ps = r.size or ""
         pu = r.unit or gd.get("unit") or "Nos"
         
-        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
-        if cache_key not in prod_cache:
-            prod_doc = await ensure_product(cid, pn, size=ps, unit=pu, brand=source_name_val)
-            prod_cache[cache_key] = prod_doc
-            
         # Client ID resolution from name case-insensitively for Return From Client
         if source_type_val == "Return From Client":
             if client_name_val and not client_id_val:
-                client = await db.clients.find_one({
-                    "company_id": cid,
-                    "full_name": {"$regex": f"^{re.escape(client_name_val)}$", "$options": "i"}
-                })
-                if client:
-                    client_id_val = client["id"]
-                    client_name_val = client["full_name"]
+                matched_c = client_map.get(client_name_val.strip().lower())
+                if matched_c:
+                    client_id_val = matched_c["id"]
+                    client_name_val = matched_c["full_name"]
             if client_name_val:
                 source_name_val = client_name_val
             if client_id_val:
@@ -6959,15 +6989,17 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
                     "created_at": now_iso()
                 })
 
-    # 3. Bulk DB Insertion (1 single DB query)
+    # 4. Bulk DB Insertion (1 single DB query)
     if docs_to_insert:
         await db.inward_entries.insert_many(docs_to_insert)
         if new_assets:
             all_assets.extend(new_assets)
             _save_local_assets(all_assets)
-        await log_activity(cid, user["id"], user["name"], "Bulk Inward Import", f"{len(docs_to_insert)} entries")
-        await push_notification(cid, "admin", "Bulk Inventory Import", f"{user['name']} imported {len(docs_to_insert)} inward entries via AI")
-        asyncio.create_task(sync_inventory_master(cid))
+        invalidate_products_cache(cid)
+        asyncio.create_task(log_activity(cid, user["id"], user["name"], "Bulk Inward Import", f"{len(docs_to_insert)} entries"))
+        asyncio.create_task(push_notification(cid, "admin", "Bulk Inventory Import", f"{user['name']} imported {len(docs_to_insert)} inward entries via AI"))
+        if new_prods_to_insert:
+            asyncio.create_task(sync_inventory_master(cid))
 
     return {"inserted": len(inserted_ids), "ids": inserted_ids}
 
