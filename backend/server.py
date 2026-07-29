@@ -5114,9 +5114,45 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
     items, in_map, out_map, ret_map = await _compute_inventory_balances(cid)
     local_hv = _load_local_high_value_products()
     
+    # Product Maps for resolution
+    prod_id_map: Dict[str, Dict] = {}
+    prod_key_map: Dict[Tuple[str, str], Dict] = {}
+    prod_name_map: Dict[str, List[Dict]] = {}
+
+    for p in items:
+        p_name = norm_product_name(p.get("name"))
+        p_size = norm_str(p.get("size"))
+        if p.get("id"):
+            prod_id_map[p["id"]] = p
+        if p_name:
+            key = (p_name, p_size)
+            prod_key_map[key] = p
+            prod_name_map.setdefault(p_name, []).append(p)
+
+    def _resolve_entry_product(entry: Dict[str, Any]) -> Tuple[str, str]:
+        pid = entry.get("product_id")
+        if pid and pid in prod_id_map:
+            target = prod_id_map[pid]
+            return (norm_product_name(target.get("name")), norm_str(target.get("size")))
+        
+        raw_pn = entry.get("product") or ""
+        raw_ps = entry.get("size") or ""
+        pn_n = norm_product_name(raw_pn)
+        ps_n = norm_str(raw_ps)
+        
+        if (pn_n, ps_n) in prod_key_map:
+            return (pn_n, ps_n)
+            
+        if pn_n in prod_name_map and len(prod_name_map[pn_n]) == 1:
+            target = prod_name_map[pn_n][0]
+            return (pn_n, norm_str(target.get("size")))
+
+        return (pn_n, ps_n)
+
     hv_product_docs = []
     hv_keys = set()
     hv_names = set()
+    hv_ids = set()
     
     for p in items:
         pn = (p.get("name") or "").strip()
@@ -5135,6 +5171,19 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
             hv_product_docs.append(p)
             hv_keys.add((pn_norm, ps_norm))
             hv_names.add(pn_norm)
+            if p.get("id"):
+                hv_ids.add(p["id"])
+
+    def _is_entry_high_value(entry: Dict[str, Any]) -> bool:
+        pid = entry.get("product_id")
+        if pid and pid in hv_ids:
+            return True
+        if bool(entry.get("high_value_goods")) or bool(entry.get("high_value_asset")):
+            return True
+        pk = _resolve_entry_product(entry)
+        if pk in hv_keys or pk[0] in hv_names:
+            return True
+        return False
 
     all_inward_records = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
     all_outward_records = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
@@ -5143,7 +5192,10 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
     last_inward_info = {}
 
     for ie in all_inward_records:
-        pk = (norm_product_name(ie.get("product")), norm_str(ie.get("size")))
+        st = str(ie.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+        pk = _resolve_entry_product(ie)
         if pk not in last_inward_info:
             last_inward_info[pk] = {
                 "date": ie.get("date") or "",
@@ -5158,7 +5210,7 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
         st = str(oe.get("status") or "").strip().lower()
         if st in ["cancelled", "draft_cancelled"]:
             continue
-        pk = (norm_product_name(oe.get("product")), norm_str(oe.get("size")))
+        pk = _resolve_entry_product(oe)
         date_str = (oe.get("date") or "")[:10]
         if pk not in last_movement_map or "Inward" in last_movement_map[pk]:
             last_movement_map[pk] = f"Outward {date_str}" if date_str else "Outward"
@@ -5225,10 +5277,7 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
         if st in ["cancelled", "draft_cancelled"]:
             continue
 
-        p_n = norm_product_name(oe.get("product"))
-        s_n = norm_str(oe.get("size"))
-        is_hv_out = (p_n, s_n) in hv_keys or p_n in hv_names or oe.get("high_value_goods") or oe.get("high_value_asset")
-        if not is_hv_out:
+        if not _is_entry_high_value(oe):
             continue
 
         if search_term and search_term not in (oe.get("product") or "").lower() and search_term not in (oe.get("size") or "").lower() and search_term not in (oe.get("client_name") or "").lower():
@@ -5258,15 +5307,16 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
 
     returned = []
     for ie in all_inward_records:
+        st = str(ie.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+
         src_t = str(ie.get("source_type") or "")
         src = str(ie.get("source") or "")
         if src_t != "Return From Client" and "client-return" not in src and "return" not in src_t.lower():
             continue
             
-        p_n = norm_product_name(ie.get("product"))
-        s_n = norm_str(ie.get("size"))
-        is_hv_ret = (p_n, s_n) in hv_keys or p_n in hv_names or ie.get("high_value_goods") or ie.get("high_value_asset")
-        if not is_hv_ret:
+        if not _is_entry_high_value(ie):
             continue
 
         if search_term and search_term not in (ie.get("product") or "").lower() and search_term not in (ie.get("size") or "").lower() and search_term not in (ie.get("source_name") or "").lower():
