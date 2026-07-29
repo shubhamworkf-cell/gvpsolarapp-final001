@@ -10,16 +10,16 @@ export function useProductList(filters = {}) {
   return useQuery({
     queryKey: queryKeys.inventory.products(filters),
     queryFn: async () => {
-      const res = await fetchProductsDeduplicated();
-      return Array.isArray(res) ? res : [];
+      const { data } = await api.get("/inventory/products");
+      const list = Array.isArray(data) ? data : [];
+      setCachedProducts(list);
+      return list;
     },
     initialData: () => {
       const cached = getCachedProducts();
-      // Only return as initialData if it's a real non-empty array
-      // so React Query knows to still fetch if cache is empty
       return (Array.isArray(cached) && cached.length > 0) ? cached : undefined;
     },
-    staleTime: STALE_TIME,
+    staleTime: 0,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnMount: true,

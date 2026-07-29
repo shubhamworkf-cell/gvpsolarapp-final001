@@ -35,11 +35,17 @@ export function setCachedProducts(products) {
  * Deduplicated, cached full-product fetcher.
  */
 export function fetchProductsDeduplicated(forceRefresh = false) {
-  if (!forceRefresh) {
-    const cached = getCachedProducts();
-    if (cached && cached.length > 0) {
-      return Promise.resolve(cached);
-    }
+  const cached = getCachedProducts();
+
+  if (!forceRefresh && cached && cached.length > 0 && !inFlightPromise) {
+    // Initiate background revalidation
+    api.get("/inventory/products")
+      .then(({ data }) => {
+        const list = Array.isArray(data) ? data : [];
+        setCachedProducts(list);
+      })
+      .catch(() => {});
+    return Promise.resolve(cached);
   }
 
   if (inFlightPromise) {
@@ -48,13 +54,16 @@ export function fetchProductsDeduplicated(forceRefresh = false) {
 
   inFlightPromise = api.get("/inventory/products")
     .then(({ data }) => {
-      const list = data || [];
+      const list = Array.isArray(data) ? data : [];
       setCachedProducts(list);
       inFlightPromise = null;
       return list;
     })
     .catch((err) => {
       inFlightPromise = null;
+      if (cached && cached.length > 0) {
+        return cached;
+      }
       throw err;
     });
 
