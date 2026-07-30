@@ -7212,53 +7212,136 @@ class BulkOutwardIn(BaseModel):
 async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
     if not has_perm(user, "data_management", "create"):
         raise HTTPException(status_code=403, detail="Missing permission: data_management.create")
-    """Insert validated outward rows. Auto-creates products. Returns count + ids."""
+    """Insert validated outward rows in bulk batch mode. Auto-creates products. Returns count + ids."""
     if not data.rows:
         raise HTTPException(status_code=400, detail="No rows provided")
     cid = user["company_id"]
-    inserted: List[str] = []
+    inserted_ids: List[str] = []
     gd = data.global_defaults or {}  # v2 global defaults
     g_client_id = gd.get("client_id", "")
     g_client_name = gd.get("client_name", "")
+    prod_cache: Dict[Tuple[str, str, str, str], Any] = {}
+    docs_to_insert = []
+
+    # 1. Pre-fetch existing products and clients for company in bulk
+    existing_prods, existing_clients = await asyncio.gather(
+        db.products.find({"company_id": cid}).to_list(10000),
+        db.clients.find({"company_id": cid}, {"_id": 0, "id": 1, "full_name": 1}).to_list(10000)
+    )
+    for p in (existing_prods or []):
+        pn_n = norm_product_name(p.get("name"))
+        ps_n = norm_str(p.get("size"))
+        pu_n = norm_unit(p.get("unit"))
+        if cid and pn_n:
+            prod_cache[(cid, pn_n, ps_n, pu_n)] = p
+
+    client_map = {}
+    for c in (existing_clients or []):
+        if c.get("full_name"):
+            client_map[c["full_name"].strip().lower()] = c
+
+    # 2. Pre-pass: Resolve & bulk-insert missing products in 1 batch query
+    new_prods_to_insert = []
     for r in data.rows:
         pn = (r.product or "").strip().upper()
         if not pn or r.quantity <= 0:
             continue
-            
+        ps = r.size or ""
+        pu = r.unit or gd.get("unit") or "Nos"
+        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
+        if cache_key not in prod_cache:
+            prod_doc = {
+                "id": str(uuid.uuid4()),
+                "company_id": cid,
+                "name": pn,
+                "size": ps,
+                "category": "Solar",
+                "unit": pu or "Nos",
+                "min_stock": 0.0,
+                "status": "Active",
+                "created_at": now_iso()
+            }
+            prod_cache[cache_key] = prod_doc
+            new_prods_to_insert.append(prod_doc)
+
+    if new_prods_to_insert:
+        try:
+            await db.products.insert_many(new_prods_to_insert)
+        except Exception:
+            pass
+
+    # 3. Build documents in-memory
+    for r in data.rows:
+        pn = (r.product or "").strip().upper()
+        if not pn or r.quantity <= 0:
+            continue
+
+        client_id_val = r.client_id or g_client_id
+        client_name_val = r.client_name or g_client_name
+        project_id_val = r.project_id or gd.get("project_id", "")
+        project_name_val = r.project_name or gd.get("project_name", "") or client_name_val
+
+        if client_name_val and not client_id_val:
+            matched_c = client_map.get(client_name_val.strip().lower())
+            if matched_c:
+                client_id_val = matched_c["id"]
+                client_name_val = matched_c["full_name"]
+
+        if client_id_val:
+            if not project_id_val:
+                project_id_val = client_id_val
+            if not project_name_val:
+                project_name_val = client_name_val
+
         status_val = r.status or gd.get("status", "Dispatched")
         if status_val not in ["Pending", "Dispatched", "Cancelled"]:
             status_val = "Dispatched"
-            
-        outward_data = OutwardIn(
-            product=pn,
-            size=r.size or "",
-            quantity=r.quantity,
-            unit=r.unit or gd.get("unit") or "Nos",
-            client_id=r.client_id or g_client_id,
-            client_name=r.client_name or g_client_name,
-            project_id=r.project_id or gd.get("project_id", ""),
-            project_name=r.project_name or gd.get("project_name", "") or r.client_name or g_client_name,
-            outward_challan_no=r.outward_challan_no or gd.get("reference_number", ""),
-            reference_number=r.reference_number or r.outward_challan_no or gd.get("reference_number", ""),
-            reference_type=r.reference_type or gd.get("reference_type", "Challan Number"),
-            date=r.date or gd.get("date", "") or now_iso(),
-            remarks=r.remarks or gd.get("remarks", ""),
-            status=status_val,
-            high_value_asset=r.high_value_asset or False,
-            high_value_goods=r.high_value_goods or False,
-            serial_numbers=r.serial_numbers or [],
-            installation_notes=r.installation_notes or gd.get("installation_notes", ""),
-            warranty_start_date=r.warranty_start_date or gd.get("warranty_start_date", ""),
-            asset_remarks=r.asset_remarks or gd.get("asset_remarks", "")
-        )
-        
-        doc = await save_outward_entry_logic(outward_data, cid, user["id"], user["name"], source="ai-bulk-import", import_batch=data.batch_label or "")
-        inserted.append(str(doc["id"]))
 
-    await log_activity(cid, user["id"], user["name"], "Bulk Outward Import", f"{len(inserted)} entries")
-    await push_notification(cid, "admin", "Bulk Outward Import", f"{user['name']} imported {len(inserted)} outward entries via AI")
-    asyncio.create_task(sync_inventory_master(cid))
-    return {"inserted": len(inserted), "ids": inserted}
+        entry_id = str(uuid.uuid4())
+        ref_num = r.reference_number or r.outward_challan_no or gd.get("reference_number", "")
+        challan_no = r.outward_challan_no or ref_num
+        date_val = r.date or gd.get("date", "") or now_iso()
+
+        doc = {
+            "id": entry_id,
+            "company_id": cid,
+            "product": pn,
+            "size": r.size or "",
+            "quantity": r.quantity,
+            "unit": r.unit or gd.get("unit") or "Nos",
+            "client_id": client_id_val,
+            "client_name": client_name_val,
+            "project_id": project_id_val,
+            "project_name": project_name_val,
+            "outward_challan_no": numeric_only(challan_no),
+            "reference_number": numeric_only(ref_num),
+            "reference_type": r.reference_type or gd.get("reference_type", "Challan Number"),
+            "date": date_val,
+            "remarks": r.remarks or gd.get("remarks", ""),
+            "status": status_val,
+            "attachment_file_id": "",
+            "attachment_filename": "",
+            "source": "ai-bulk-import",
+            "created_by": user["id"],
+            "created_by_name": user["name"],
+            "created_at": now_iso()
+        }
+        if data.batch_label:
+            doc["import_batch"] = data.batch_label
+
+        docs_to_insert.append(doc)
+        inserted_ids.append(entry_id)
+
+    # 4. Bulk DB Insertion (1 single DB query)
+    if docs_to_insert:
+        await db.outward_entries.insert_many(docs_to_insert)
+        invalidate_products_cache(cid)
+        asyncio.create_task(log_activity(cid, user["id"], user["name"], "Bulk Outward Import", f"{len(docs_to_insert)} entries"))
+        asyncio.create_task(push_notification(cid, "admin", "Bulk Outward Import", f"{user['name']} imported {len(docs_to_insert)} outward entries via AI"))
+        if new_prods_to_insert:
+            asyncio.create_task(sync_inventory_master(cid))
+
+    return {"inserted": len(inserted_ids), "ids": inserted_ids}
 
 
 # ============== Sprint 4: Client Data & Asset Management ==============
