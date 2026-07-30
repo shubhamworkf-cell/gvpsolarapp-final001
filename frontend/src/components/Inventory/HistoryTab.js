@@ -43,35 +43,41 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
   const [confirmBulk, setConfirmBulk] = useState(false);
   const [editing, setEditing] = useState(null);
 
-  // Debounced filters to avoid continuous requests
-  const [debouncedParams, setDebouncedParams] = useState({ page, page_size: pageSize });
-
-  const activeParams = useMemo(() => {
-    const p = { page, page_size: pageSize };
-    Object.entries(filters).forEach(([k, v]) => { if (v && v !== "all") p[k] = v; });
-    if (globalSearch) p.search = globalSearch;
-    return p;
-  }, [filters, globalSearch, page, pageSize]);
+  // Debounce text inputs only (search, product, vendor, client, etc.)
+  const [debouncedFilters, setDebouncedFilters] = useState(filters);
+  const [debouncedSearch, setDebouncedSearch] = useState(globalSearch);
 
   useEffect(() => {
     const t = setTimeout(() => {
-      setDebouncedParams(activeParams);
+      setDebouncedFilters(filters);
+      setDebouncedSearch(globalSearch);
     }, 250);
     return () => clearTimeout(t);
-  }, [activeParams]);
+  }, [filters, globalSearch]);
 
-  const { data = { rows: [], total: 0, page: 1, pages: 1, page_size: 50 }, isLoading: historyLoading } = useInventoryHistory(debouncedParams);
+  const activeParams = useMemo(() => {
+    const p = { page, page_size: pageSize };
+    Object.entries(debouncedFilters).forEach(([k, v]) => {
+      if (v && v !== "all") p[k] = v;
+    });
+    if (debouncedSearch) p.search = debouncedSearch;
+    return p;
+  }, [debouncedFilters, debouncedSearch, page, pageSize]);
+
+  const { data = { rows: [], total: 0, page: 1, pages: 1, page_size: 50 }, isLoading: historyLoading, isFetching: historyFetching } = useInventoryHistory(activeParams);
   const { data: employees = [], isLoading: employeesLoading } = useEmployeeList();
   const totalPages = Math.max(1, Math.ceil((data?.total || 0) / (pageSize || 50)));
 
-  const loading = historyLoading || employeesLoading;
+  const loading = historyLoading || historyFetching || employeesLoading;
   const invalidateHistory = useInvalidateInventoryHistory();
 
   useEffect(() => {
     setSelected(new Set());
-  }, [debouncedParams]);
+  }, [activeParams]);
 
-  useEffect(() => { setPage(1); }, [filters, globalSearch]);
+  useEffect(() => {
+    setPage(1);
+  }, [filters, globalSearch]);
 
   const exportCsv = async () => {
     try {
@@ -200,8 +206,23 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
             <datalist id="hist-product-list">{(products || []).map((p) => <option key={p.id} value={p.name} />)}</datalist>
             <Input placeholder="Vendor" value={filters.vendor} onChange={(e) => setFilters({ ...filters, vendor: e.target.value })} className="w-32" data-testid="hist-vendor" />
             <Input placeholder="Client" value={filters.client} onChange={(e) => setFilters({ ...filters, client: e.target.value })} className="w-32" data-testid="hist-client" />
-            <Input type="date" value={filters.from_date} onChange={(e) => setFilters({ ...filters, from_date: e.target.value })} className="w-36" data-testid="hist-from" />
-            <Input type="date" value={filters.to_date} onChange={(e) => setFilters({ ...filters, to_date: e.target.value })} className="w-36" data-testid="hist-to" />
+            <div className="flex items-center gap-1">
+              <Input type="date" value={filters.from_date} onChange={(e) => setFilters({ ...filters, from_date: e.target.value })} className="w-36" data-testid="hist-from" />
+              <span className="text-slate-400 text-xs">–</span>
+              <Input type="date" value={filters.to_date} onChange={(e) => setFilters({ ...filters, to_date: e.target.value })} className="w-36" data-testid="hist-to" />
+              {(filters.from_date || filters.to_date) && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-slate-400 hover:text-red-600"
+                  onClick={() => { setFilters({ ...filters, from_date: "", to_date: "" }); setPage(1); }}
+                  title="Clear date filter"
+                  data-testid="hist-clear-dates"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              )}
+            </div>
             <Button variant="outline" size="sm" onClick={() => setShowFilters((s) => !s)} data-testid="hist-more-filters">
               <Filter className="w-3.5 h-3.5 mr-1" /> {showFilters ? "Less" : "More"}
             </Button>
