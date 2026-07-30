@@ -14,6 +14,7 @@ import HighValueBulkImport from "@/components/HighValueBulkImport";
 import { usePermission } from "@/lib/permissions";
 
 const ENABLE_HIGH_VALUE_MANUAL_IMPORT = false;
+const SHOW_TOP_BULK_IMPORT_BANNER = false;
 
 const CARRY_FORWARD_FIELDS = [
   { key: "date", label: "Date" },
@@ -188,37 +189,39 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
   return (
     <div className="space-y-4">
       {/* Quick Action Bar for Bulk Imports */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-slate-900 rounded-2xl text-white shadow-sm border border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400">
-            <ShieldCheck className="w-5 h-5" />
+      {SHOW_TOP_BULK_IMPORT_BANNER && (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-slate-900 rounded-2xl text-white shadow-sm border border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-sm font-bold tracking-tight text-white" style={{ fontFamily: "Outfit" }}>Inward Inventory Bulk Imports</div>
+              <div className="text-xs text-slate-300">Import standard materials or bulk High Value Goods directly</div>
+            </div>
           </div>
-          <div>
-            <div className="text-sm font-bold tracking-tight text-white" style={{ fontFamily: "Outfit" }}>Inward Inventory Bulk Imports</div>
-            <div className="text-xs text-slate-300">Import standard materials or bulk High Value Goods directly</div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button
-            size="sm"
-            className="bg-white text-slate-900 hover:bg-slate-100 font-semibold shadow-sm text-xs"
-            onClick={() => setManualOpen(true)}
-            data-testid="bar-manual-import-btn"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-slate-600" /> Manual Bulk Import
-          </Button>
-          {ENABLE_HIGH_VALUE_MANUAL_IMPORT && (
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               size="sm"
-              className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shadow-sm text-xs"
-              onClick={() => setHvManualOpen(true)}
-              data-testid="bar-hv-manual-import-btn"
+              className="bg-white text-slate-900 hover:bg-slate-100 font-semibold shadow-sm text-xs"
+              onClick={() => setManualOpen(true)}
+              data-testid="bar-manual-import-btn"
             >
-              <ShieldCheck className="w-3.5 h-3.5 mr-1.5 text-slate-950" /> High Value Manual Import
+              <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-slate-600" /> Manual Bulk Import
             </Button>
-          )}
+            {ENABLE_HIGH_VALUE_MANUAL_IMPORT && (
+              <Button
+                size="sm"
+                className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shadow-sm text-xs"
+                onClick={() => setHvManualOpen(true)}
+                data-testid="bar-hv-manual-import-btn"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 mr-1.5 text-slate-950" /> High Value Manual Import
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Quick Entry Form */}
       <Card className="border-slate-200">
