@@ -6598,9 +6598,10 @@ async def inv_history(
 
     rows.sort(key=lambda x: (x.get("date") or x.get("created_at") or ""), reverse=True)
     total = len(rows)
+    pages = max(1, math.ceil(total / page_size)) if page_size > 0 else 1
     start = (page - 1) * page_size
     paged = rows[start:start + page_size]
-    return {"items": paged, "total": total, "page": page, "page_size": page_size, "rows": paged}
+    return {"items": paged, "total": total, "page": page, "pages": pages, "page_size": page_size, "rows": paged}
 
 @api_router.get("/inventory/history.csv")
 async def inv_history_csv(

@@ -64,6 +64,7 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
 
   const { data = { rows: [], total: 0, page: 1, pages: 1, page_size: 50 }, isLoading: historyLoading, isFetching: historyFetching } = useInventoryHistory(activeParams);
   const { data: employees = [], isLoading: employeesLoading } = useEmployeeList();
+  const totalPages = Math.max(1, Math.ceil((data?.total || 0) / (pageSize || 50)));
 
   const loading = historyLoading || historyFetching || employeesLoading;
   const invalidateHistory = useInvalidateInventoryHistory();
@@ -172,11 +173,16 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
 
   const allPageSelected = data.rows.length > 0 && data.rows.every((r) => selected.has(`${r.type}:${r.id}`));
 
-  const clearFilters = () => setFilters({
-    type: "all", product: "", vendor: "", client: "",
-    challan: "", bill_number: "", user_id: "", status: "all",
-    from_date: "", to_date: "",
-  });
+  const clearFilters = () => {
+    const empty = {
+      type: "all", product: "", vendor: "", client: "",
+      challan: "", bill_number: "", user_id: "", status: "all",
+      from_date: "", to_date: "",
+    };
+    setFilters(empty);
+    setDebouncedFilters(empty);
+    setPage(1);
+  };
 
   const hasFilters = Object.values(filters).some((v) => v && v !== "all");
 
@@ -378,8 +384,8 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
                   </SelectContent>
                 </Select>
                 <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} data-testid="prev-page"><ChevronLeft className="w-4 h-4" /></Button>
-                <span className="font-medium tabular-nums text-slate-700">{page} / {data.pages}</span>
-                <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage((p) => Math.min(data.pages, p + 1))} disabled={page >= data.pages} data-testid="next-page"><ChevronRight className="w-4 h-4" /></Button>
+                <span className="font-medium tabular-nums text-slate-700">{page} / {totalPages}</span>
+                <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} data-testid="next-page"><ChevronRight className="w-4 h-4" /></Button>
               </div>
             </div>
           )}
