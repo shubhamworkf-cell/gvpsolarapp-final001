@@ -52,7 +52,8 @@ export function useInventoryHistory(params = {}) {
       const { data } = await api.get("/inventory/history", { params });
       return data || { rows: [], total: 0, page: 1, pages: 1, page_size: 50 };
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 0,
+    refetchOnMount: true,
   });
 }
 
