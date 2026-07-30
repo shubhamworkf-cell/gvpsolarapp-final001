@@ -404,6 +404,7 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
       setImportProgress(100);
       toast.success(`Successfully imported ${payloadRows.length} High Value Goods!`);
       setStep("done");
+      await new Promise((resolve) => setTimeout(resolve, 100));
       onImported?.();
     } catch (err) {
       toast.error("High Value Import failed: " + formatApiError(err));

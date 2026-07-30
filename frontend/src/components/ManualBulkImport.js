@@ -477,7 +477,9 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
   const invalidRowsCount = selectedRows.filter((row) => !isRowValid(row)).length;
 
   const handleFinalImport = async () => {
+    console.log("[IMPORT] submit started");
     const validRows = selectedRows.filter(isRowValid);
+    console.log("[IMPORT] validation complete, validRows count:", validRows.length);
     if (!validRows.length) {
       toast.error("Select at least one valid row to import.");
       return;
@@ -492,12 +494,16 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
     let importedCount = 0;
 
     try {
+      const totalBatches = Math.ceil(totalRows / CHUNK_SIZE);
       for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
         if (cancelImportRef.current) {
+          console.log("[IMPORT] cancelled by user");
           toast.warning("Import cancelled by user.");
           break;
         }
+        const batchNum = Math.floor(i / CHUNK_SIZE) + 1;
         const chunk = validRows.slice(i, i + CHUNK_SIZE);
+        console.log(`[IMPORT] sending batch ${batchNum}/${totalBatches} (${chunk.length} rows)`);
         await api.post(
           cfg.bulkEndpoint,
           {
@@ -508,23 +514,37 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
           { timeout: 120000 }
         );
         importedCount += chunk.length;
-        setImportProgress(Math.round((importedCount / totalRows) * 100));
+        const progressPct = Math.round((importedCount / totalRows) * 100);
+        console.log(`[IMPORT] batch ${batchNum} complete. Progress: ${progressPct}%`);
+        setImportProgress(progressPct);
         // Yield to the browser main thread to keep UI responsive
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
 
+      console.log("[IMPORT] all DB writes complete");
+      console.log("[IMPORT] progress 100");
+
       if (!cancelImportRef.current) {
+        console.log("[IMPORT] entering success handler");
         toast.success("Manual bulk import completed.");
+        console.log("[IMPORT] success state set: setStep('done')");
         setStep("done");
+        // Yield to browser main thread so React flushes setStep('done') to the DOM immediately
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        console.log("[IMPORT] starting post-import refresh (calling onImported)");
         onImported?.();
+        console.log("[IMPORT] post-import refresh complete");
       } else {
         setStep("review");
       }
     } catch (err) {
+      console.error("[IMPORT] Exception caught in handleFinalImport:", err);
       toast.error("Import failed: " + formatApiError(err));
       setStep("review");
     } finally {
+      console.log("[IMPORT] clearing loading state: setProcessing(false)");
       setProcessing(false);
+      console.log("[IMPORT] finally executed / function returned");
     }
   };
 

@@ -63,10 +63,12 @@ export default function Inventory() {
 
   // bump() invalidates inventory cache so all consumers (tabs) re-fetch
   const bump = useCallback(() => {
+    console.log("[IMPORT] Inventory bump() starting");
     invalidateInventory();
     queryClient.invalidateQueries({ queryKey: ["ledger"] });
     queryClient.invalidateQueries({ queryKey: ["high-value-assets"] });
     reload();
+    console.log("[IMPORT] Inventory bump() finished");
   }, [invalidateInventory, reload, queryClient]);
 
   const saveDefaults = async (patch) => {
