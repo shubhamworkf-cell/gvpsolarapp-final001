@@ -5038,14 +5038,14 @@ async def _compute_inventory_balances(cid: str):
         k = (p_name, p_size)
 
         op_stock = float(p.get("opening_stock") or 0.0)
-        tot_in = round(float(in_map.get(k, 0.0)), 2)
-        tot_out = round(float(out_map.get(k, 0.0)), 2)
+        tot_in = round(in_map.get(k, 0.0), 2)
+        tot_out = round(out_map.get(k, 0.0), 2)
         bal = round(op_stock + tot_in - tot_out, 2)
 
         p["opening_stock"] = op_stock
         p["total_in"] = tot_in
         p["total_out"] = tot_out
-        p["returned"] = round(float(ret_map.get(k, 0.0)), 2)
+        p["returned"] = round(ret_map.get(k, 0.0), 2)
         p["balance"] = bal
 
         p["rate"] = local_rates.get(p_name, float(p.get("rate") or 0.0))
