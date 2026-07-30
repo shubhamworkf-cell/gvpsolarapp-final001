@@ -286,7 +286,8 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
     } else {
       setProductsList(products);
     }
-  }, [open, products]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const matchProduct = (name) => {
     if (!name) return "empty";
