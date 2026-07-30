@@ -43,35 +43,33 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
   const [confirmBulk, setConfirmBulk] = useState(false);
   const [editing, setEditing] = useState(null);
 
-  // Debounced filters for search/input fields
-  const [debouncedFilters, setDebouncedFilters] = useState(filters);
-  const [debouncedSearch, setDebouncedSearch] = useState(globalSearch);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setDebouncedFilters(filters);
-      setDebouncedSearch(globalSearch);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [filters, globalSearch]);
+  // Debounced filters to avoid continuous requests
+  const [debouncedParams, setDebouncedParams] = useState({ page, page_size: pageSize });
 
   const activeParams = useMemo(() => {
     const p = { page, page_size: pageSize };
-    Object.entries(debouncedFilters).forEach(([k, v]) => { if (v && v !== "all") p[k] = v; });
-    if (debouncedSearch) p.search = debouncedSearch;
+    Object.entries(filters).forEach(([k, v]) => { if (v && v !== "all") p[k] = v; });
+    if (globalSearch) p.search = globalSearch;
     return p;
-  }, [debouncedFilters, debouncedSearch, page, pageSize]);
+  }, [filters, globalSearch, page, pageSize]);
 
-  const { data = { rows: [], total: 0, page: 1, pages: 1, page_size: 50 }, isLoading: historyLoading, isFetching: historyFetching } = useInventoryHistory(activeParams);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedParams(activeParams);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [activeParams]);
+
+  const { data = { rows: [], total: 0, page: 1, pages: 1, page_size: 50 }, isLoading: historyLoading } = useInventoryHistory(debouncedParams);
   const { data: employees = [], isLoading: employeesLoading } = useEmployeeList();
   const totalPages = Math.max(1, Math.ceil((data?.total || 0) / (pageSize || 50)));
 
-  const loading = historyLoading || historyFetching || employeesLoading;
+  const loading = historyLoading || employeesLoading;
   const invalidateHistory = useInvalidateInventoryHistory();
 
   useEffect(() => {
     setSelected(new Set());
-  }, [activeParams]);
+  }, [debouncedParams]);
 
   useEffect(() => { setPage(1); }, [filters, globalSearch]);
 
@@ -174,13 +172,11 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
   const allPageSelected = data.rows.length > 0 && data.rows.every((r) => selected.has(`${r.type}:${r.id}`));
 
   const clearFilters = () => {
-    const empty = {
+    setFilters({
       type: "all", product: "", vendor: "", client: "",
       challan: "", bill_number: "", user_id: "", status: "all",
       from_date: "", to_date: "",
-    };
-    setFilters(empty);
-    setDebouncedFilters(empty);
+    });
     setPage(1);
   };
 

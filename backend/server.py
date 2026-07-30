@@ -6484,6 +6484,11 @@ async def inv_history(
     page: int = 1,
     page_size: int = 100,
 ):
+    if type and type.lower() in ("all", "none", "null"):
+        type = None
+    if status and status.lower() in ("all", "none", "null"):
+        status = None
+
     cid = user["company_id"]
     page = max(1, page)
     page_size = max(1, min(page_size, 500))
