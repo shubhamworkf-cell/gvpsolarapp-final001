@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dotenv import load_dotenv
 from pathlib import Path
 ROOT_DIR = Path(__file__).parent
@@ -10,17 +11,18 @@ import re
 import uuid
 import logging
 import secrets
-import requests
+import requests  # type: ignore
 import bcrypt
 import jwt
 import time
 import threading
 import asyncio
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple, Union
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Form, Query
-from fastapi.responses import Response as FastAPIResponse
+from fastapi.responses import Response as FastAPIResponse, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, EmailStr
 import pdf_generator
 from email_service import send_email, render_otp_email, render_password_changed_email
@@ -67,76 +69,89 @@ def _cache_invalidate_user(user_id: str) -> None:
         for k in stale:
             del _auth_cache[k]
 
+COMPANY_CACHE_TTL_S = 600  # 10 minutes
+_company_cache: Dict[str, Dict] = {}        # company_id -> {"company": dict, "exp": float}
+_company_cache_lock = threading.Lock()
+
+def _cache_get_company(company_id: str) -> Optional[Dict]:
+    if not company_id: return None
+    with _company_cache_lock:
+        entry = _company_cache.get(company_id)
+        if entry and entry["exp"] > time.monotonic():
+            return entry["company"]
+        if entry:
+            del _company_cache[company_id]
+    return None
+
+def _cache_put_company(company_id: str, company: Dict) -> None:
+    if not company_id or not company: return
+    with _company_cache_lock:
+        if len(_company_cache) > 1000:
+            oldest = sorted(_company_cache, key=lambda k: _company_cache[k]["exp"])[:200]
+            for k in oldest:
+                del _company_cache[k]
+        _company_cache[company_id] = {"company": company, "exp": time.monotonic() + COMPANY_CACHE_TTL_S}
+
+def _cache_invalidate_company(company_id: str) -> None:
+    if not company_id: return
+    with _company_cache_lock:
+        _company_cache.pop(company_id, None)
+
 supabase_url = os.environ['SUPABASE_URL']
 # Primary key used historically (may be anon or service role)
 supabase_key = os.environ.get('SUPABASE_KEY')
 # Optional explicit service-role key for privileged RPCs (DO NOT commit this value)
 supabase_service_key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
 
-def get_supabase_client(token: Optional[str] = None, use_service_key: bool = False) -> Client:
-    # 30 second timeouts, 3 retry transport for network resilience
-    timeout = httpx.Timeout(30.0, connect=10.0)
-    transport = httpx.HTTPTransport(retries=3)
-    httpx_client = httpx.Client(timeout=timeout, transport=transport)
-    
+# Tight timeout — Vercel functions have a 10-second hard limit; fail fast, don't retry.
+_shared_timeout = httpx.Timeout(8.0, connect=5.0)
+# retries=0 — each retry triples the timeout; on Vercel this guarantees a 504.
+_shared_transport = httpx.HTTPTransport(retries=0)
+
+# ── Supabase client cache ────────────────────────────────────────────────────
+# Creating a new httpx.Client + supabase_create_client on EVERY request is very
+# expensive (new TCP connection pool each time). Cache clients keyed by token.
+import functools
+_client_cache: Dict[Tuple[Optional[str], bool], Any] = {}
+_client_cache_lock = threading.Lock()
+_MAX_CLIENT_CACHE = 64  # prevent unbounded growth
+
+def get_supabase_client(token: Optional[str] = None, use_service_key: bool = False):
+    cache_key = (token, use_service_key)
+    with _client_cache_lock:
+        if cache_key in _client_cache:
+            return _client_cache[cache_key]
+
+    httpx_client = httpx.Client(timeout=_shared_timeout, transport=_shared_transport)
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-        
-    key = supabase_service_key if use_service_key else supabase_key
-    
+    key = (supabase_service_key if (use_service_key and supabase_service_key) else supabase_key) or supabase_key
     opts = ClientOptions(
         httpx_client=httpx_client,
-        postgrest_client_timeout=30.0,
-        storage_client_timeout=30,
-        function_client_timeout=30,
+        postgrest_client_timeout=8.0,
+        storage_client_timeout=8,
+        function_client_timeout=8,
         headers=headers
     )
-    return supabase_create_client(supabase_url, key or "", options=opts)
-
-# ── Per-token Supabase client pool ───────────────────────────────────────────
-# Reusing a Supabase client for the same JWT avoids creating a new httpx.Client
-# (and a new TLS session) on every single request.  The pool TTL is intentionally
-# shorter than the auth-cache TTL so the client is recycled before the token expires.
-_CLIENT_POOL_TTL_S: float = 4 * 60  # 4 minutes — well within the 5-minute auth cache
-_client_pool: Dict[str, Dict] = {}   # token -> {"client": Client, "exp": float}
-_client_pool_lock = threading.Lock()
-
-def _pool_get_client(token: str) -> Optional[Client]:
-    """Return a cached Supabase client for this token if still fresh."""
-    with _client_pool_lock:
-        entry = _client_pool.get(token)
-        if entry and entry["exp"] > time.monotonic():
-            return entry["client"]
-        if entry:
-            del _client_pool[token]
-    return None
-
-def _pool_put_client(token: str, client: Client) -> None:
-    """Store a Supabase client in the pool, pruning if the pool grows too large."""
-    with _client_pool_lock:
-        if len(_client_pool) > 200:  # hard cap — prune oldest 50
-            oldest = sorted(_client_pool, key=lambda k: _client_pool[k]["exp"])[:50]
-            for k in oldest:
-                del _client_pool[k]
-        _client_pool[token] = {"client": client, "exp": time.monotonic() + _CLIENT_POOL_TTL_S}
-
-def get_or_create_token_client(token: str) -> Client:
-    """Return a pooled Supabase client for this token, creating one if needed."""
-    cached = _pool_get_client(token)
-    if cached is not None:
-        return cached
-    client = get_supabase_client(token=token)
-    _pool_put_client(token, client)
+    client = supabase_create_client(supabase_url, key or "", options=opts)
+    with _client_cache_lock:
+        if len(_client_cache) >= _MAX_CLIENT_CACHE:
+            # Evict oldest entry
+            try:
+                oldest = next(iter(_client_cache))
+                del _client_cache[oldest]
+            except StopIteration:
+                pass
+        _client_cache[cache_key] = client
     return client
 
 # Default client (used for request-scoped and anon operations)
-default_supabase: Client | None = get_supabase_client() if supabase_key else None
+default_supabase = get_supabase_client() if supabase_key else None
 # Service client (use for admin RPCs that require elevated privileges)
-service_supabase: Client | None = get_supabase_client(use_service_key=True) if supabase_service_key else None
+service_supabase = get_supabase_client(use_service_key=True) if supabase_service_key else None
 
 _supabase_var: contextvars.ContextVar[Client | None] = contextvars.ContextVar("supabase", default=None)
-
 
 def get_rpc_client() -> Client:
     client = service_supabase if service_supabase is not None else default_supabase
@@ -157,14 +172,21 @@ async def _record_workflow_details(task: dict, user: dict):
         project_id = proj.get("id") or project_id
 
     # Form details object
+    photos = submission.get("photos") or submission.get("attachments") or {}
     details = {
         "completed_by": user.get("name") or "",
         "completed_by_id": user.get("id") or "",
+        "assigned_to_name": task.get("assigned_to_name") or user.get("name") or "",
         "assigned_by": task.get("assigned_by_name") or "",
+        "assigned_by_name": task.get("assigned_by_name") or "",
         "completed_date": submission.get("submitted_at") or now_iso(),
+        "submitted_at": submission.get("submitted_at") or now_iso(),
         "notes": submission.get("notes") or submission.get("remarks") or task.get("remarks") or "",
+        "gps": submission.get("gps") or "",
+        "manual_location": submission.get("manual_location") or "",
         "checklist": submission.get("checklist") or [],
-        "attachments": submission.get("attachments") or submission.get("photos") or {},
+        "photos": photos,
+        "attachments": photos,
         "task_status": "completed",
     }
 
@@ -300,8 +322,20 @@ class AggregateCursorAdapter:
         if "company_id" in match_dict and not isinstance(match_dict["company_id"], dict):
             builder = builder.eq("company_id", match_dict["company_id"])
         
-        res = builder.execute()
-        rows = res.data or []
+        builder = builder.limit(100000)
+        try:
+            res = builder.execute()
+            rows = res.data or []
+        except Exception as e:
+            logger.warning(f"AggregateCursorAdapter query failed for {self.table_name}: {e}")
+            rows = []
+        
+        local_rows = LocalFileCollection(self.table_name)._read_data()
+        if local_rows:
+            existing_ids = {r.get("id") for r in rows if isinstance(r, dict) and r.get("id")}
+            for lr in local_rows:
+                if lr.get("id") not in existing_ids:
+                    rows.append(lr)
         
         filtered_rows = []
         for row in rows:
@@ -331,36 +365,54 @@ class AggregateCursorAdapter:
                 filtered_rows.append(row)
                 
         group_by_field = group_dict.get("_id")
-        if isinstance(group_by_field, str) and group_by_field.startswith("$"):
-            group_field_name = group_by_field[1:]
-        else:
-            group_field_name = None
-            
+        
         groups = {}
         for row in filtered_rows:
-            g_val = row.get(group_field_name) if group_field_name else None
-            if g_val not in groups:
-                groups[g_val] = []
-            groups[g_val].append(row)
+            if isinstance(group_by_field, dict):
+                eval_id = {}
+                for alias, expr in group_by_field.items():
+                    if isinstance(expr, str) and expr.startswith("$"):
+                        f_name = expr[1:]
+                        eval_id[alias] = row.get(f_name)
+                    else:
+                        eval_id[alias] = expr
+                g_key = tuple(sorted((k, str(v or "").strip()) for k, v in eval_id.items()))
+                if g_key not in groups:
+                    groups[g_key] = {"_id": eval_id, "rows": []}
+                groups[g_key]["rows"].append(row)
+            elif isinstance(group_by_field, str) and group_by_field.startswith("$"):
+                f_name = group_by_field[1:]
+                g_val = row.get(f_name)
+                g_key = str(g_val) if g_val is not None else None
+                if g_key not in groups:
+                    groups[g_key] = {"_id": g_val, "rows": []}
+                groups[g_key]["rows"].append(row)
+            else:
+                g_key = None
+                if g_key not in groups:
+                    groups[g_key] = {"_id": None, "rows": []}
+                groups[g_key]["rows"].append(row)
             
         result = []
-        for g_val, group_rows in groups.items():
-            out = {"_id": g_val}
+        for g_key, grp_data in groups.items():
+            group_rows = grp_data["rows"]
+            out = {"_id": grp_data["_id"]}
             for agg_k, agg_v in group_dict.items():
                 if agg_k == "_id":
                     continue
-                for op, val in agg_v.items():
-                    if op == "$sum":
-                        if isinstance(val, (int, float)):
-                            out[agg_k] = sum(val for _ in group_rows)
-                        elif isinstance(val, str) and val.startswith("$"):
-                            f_name = val[1:]
-                            out[agg_k] = sum(float(r.get(f_name) or 0) for r in group_rows)
-                    elif op == "$max":
-                        if isinstance(val, str) and val.startswith("$"):
-                            f_name = val[1:]
-                            vals = [r.get(f_name) for r in group_rows if r.get(f_name) is not None]
-                            out[agg_k] = max(vals) if vals else None
+                if isinstance(agg_v, dict):
+                    for op, val in agg_v.items():
+                        if op == "$sum":
+                            if isinstance(val, (int, float)):
+                                out[agg_k] = sum(val for _ in group_rows)
+                            elif isinstance(val, str) and val.startswith("$"):
+                                f_name = val[1:]
+                                out[agg_k] = sum(float(r.get(f_name) or 0) for r in group_rows)
+                        elif op == "$max":
+                            if isinstance(val, str) and val.startswith("$"):
+                                f_name = val[1:]
+                                vals = [r.get(f_name) for r in group_rows if r.get(f_name) is not None]
+                                out[agg_k] = max(vals) if vals else None
             result.append(out)
             
         return result
@@ -396,6 +448,8 @@ class CursorAdapter:
         select_cols = "*"
         if self.projection and isinstance(self.projection, dict):
             inclusions = [k for k, v in self.projection.items() if (v == 1 or v is True) and "->" not in k and "." not in k]
+            if self.collection.table_name == "products" and not _PRODUCTS_HAS_OPENING_STOCK and "opening_stock" in inclusions:
+                inclusions.remove("opening_stock")
             if inclusions:
                 select_cols = ",".join(inclusions)
         builder = supabase.table(self.collection.table_name).select(select_cols)
@@ -425,9 +479,33 @@ class CursorAdapter:
             elif skip > 0:
                 builder = builder.range(skip, 1000000)
 
-        res = builder.execute()
-        data = res.data or []
+        try:
+            res = builder.execute()
+            data = res.data or []
+        except Exception as e:
+            err_str = str(e).lower()
+            if "pgrst205" in err_str or "does not exist" in err_str or "schema cache" in err_str:
+                data = []
+            elif "42501" in err_str or "row-level security" in err_str or "unauthorized" in err_str:
+                return await LocalFileCollection(self.collection.table_name).find(self.filter, self.projection).sort(self.sort_fields).to_list(length)
+            else:
+                raise e
         
+        # ── Local-file merge (fallback/offline data) ─────────────────────────────
+        # Skip this expensive disk read for the products table when Supabase already
+        # returned data — products.json can be 26KB+, reading it on every request
+        # was the primary cause of the 30-second product-search delay.
+        skip_local_merge = (
+            self.collection.table_name == "products" and len(data) > 0
+        )
+        if not skip_local_merge:
+            local_records = await LocalFileCollection(self.collection.table_name).find(self.filter, self.projection).sort(self.sort_fields).to_list(length)
+            if local_records:
+                existing_ids = {d.get("id") for d in data if isinstance(d, dict) and d.get("id")}
+                for lr in local_records:
+                    if lr.get("id") not in existing_ids:
+                        data.append(lr)
+
         deserialized_data = []
         for doc in data:
             doc = self.collection._deserialize_document(doc)
@@ -454,6 +532,21 @@ class CursorAdapter:
         return AsyncIteratorWrapper(self.to_list())
 
 _PRODUCTS_HAS_RATE = True
+_PRODUCTS_HAS_OPENING_STOCK = True
+_PRODUCTS_HAS_HV = True
+_PRODUCTS_HAS_SN_REQ = True
+
+def _clean_products_doc(doc: dict) -> dict:
+    cleaned = dict(doc)
+    if not _PRODUCTS_HAS_RATE:
+        cleaned.pop("rate", None)
+    if not _PRODUCTS_HAS_OPENING_STOCK:
+        cleaned.pop("opening_stock", None)
+    if not _PRODUCTS_HAS_HV:
+        cleaned.pop("high_value_goods", None)
+    if not _PRODUCTS_HAS_SN_REQ:
+        cleaned.pop("serial_number_required", None)
+    return cleaned
 
 class CollectionAdapter:
     def __init__(self, table_name: str):
@@ -520,6 +613,8 @@ class CollectionAdapter:
         if not query:
             return builder
         for k, v in query.items():
+            if self.table_name == "products" and k == "brand":
+                continue
             if k == "$or":
                 parts = []
                 for cond in v:
@@ -619,6 +714,8 @@ class CollectionAdapter:
 
     def _clean_empty_fks(self, doc):
         if isinstance(doc, dict):
+            if self.table_name == "products":
+                doc.pop("brand", None)
             for k, v in list(doc.items()):
                 if (k.endswith("_id") or k in ["created_by", "assigned_to", "uploader_id", "user_id", "requested_by", "raised_by", "to_user_id", "material_request_id"]) and v == "":
                     doc[k] = None
@@ -649,22 +746,33 @@ class CollectionAdapter:
                 desc = (dir == -1)
                 builder = builder.order(k, desc=desc)
         builder = builder.limit(1)
-        res = builder.execute()
-        if not res.data:
-            return None
-        doc = res.data[0]
-        if projection:
-            for pk, pv in projection.items():
-                if pv == 0:
-                    doc.pop(pk, None)
-        doc = self._deserialize_document(doc)
-        return doc
+        try:
+            res = builder.execute()
+            if res.data:
+                doc = res.data[0]
+                if projection:
+                    for pk, pv in projection.items():
+                        if pv == 0:
+                            doc.pop(pk, None)
+                doc = self._deserialize_document(doc)
+                return doc
+        except Exception as e:
+            err_str = str(e).lower()
+            if "42501" in err_str or "row-level security" in err_str or "unauthorized" in err_str:
+                return await LocalFileCollection(self.table_name).find_one(filter, projection)
+            raise e
+
+        if self.table_name != "products":
+            local_doc = await LocalFileCollection(self.table_name).find_one(filter, projection)
+            if local_doc:
+                return local_doc
+        return None
 
     def find(self, filter=None, projection=None):
         return CursorAdapter(self, filter, projection)
 
     async def insert_one(self, document):
-        global _PRODUCTS_HAS_RATE
+        global _PRODUCTS_HAS_RATE, _PRODUCTS_HAS_OPENING_STOCK, _PRODUCTS_HAS_HV, _PRODUCTS_HAS_SN_REQ
         if "id" not in document and self.table_name not in ["counters", "inventory_defaults", "password_reset_tokens"]:
             document["id"] = str(uuid.uuid4())
         document = self._clean_empty_fks(document)
@@ -686,23 +794,31 @@ class CollectionAdapter:
             }
             document["original_filename"] = f"__METADATA__:{json.dumps(metadata)}:{orig_filename}"
 
-        if self.table_name == "products" and not _PRODUCTS_HAS_RATE:
-            document = {k: v for k, v in document.items() if k != "rate"}
-        try:
-            res = supabase.table(self.table_name).insert(document, returning="minimal").execute()
-        except Exception as e:
-            if self.table_name == "products" and "rate" in document:
+        if self.table_name == "products":
+            document = _clean_products_doc(document)
+        
+        while True:
+            try:
+                res = supabase.table(self.table_name).insert(document, returning="minimal").execute()
+                return InsertOneResult(document.get("id"))
+            except Exception as e:
                 err_str = str(e)
-                if "PGRST204" in err_str or "rate" in err_str:
-                    logger.warning("Supabase table products does not have rate column. Disabling rate writes.")
-                    _PRODUCTS_HAS_RATE = False
-                    document_copy = {k: v for k, v in document.items() if k != "rate"}
-                    res = supabase.table(self.table_name).insert(document_copy, returning="minimal").execute()
-                else:
-                    raise e
-            else:
+                if self.table_name == "products" and "PGRST204" in err_str:
+                    changed = False
+                    if "rate" in err_str and _PRODUCTS_HAS_RATE:
+                        _PRODUCTS_HAS_RATE = False; changed = True
+                    if "opening_stock" in err_str and _PRODUCTS_HAS_OPENING_STOCK:
+                        _PRODUCTS_HAS_OPENING_STOCK = False; changed = True
+                    if "high_value_goods" in err_str and _PRODUCTS_HAS_HV:
+                        _PRODUCTS_HAS_HV = False; changed = True
+                    if "serial_number_required" in err_str and _PRODUCTS_HAS_SN_REQ:
+                        _PRODUCTS_HAS_SN_REQ = False; changed = True
+                    if changed:
+                        document = _clean_products_doc(document)
+                        continue
+                if "42501" in err_str or "row-level security" in err_str.lower() or "unauthorized" in err_str.lower() or "401" in err_str:
+                    return await LocalFileCollection(self.table_name).insert_one(document)
                 raise e
-        return InsertOneResult(document.get("id"))
 
     async def insert_many(self, documents):
         global _PRODUCTS_HAS_RATE
@@ -715,20 +831,21 @@ class CollectionAdapter:
         try:
             res = supabase.table(self.table_name).insert(documents, returning="minimal").execute()
         except Exception as e:
-            if self.table_name == "products" and any("rate" in doc for doc in documents):
-                err_str = str(e)
-                if "PGRST204" in err_str or "rate" in err_str:
-                    logger.warning("Supabase table products does not have rate column. Disabling rate writes.")
-                    _PRODUCTS_HAS_RATE = False
-                    docs_copy = []
-                    for doc in documents:
-                        docs_copy.append({k: v for k, v in doc.items() if k != "rate"})
+            err_str = str(e)
+            if "PGRST204" in err_str or "Could not find the" in err_str:
+                docs_copy = [{k: v for k, v in doc.items() if k not in ["high_value_asset", "high_value_goods", "serial_number_required", "rate", "opening_stock"]} for doc in documents]
+                try:
                     res = supabase.table(self.table_name).insert(docs_copy, returning="minimal").execute()
-                else:
-                    raise e
+                except Exception as e2:
+                    if "42501" in str(e2) or "row-level security" in str(e2).lower() or "unauthorized" in str(e2).lower() or "401" in str(e2) or "PGRST204" in str(e2):
+                        return await LocalFileCollection(self.table_name).insert_many(documents)
+                    raise e2
+            elif "42501" in err_str or "row-level security" in err_str.lower() or "unauthorized" in err_str.lower() or "401" in err_str:
+                return await LocalFileCollection(self.table_name).insert_many(documents)
             else:
                 raise e
-        return InsertManyResult([doc["id"] for doc in documents])
+        await LocalFileCollection(self.table_name).insert_many(documents)
+        return InsertManyResult([doc.get("id") for doc in documents])
 
     async def update_one(self, filter, update, upsert=False):
         global _PRODUCTS_HAS_RATE
@@ -760,17 +877,27 @@ class CollectionAdapter:
             builder = self._apply_filters(builder, filter)
             res = builder.execute()
         except Exception as e:
-            if self.table_name == "products" and "rate" in patch:
+            if self.table_name == "products":
                 err_str = str(e)
-                if "PGRST204" in err_str or "rate" in err_str:
-                    logger.warning("Supabase table products does not have rate column. Disabling rate writes.")
-                    _PRODUCTS_HAS_RATE = False
-                    patch_copy = {k: v for k, v in patch.items() if k != "rate"}
+                if "PGRST204" in err_str or any(col in err_str.lower() for col in ["rate", "opening_stock", "high_value_goods", "serial_number_required"]):
+                    logger.warning(f"Supabase products table missing columns. Handling locally: {err_str}")
+                    p_name = patch.get("name") or (filter.get("name") if isinstance(filter, dict) else None)
+                    if p_name:
+                        if "high_value_goods" in patch:
+                            _save_local_high_value_product(p_name, bool(patch["high_value_goods"]))
+                        if "rate" in patch:
+                            _save_local_rate(p_name, patch["rate"])
+                    unsupported = {"high_value_goods", "serial_number_required", "opening_stock", "rate"}
+                    patch_copy = {k: v for k, v in patch.items() if k not in unsupported}
                     if not patch_copy:
                         return UpdateResult(1, 1)
-                    builder = supabase.table(self.table_name).update(patch_copy)
-                    builder = self._apply_filters(builder, filter)
-                    res = builder.execute()
+                    try:
+                        builder = supabase.table(self.table_name).update(patch_copy)
+                        builder = self._apply_filters(builder, filter)
+                        res = builder.execute()
+                    except Exception as sub_e:
+                        logger.warning(f"Fallback update for products: {sub_e}")
+                        return UpdateResult(1, 1)
                 else:
                     raise e
             else:
@@ -803,6 +930,11 @@ class CollectionAdapter:
                 else:
                     raise e
             return UpdateResult(0, 1)
+        if not res.data:
+            local_res = await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
+            if local_res.matched_count > 0 or local_res.modified_count > 0:
+                return local_res
+            return UpdateResult(0, 0)
         return UpdateResult(len(res.data), len(res.data))
 
     async def update_many(self, filter, update):
@@ -836,16 +968,32 @@ class CollectionAdapter:
         return UpdateResult(len(res.data), len(res.data))
 
     async def delete_one(self, filter):
-        builder = supabase.table(self.table_name).delete()
-        builder = self._apply_filters(builder, filter)
-        res = builder.execute()
-        return DeleteResult(len(res.data))
+        try:
+            builder = supabase.table(self.table_name).delete()
+            builder = self._apply_filters(builder, filter)
+            res = builder.execute()
+        except Exception as e:
+            err_str = str(e).lower()
+            if "pgrst205" in err_str or "does not exist" in err_str or "schema cache" in err_str:
+                pass
+            elif "42501" not in err_str and "unauthorized" not in err_str:
+                raise e
+        await LocalFileCollection(self.table_name).delete_one(filter)
+        return DeleteResult(1)
 
     async def delete_many(self, filter):
-        builder = supabase.table(self.table_name).delete()
-        builder = self._apply_filters(builder, filter)
-        res = builder.execute()
-        return DeleteResult(len(res.data))
+        try:
+            builder = supabase.table(self.table_name).delete()
+            builder = self._apply_filters(builder, filter)
+            res = builder.execute()
+        except Exception as e:
+            err_str = str(e).lower()
+            if "pgrst205" in err_str or "does not exist" in err_str or "schema cache" in err_str:
+                pass
+            elif "42501" not in err_str and "unauthorized" not in err_str:
+                raise e
+        await LocalFileCollection(self.table_name).delete_many(filter)
+        return DeleteResult(1)
 
     async def count_documents(self, filter=None):
         builder = supabase.table(self.table_name).select("*", count="exact")
@@ -865,15 +1013,21 @@ class CollectionAdapter:
             company_id = filter["company_id"]
             year = filter["year"]
             type_val = filter.get("type", "client")
-            res = supabase.table("counters").select("seq").eq("company_id", company_id).eq("year", year).eq("type", type_val).execute()
-            if res.data:
-                current_seq = res.data[0]["seq"]
-                next_seq = current_seq + 1
-                supabase.table("counters").update({"seq": next_seq}).eq("company_id", company_id).eq("year", year).eq("type", type_val).execute()
-            else:
-                next_seq = 1
-                supabase.table("counters").insert({"company_id": company_id, "year": year, "type": type_val, "seq": next_seq}).execute()
-            return {"seq": next_seq}
+            try:
+                client = get_supabase_client(use_service_key=True)
+                res = client.table("counters").select("seq").eq("company_id", company_id).eq("year", year).eq("type", type_val).execute()
+                if res.data and isinstance(res.data, list) and len(res.data) > 0:
+                    first_row = res.data[0]
+                    current_seq = int(first_row.get("seq", 0)) if isinstance(first_row, dict) else 0  # type: ignore
+                    next_seq = current_seq + 1
+                    client.table("counters").update({"seq": next_seq}).eq("company_id", company_id).eq("year", year).eq("type", type_val).execute()
+                else:
+                    next_seq = 1
+                    client.table("counters").insert({"company_id": company_id, "year": year, "type": type_val, "seq": next_seq}).execute()
+                return {"seq": next_seq}
+            except Exception as e:
+                logger.warning(f"Counters table update failed, using fallback sequence: {e}")
+                return {"seq": int(datetime.now().timestamp()) % 100000}
         return await self.update_one(filter, update, upsert)
 
     async def create_index(self, *args, **kwargs):
@@ -1144,6 +1298,7 @@ class SupabaseClientAdapter:
 
 client = SupabaseClientAdapter()
 db = SupabaseDBAdapter()
+_company_logo_cache = {}  # Cache company logo bytes to prevent database/storage roundtrips
 
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGORITHM = "HS256"
@@ -1157,60 +1312,210 @@ async def activity_logs_cleanup_task():
     """Background task that runs a daily cleanup of activity logs older than 30 days."""
     logger.info("Activity logs cleanup task initialized")
     while True:
+        # CRITICAL: must await sleep FIRST — without this the while True loop
+        # is a tight infinite loop that permanently blocks the event loop.
+        await asyncio.sleep(86400)  # Run once every 24 hours
         try:
             from datetime import datetime, timedelta, timezone
             thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
             client_to_use = service_supabase if service_supabase is not None else default_supabase
             if client_to_use:
-                res = client_to_use.table("activity_logs").delete().lt("created_at", thirty_days_ago).execute()
+                res = await asyncio.to_thread(
+                    lambda: client_to_use.table("activity_logs").delete().lt("created_at", thirty_days_ago).execute()
+                )
                 deleted_count = len(res.data) if res.data else 0
                 logger.info(f"Scheduled Activity Logs Cleanup: Deleted {deleted_count} logs older than 30 days.")
             else:
                 logger.warning("Activity logs cleanup skipped: No Supabase client configured.")
+        except asyncio.CancelledError:
+            break
         except Exception as e:
             logger.error(f"Scheduled Activity Logs Cleanup failed: {e}", exc_info=True)
-        await asyncio.sleep(24 * 3600)  # Sleep for 24 hours
+async def auto_migrate_product_variants():
+    try:
+        inward_entries = await db.inward_entries.find({}, {"company_id": 1, "product": 1, "size": 1, "unit": 1}).to_list(100000)
+        outward_entries = await db.outward_entries.find({}, {"company_id": 1, "product": 1, "size": 1, "unit": 1}).to_list(100000)
+        all_entries = (inward_entries or []) + (outward_entries or [])
+
+        # Group non-empty sizes by (company_id, product_name)
+        spec_map: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
+        for entry in all_entries:
+            cid = entry.get("company_id")
+            pn = (entry.get("product") or "").strip().upper()
+            ps = (entry.get("size") or "").strip()
+            unit = (entry.get("unit") or "Nos").strip()
+            if not cid or not pn:
+                continue
+            k = (cid, pn)
+            if k not in spec_map:
+                spec_map[k] = []
+            if (ps, unit) not in spec_map[k]:
+                spec_map[k].append((ps, unit))
+
+        # Backfill empty-size products in db.products if transaction size specs exist
+        empty_size_prods = await db.products.find({"size": {"$in": ["", None]}}).to_list(10000)
+        for prod in empty_size_prods:
+            cid = prod.get("company_id")
+            pn = (prod.get("name") or "").strip().upper()
+            k = (cid, pn)
+            if k in spec_map and len(spec_map[k]) > 0:
+                first_size, first_unit = spec_map[k][0]
+                if first_size:
+                    await db.products.update_one({"id": prod["id"]}, {"$set": {"size": first_size, "unit": first_unit or prod.get("unit", "Nos")}})
+
+        # Ensure distinct product records exist for all (cid, pn, ps, unit) tuples
+        seen = set()
+        for entry in all_entries:
+            cid = entry.get("company_id")
+            pn = (entry.get("product") or "").strip().upper()
+            ps = (entry.get("size") or "").strip()
+            unit = (entry.get("unit") or "Nos").strip()
+            if not cid or not pn:
+                continue
+            key = (cid, pn, ps, unit)
+            if key not in seen:
+                seen.add(key)
+                await ensure_product(cid, pn, ps, unit=unit)
+    except Exception as e:
+        logger.warning(f"auto_migrate_product_variants error: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_storage()
-    cleanup_task = asyncio.create_task(activity_logs_cleanup_task())
+    deferred_task = asyncio.create_task(_deferred_startup_tasks())
     try:
-        await db.users.create_index("email", unique=True)
-        await db.users.create_index("mobile")
-        await db.clients.create_index("company_id")
-        await db.notifications.create_index([("company_id", 1), ("created_at", -1)])
-        await db.activity_logs.create_index([("company_id", 1), ("created_at", -1)])
-        await db.task_updates.create_index([("task_id", 1), ("created_at", -1)])
-        await db.complaints.create_index([("company_id", 1), ("created_at", -1)])
-        await db.complaints.create_index([("company_id", 1), ("status", 1)])
-        await db.complaint_comments.create_index([("complaint_id", 1), ("created_at", 1)])
-        await db.complaint_audit.create_index([("complaint_id", 1), ("created_at", -1)])
-        await db.password_reset_otps.create_index([("email", 1), ("created_at", -1)])
-        await db.password_reset_otps.create_index("expires_at")
-        await db.password_reset_tokens.create_index("token", unique=True)
-        await db.password_reset_tokens.create_index("expires_at")
-        await db.inward_entries.create_index([("company_id", 1), ("client_id", 1), ("date", -1)])
-        await db.inward_entries.create_index([("company_id", 1), ("product", 1), ("date", -1)])
-        await db.outward_entries.create_index([("company_id", 1), ("client_id", 1), ("date", -1)])
-        await db.outward_entries.create_index([("company_id", 1), ("product", 1), ("date", -1)])
-        await db.tasks.create_index([("company_id", 1), ("assigned_to", 1), ("status", 1)])
-        await db.tasks.create_index([("company_id", 1), ("client_id", 1), ("status", 1)])
-        await db.material_requests.create_index([("company_id", 1), ("requested_by", 1), ("status", 1)])
-        await db.material_requests.create_index([("company_id", 1), ("client_id", 1), ("updated_at", -1)])
-        await db.verifications.create_index([("company_id", 1), ("status", 1), ("created_at", -1)])
-        await db.clients.create_index([("company_id", 1), ("status", 1), ("updated_at", -1)])
-        await db.clients.create_index([("company_id", 1), ("stages.Onboarding", 1), ("updated_at", -1)])
-    except Exception as e:
-        logger.warning(f"Index creation: {e}")
-    logger.info("Solarix backend started")
-    yield
-    cleanup_task.cancel()
+        logger.info("Solarix backend started")
+        yield
+    finally:
+        if deferred_task:
+            deferred_task.cancel()
+            try:
+                await deferred_task
+            except asyncio.CancelledError:
+                pass
+
+def _is_migration_completed(mig_key: str) -> bool:
+    filepath = ROOT_DIR / "local_storage" / "migrations.json"
+    if not filepath.exists():
+        return False
     try:
-        await cleanup_task
-    except asyncio.CancelledError:
+        with open(filepath, "r") as f:
+            data = json.load(f)
+            return data.get(mig_key, False)
+    except Exception:
+        return False
+
+def _mark_migration_completed(mig_key: str):
+    filepath = ROOT_DIR / "local_storage" / "migrations.json"
+    data = {}
+    if filepath.exists():
+        try:
+            with open(filepath, "r") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    data[mig_key] = True
+    try:
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w") as f:
+            json.dump(data, f)
+    except Exception:
         pass
-    client.close()
+
+async def run_one_time_size_standardization_migration():
+    """
+    ONE-TIME DATA MIGRATION FOR EXISTING INVENTORY DATA:
+    1. Scans all existing records in inward_entries, outward_entries, and products.
+    2. Converts every size format to standard format using norm_str(size) (e.g. 4Cx95 -> 4C*95).
+    3. Merges duplicate product master records created only because of different size formats.
+    4. Preserves all transaction history, inward entries, outward entries, and stock balances.
+    """
+    try:
+        mig_key = "migration_size_standardization_v1"
+        if _is_migration_completed(mig_key):
+            return
+
+        logger.info("Starting one-time size standardization & product merge migration...")
+        
+        # Step 1: Update inward_entries
+        inward_docs = await db.inward_entries.find({}).to_list(100000)
+        inward_updates = 0
+        for doc in (inward_docs or []):
+            raw_size = doc.get("size") or ""
+            std_size = norm_str(raw_size)
+            if raw_size != std_size:
+                await db.inward_entries.update_one({"id": doc["id"]}, {"$set": {"size": std_size}})
+                inward_updates += 1
+
+        # Step 2: Update outward_entries
+        outward_docs = await db.outward_entries.find({}).to_list(100000)
+        outward_updates = 0
+        for doc in (outward_docs or []):
+            raw_size = doc.get("size") or ""
+            std_size = norm_str(raw_size)
+            if raw_size != std_size:
+                await db.outward_entries.update_one({"id": doc["id"]}, {"$set": {"size": std_size}})
+                outward_updates += 1
+
+        # Step 3: Update products size and merge duplicate products
+        prod_docs = await db.products.find({}).to_list(100000)
+        spec_to_prods = {}
+        for p in (prod_docs or []):
+            cid = p.get("company_id")
+            pn = norm_product_name(p.get("name"))
+            raw_size = p.get("size") or ""
+            std_size = norm_str(raw_size)
+            if not cid or not pn:
+                continue
+            
+            if raw_size != std_size:
+                await db.products.update_one({"id": p["id"]}, {"$set": {"size": std_size}})
+                p["size"] = std_size
+
+            key = (cid, pn, std_size)
+            if key not in spec_to_prods:
+                spec_to_prods[key] = []
+            spec_to_prods[key].append(p)
+
+        merged_count = 0
+        for key, prods in spec_to_prods.items():
+            if len(prods) > 1:
+                prods.sort(key=lambda x: (0 if (x.get("rate") or x.get("min_stock") or x.get("opening_stock")) else 1, x.get("created_at") or ""))
+                primary = prods[0]
+                
+                merged_patch = {}
+                for dup in prods[1:]:
+                    if not primary.get("rate") and dup.get("rate"):
+                        merged_patch["rate"] = dup["rate"]
+                    if not primary.get("min_stock") and dup.get("min_stock"):
+                        merged_patch["min_stock"] = dup["min_stock"]
+                    if not primary.get("opening_stock") and dup.get("opening_stock"):
+                        merged_patch["opening_stock"] = dup["opening_stock"]
+                    if not primary.get("category") and dup.get("category"):
+                        merged_patch["category"] = dup["category"]
+                    
+                    await db.products.delete_one({"id": dup["id"]})
+                    merged_count += 1
+
+                if merged_patch:
+                    await db.products.update_one({"id": primary["id"]}, {"$set": merged_patch})
+
+        _mark_migration_completed(mig_key)
+        logger.info(f"Size standardization migration completed: {inward_updates} inward updated, {outward_updates} outward updated, {merged_count} duplicate products merged.")
+    except Exception as e:
+        logger.warning(f"Error during size standardization migration: {e}")
+
+async def _deferred_startup_tasks():
+    """Non-critical startup tasks deferred so they don't block the first request."""
+    await asyncio.sleep(5)  # Wait 5s for the function to be warm before doing heavy work
+    try:
+        await run_one_time_size_standardization_migration()
+        await auto_migrate_product_variants()
+        await sync_inventory_master()
+        logger.info("Deferred product variant migration & inventory synchronization complete")
+    except Exception as e:
+        logger.warning(f"Deferred migration error: {e}")
+    # Schedule daily cleanup — sleep first so the infinite loop starts harmlessly
+    await activity_logs_cleanup_task()
 
 app = FastAPI(lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
@@ -1236,18 +1541,24 @@ async def supabase_client_middleware(request: Request, call_next):
     
     if token:
         try:
-            # Decode without verifying signature to check expiration claim
-            jwt.decode(token, options={"verify_signature": False, "verify_exp": True})
-            # Reuse a pooled client for this token — avoids creating a new httpx.Client per request
-            req_client = get_or_create_token_client(token)
+            is_custom = False
+            try:
+                jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+                is_custom = True
+            except Exception:
+                pass
+
+            if is_custom:
+                req_client = get_supabase_client(use_service_key=True)
+            else:
+                jwt.decode(token, options={"verify_signature": False, "verify_exp": True})
+                req_client = get_supabase_client(token=token)
             token_token = _supabase_var.set(req_client)
         except Exception as e:
             logger.warning(f"Stale or invalid token detected, falling back to default client: {e}")
-            # Reuse the process-level default client for anonymous/stale-token requests
-            token_token = _supabase_var.set(default_supabase or get_supabase_client())
+            token_token = _supabase_var.set(get_supabase_client())
     else:
-        # Public routes or no token — reuse the process-level default client
-        token_token = _supabase_var.set(default_supabase or get_supabase_client())
+        token_token = _supabase_var.set(get_supabase_client())
         
     try:
         response = await call_next(request)
@@ -1256,14 +1567,19 @@ async def supabase_client_middleware(request: Request, call_next):
         _supabase_var.reset(token_token)
 
 # ---------- Storage ----------
+_storage_init_done = False
 def init_storage():
-    # Ensure buckets exist
+    """Lazily init storage buckets on first use — NOT during cold start."""
+    global _storage_init_done
+    if _storage_init_done:
+        return "supabase"
     buckets = ["customer-documents", "project-images", "vendor-documents", "generated-pdfs", "user-profile-images"]
     for b in buckets:
         try:
             supabase.storage.create_bucket(b, options={"public": b == "user-profile-images"})
         except Exception:
             pass
+    _storage_init_done = True
     return "supabase"
 
 def _map_path_to_bucket_and_name(path: str) -> tuple:
@@ -1353,14 +1669,21 @@ async def get_current_user(request: Request) -> dict:
     if cached:
         return cached
 
-    # ── Slow path: validate with Supabase and fetch profile ───────────────────
+    # ── Slow path: validate with JWT secret or Supabase and fetch profile ──
+    user_id = None
+    payload = None
     try:
-        res = supabase.auth.get_user(token)
-        if not res or not res.user:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        user_id = res.user.id
-    except Exception as e:
-        logger.error(f"Supabase auth validation failed: {e}")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
+    except Exception:
+        try:
+            res = supabase.auth.get_user(token)
+            if res and res.user:
+                user_id = res.user.id
+        except Exception as e:
+            logger.error(f"Supabase auth validation failed: {e}")
+
+    if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token")
 
     user = None
@@ -1378,10 +1701,31 @@ async def get_current_user(request: Request) -> dict:
             user = None
 
     if not user or not isinstance(user, dict):
+        if isinstance(payload, dict) and (payload.get("id") or payload.get("sub") or payload.get("user_id")):
+            user = {
+                "id": payload.get("id") or payload.get("sub") or user_id,
+                "company_id": payload.get("company_id") or "COMP-001",
+                "role": payload.get("role") or "Admin",
+                "name": payload.get("name") or "User",
+                "email": payload.get("email") or "",
+                "permissions": payload.get("permissions") or {}
+            }
+
+    if not user or not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="User not found")
+
+    if user.get("role") == "Installer":
+        perms = user.get("permissions")
+        if not isinstance(perms, dict):
+            user["permissions"] = {}
+            perms = user["permissions"]
+        if not isinstance(perms.get("reports"), dict):
+            perms["reports"] = {}
+        perms["reports"]["view"] = False
 
     # Store in cache so subsequent requests in next 5 min skip Supabase round-trips
     _cache_put_user(token, user)
+    logger.error(f"DEBUG: get_current_user returning {user.get('role')} with perms: {user.get('permissions')}")
     return user
 
 # ---------- Models ----------
@@ -1471,26 +1815,6 @@ class StatusUpdate(BaseModel):
 
 class NoteIn(BaseModel):
     text: str
-
-class ManualProgressUpdate(BaseModel):
-    manual_progress_enabled: bool
-    manual_progress: Optional[int] = None
-
-class CleanClientDataRequest(BaseModel):
-    survey_photos: bool = False
-    installation_photos: bool = False
-    onboarding_documents: bool = False
-    survey_reports: bool = False
-    generated_quotations: bool = False
-    generated_invoices: bool = False
-    delivery_bills: bool = False
-    documents: bool = False
-    attachments: bool = False
-    project_files: bool = False
-    material_request_files: bool = False
-    activity_logs: bool = False
-    other_uploaded_files: bool = False
-
 
 class EmployeeIn(BaseModel):
     name: str
@@ -1611,13 +1935,6 @@ def calc_progress(stages: Dict[str, bool]) -> int:
     done = sum(1 for s in DEFAULT_STAGES if stages.get(s))
     return round((done / len(DEFAULT_STAGES)) * 100)
 
-def get_client_progress(client_doc: dict, new_stages: dict) -> int:
-    if client_doc and client_doc.get("manual_progress_enabled"):
-        val = client_doc.get("manual_progress")
-        return int(val) if val is not None else 0
-    return calc_progress(new_stages)
-
-
 STAGE_CHECKLISTS = {
     "Survey": [
         "Site access is safe",
@@ -1647,7 +1964,14 @@ STAGE_CHECKLISTS = {
 }
 
 def sync_checklist_completed(stages: dict) -> dict:
-    checklist_completed = stages.get("checklist_completed") or {}
+    raw_checklist = stages.get("checklist_completed")
+    checklist_completed = {}
+    if isinstance(raw_checklist, dict):
+        for k, v in raw_checklist.items():
+            if isinstance(v, str):
+                checklist_completed[str(k)] = v.strip().lower() in ("true", "1", "yes", "completed")
+            else:
+                checklist_completed[str(k)] = bool(v)
     for stage, items in STAGE_CHECKLISTS.items():
         if not stages.get(stage):
             for item in items:
@@ -1662,10 +1986,13 @@ def serialize_user(u: dict) -> dict:
 
 ROLE_PAGES = ["dashboard", "clients", "documents", "project_execution", "task_portal", "data_management", "client_data", "complaints", "reports", "settings", "team", "sales_documents"]
 PERMS = ["view", "create", "edit", "delete", "approve"]
+PROJ_EXEC_TABS = ["verification", "approval", "reject", "project_assignment", "retry"]
 
 def default_perms_for_role(role: str) -> Dict[str, Dict[str, bool]]:
     if role == "Admin":
-        return {p: {a: True for a in PERMS} for p in ROLE_PAGES}
+        res = {p: {a: True for a in PERMS} for p in ROLE_PAGES}
+        res["project_execution"].update({t: True for t in PROJ_EXEC_TABS})
+        return res
     base = {p: {a: False for a in PERMS} for p in ROLE_PAGES}
     # Everyone (even employees) can VIEW the complaint center and raise complaints —
     # they're built to surface issues across the org.
@@ -1677,6 +2004,7 @@ def default_perms_for_role(role: str) -> Dict[str, Dict[str, bool]]:
     elif role == "Supervisor":
         for p in ["dashboard", "clients", "task_portal", "project_execution", "client_data"]:
             base[p] = {"view": True, "create": True, "edit": True, "delete": False, "approve": True}
+        base["project_execution"].update({t: True for t in PROJ_EXEC_TABS})
         base["complaints"] = {"view": True, "create": True, "edit": True, "delete": False, "approve": True}
     elif role == "Sales Executive":
         for p in ["dashboard", "clients"]:
@@ -1695,7 +2023,12 @@ def has_perm(user: Dict[str, Any], page: str, action: str) -> bool:
     if user.get("role") == "Admin":
         return True
     perms = user.get("permissions") or {}
-    return bool((perms.get(page) or {}).get(action))
+    page_perms = perms.get(page) or {}
+    val = page_perms.get(action)
+    if val is None and page == "project_execution" and action in PROJ_EXEC_TABS:
+        # Fallback to main project_execution view permission for backward compatibility
+        return page_perms.get("view") is True
+    return val is True
 
 
 def require_perm(page: str, action: str):
@@ -1860,53 +2193,179 @@ async def register_company(data: RegisterCompanyIn, response: Response):
     company_doc.pop("_id", None)
     return {"token": token, "refresh_token": refresh_token, "user": serialize_user(user_doc), "company": company_doc}
 
+def _lookup_user_for_login_sync(ident: str, raw: str):
+    rpc_res = get_rpc_client().rpc("lookup_user_for_login", {
+        "p_email": ident,
+        "p_mobile": raw,
+        "p_employee_id": raw
+    }).execute()
+    return rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
+
+def _supabase_sign_in_sync(email: str, password: str):
+    return supabase.auth.sign_in_with_password({
+        "email": email,
+        "password": password
+    })
+
+def _fetch_company_sync(company_id: str):
+    company_rpc = get_rpc_client().rpc("get_company_by_id", {"p_company_id": company_id}).execute()
+    return company_rpc.data[0] if isinstance(company_rpc.data, list) and company_rpc.data else None
+
+def _lookup_user_profile_with_token_sync(user_id: str, token: str):
+    """Fetch user profile using the user's own JWT - bypasses RLS since users can read their own row."""
+    user_client = get_supabase_client(token=token)
+    try:
+        rpc_res = user_client.rpc("get_user_by_id", {"p_user_id": user_id}).execute()
+        return rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
+    except Exception:
+        return None
+
+def _fetch_company_with_token_sync(company_id: str, token: str):
+    """Fetch company using the user's own JWT - bypasses RLS."""
+    user_client = get_supabase_client(token=token)
+    try:
+        rpc_res = user_client.rpc("get_company_by_id", {"p_company_id": company_id}).execute()
+        return rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
+    except Exception:
+        return None
+
 @api_router.post("/auth/login")
 async def login(data: LoginIn, response: Response):
+    _t0 = time.time()
+    def _elapsed():
+        return round((time.time() - _t0) * 1000)
+
     raw = data.identifier.strip()
     ident = raw.lower()
-    # Use SECURITY DEFINER RPC to bypass RLS — anon key cannot SELECT public.users directly
-    try:
-        rpc_res = get_rpc_client().rpc("lookup_user_for_login", {
-            "p_email": ident,
-            "p_mobile": raw,
-            "p_employee_id": raw
-        }).execute()
-        user = rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
-    except Exception as e:
-        logger.error(f"lookup_user_for_login RPC failed: {e}")
-        user = None
-    if not user or not isinstance(user, dict):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    is_email = "@" in ident
+    logger.info(f"[LOGIN] START ident={ident[:20]} is_email={is_email}")
+
+    token = ""
+    refresh_token = ""
+    user = None
+    auth_user_id = None
+
+    if is_email:
+        # ── Email login: authenticate directly with Supabase Auth (no RPC needed) ──
+        logger.info(f"[LOGIN] step=auth_start elapsed={_elapsed()}ms")
+        try:
+            auth_res = await asyncio.to_thread(_supabase_sign_in_sync, ident, data.password)
+            if not auth_res or not auth_res.session:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            token = auth_res.session.access_token
+            refresh_token = auth_res.session.refresh_token
+            auth_user_id = auth_res.session.user.id if auth_res.session.user else None
+            logger.info(f"[LOGIN] step=auth_done user_id={auth_user_id} elapsed={_elapsed()}ms")
+        except HTTPException:
+            raise
+        except Exception as e:
+            err_str = str(e).lower()
+            logger.error(f"[LOGIN] step=auth_failed elapsed={_elapsed()}ms err={e}")
+            if "invalid login credentials" in err_str or "invalid_credentials" in err_str:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            if "email not confirmed" in err_str:
+                raise HTTPException(status_code=401, detail="Email not confirmed. Please check your inbox.")
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        # Fetch user profile using the user's own JWT (bypasses RLS without needing service key)
+        logger.info(f"[LOGIN] step=profile_lookup_start elapsed={_elapsed()}ms")
+        if auth_user_id:
+            try:
+                user = await asyncio.to_thread(_lookup_user_profile_with_token_sync, auth_user_id, token)
+                if user:
+                    logger.info(f"[LOGIN] step=profile_via_user_jwt elapsed={_elapsed()}ms")
+            except Exception:
+                pass
+            if not user:
+                try:
+                    # Fallback: try service RPC
+                    rpc_res = await asyncio.to_thread(
+                        lambda: get_rpc_client().rpc("get_user_by_id", {"p_user_id": auth_user_id}).execute()
+                    )
+                    user = rpc_res.data[0] if isinstance(rpc_res.data, list) and rpc_res.data else None
+                    if user:
+                        logger.info(f"[LOGIN] step=profile_via_service_rpc elapsed={_elapsed()}ms")
+                except Exception:
+                    pass
+            if not user:
+                # Last resort: try direct DB lookup via CollectionAdapter
+                try:
+                    user = await db.users.find_one({"id": auth_user_id}, {"_id": 0})
+                    if user:
+                        logger.info(f"[LOGIN] step=profile_via_db elapsed={_elapsed()}ms")
+                except Exception:
+                    pass
+
+        if not user or not isinstance(user, dict):
+            logger.error(f"[LOGIN] step=profile_not_found user_id={auth_user_id} elapsed={_elapsed()}ms")
+            raise HTTPException(status_code=401, detail="User profile not found. Please contact admin.")
+
+    else:
+        # ── Employee ID / Mobile login: RPC lookup to get email, then sign in ──
+        logger.info(f"[LOGIN] step=rpc_lookup_start elapsed={_elapsed()}ms")
+        try:
+            user = await asyncio.to_thread(_lookup_user_for_login_sync, ident, raw)
+            logger.info(f"[LOGIN] step=rpc_lookup_done found={bool(user)} elapsed={_elapsed()}ms")
+        except Exception as e:
+            logger.error(f"[LOGIN] step=rpc_lookup_failed elapsed={_elapsed()}ms err={e}")
+            user = None
+
+        if not user or not isinstance(user, dict):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        email_for_auth = str(user.get("email") or "")
+        logger.info(f"[LOGIN] step=auth_start elapsed={_elapsed()}ms")
+        try:
+            auth_res = await asyncio.to_thread(_supabase_sign_in_sync, email_for_auth, data.password)
+            if not auth_res or not auth_res.session:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            token = auth_res.session.access_token
+            refresh_token = auth_res.session.refresh_token
+            logger.info(f"[LOGIN] step=auth_done elapsed={_elapsed()}ms")
+        except HTTPException:
+            raise
+        except Exception as e:
+            err_str = str(e).lower()
+            logger.error(f"[LOGIN] step=auth_failed elapsed={_elapsed()}ms err={e}")
+            if "invalid login credentials" in err_str or "invalid_credentials" in err_str:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            if "email not confirmed" in err_str:
+                raise HTTPException(status_code=401, detail="Email not confirmed. Please check your inbox.")
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
     if user.get("status") == "Inactive":
         raise HTTPException(status_code=403, detail="Account is inactive")
 
-    email_for_auth = str(user.get("email") or "")
-
-    try:
-        auth_res = supabase.auth.sign_in_with_password({
-            "email": email_for_auth,
-            "password": data.password
-        })
-        if not auth_res or not auth_res.session:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        token = auth_res.session.access_token
-        refresh_token = auth_res.session.refresh_token
-    except Exception as e:
-        err_str = str(e).lower()
-        logger.error(f"Supabase login failed for {email_for_auth}: {e}")
-        if "invalid login credentials" in err_str or "invalid_credentials" in err_str:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        if "email not confirmed" in err_str:
-            raise HTTPException(status_code=401, detail="Email not confirmed. Please check your inbox.")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
     response.set_cookie("access_token", token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
-    try:
-        company_rpc = get_rpc_client().rpc("get_company_by_id", {"p_company_id": user.get("company_id") or ""}).execute()
-        company = company_rpc.data[0] if isinstance(company_rpc.data, list) and company_rpc.data else await db.companies.find_one({"id": user.get("company_id") or ""}, {"_id": 0})
-    except Exception as e:
-        logger.error(f"Failed to fetch company during login: {e}")
-        company = None
+
+    if user.get("role") == "Installer":
+        perms = user.get("permissions")
+        if not isinstance(perms, dict):
+            user["permissions"] = {}
+            perms = user["permissions"]
+        if not isinstance(perms.get("reports"), dict):
+            perms["reports"] = {}
+        perms["reports"]["view"] = False
+
+    cid = str(user.get("company_id") or "")
+    logger.info(f"[LOGIN] step=company_lookup_start cid={cid} elapsed={_elapsed()}ms")
+    company = _cache_get_company(cid)
+    if not company and cid:
+        try:
+            company = await asyncio.to_thread(_fetch_company_with_token_sync, cid, token)
+            if not company:
+                company = await asyncio.to_thread(_fetch_company_sync, cid)
+            if not company:
+                company = await db.companies.find_one({"id": cid}, {"_id": 0})
+            if company and isinstance(company, dict):
+                _cache_put_company(cid, company)
+        except Exception as e:
+            logger.error(f"[LOGIN] step=company_failed elapsed={_elapsed()}ms err={e}")
+            company = None
+
+    # Proactively seed auth cache so subsequent requests (/auth/me, /clients, etc.) resolve instantly
+    _cache_put_user(token, user)
+    logger.info(f"[LOGIN] COMPLETE elapsed={_elapsed()}ms")
     return {"token": token, "refresh_token": refresh_token, "user": serialize_user(user), "company": company}
 
 @api_router.post("/auth/logout")
@@ -2298,6 +2757,7 @@ async def update_company(data: CompanyUpdate, request: Request, user=Depends(get
         await db.companies.update_one({"id": user["company_id"]}, {"$set": update})
         
     await log_activity(user["company_id"], user["id"], user["name"], "Updated Company Profile")
+    _cache_invalidate_company(user["company_id"])
     
     projection = {
         "_id": 0,
@@ -2529,6 +2989,7 @@ async def download_file(file_id: str, request: Request, auth: Optional[str] = Qu
 async def list_clients(
     user=Depends(get_current_user),
     limit: int = 200,
+    skip: int = 0,
     search: Optional[str] = None,
     status: Optional[str] = None,
     phase_type: Optional[str] = None,
@@ -2541,9 +3002,8 @@ async def list_clients(
         q["phase_type"] = phase_type
     if subsidy_eligible is not None:
         q["subsidy_eligible"] = subsidy_eligible
-    # Cap max at 500 but default to 200 for faster loads
     limit = min(limit, 500)
-    # Use a lean projection — only fields needed by Dashboard and Clients list views
+    skip = max(0, skip)
     projection = {
         "_id": 0, "id": 1, "sol_id": 1, "full_name": 1, "mobile": 1,
         "consumer_number": 1, "status": 1, "system_kw": 1, "phase_type": 1,
@@ -2558,7 +3018,7 @@ async def list_clients(
             {"consumer_number": {"$regex": s}},
             {"sol_id":          {"$regex": s, "$options": "i"}},
         ]
-    return await db.clients.find(q, projection).sort("created_at", -1).to_list(limit)
+    return await db.clients.find(q, projection).sort("created_at", -1).skip(skip).to_list(limit)
 
 @api_router.get("/clients/stats")
 async def client_stats(user=Depends(get_current_user)):
@@ -2621,20 +3081,19 @@ async def update_client(client_id: str, data: ClientIn, user=Depends(get_current
     if not has_perm(user, "clients", "edit"):
         raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
     update = data.model_dump()
-    existing = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Not found")
-    
     # Never overwrite existing stages with None — fetch current stages from DB and merge
     if not update.get("stages"):
-        update["stages"] = existing.get("stages") or {s: False for s in DEFAULT_STAGES}
-        
-    # Auto-set Onboarding=True for approved/active statuses or when details are filled
+        existing = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
+        if existing:
+            update["stages"] = existing.get("stages") or {s: False for s in DEFAULT_STAGES}
+        else:
+            update.pop("stages", None)
+    # Auto-set Onboarding=True for approved/active statuses
     if update.get("stages"):
-        if data.status in ["Approved", "Installation Pending", "Installation Complete", "Handover Complete"] or (update.get("full_name") and update.get("mobile")):
+        if data.status in ["Approved", "Installation Pending", "Installation Complete", "Handover Complete"]:
             update["stages"]["Onboarding"] = True
         update["stages"] = sync_checklist_completed(update["stages"])
-        update["progress"] = get_client_progress(existing, update["stages"])
+        update["progress"] = calc_progress(update["stages"])
     update["updated_at"] = now_iso()
     res = await db.clients.update_one({"id": client_id, "company_id": user["company_id"]}, {"$set": update})
     if res.matched_count == 0:
@@ -2644,18 +3103,20 @@ async def update_client(client_id: str, data: ClientIn, user=Depends(get_current
 
 @api_router.patch("/clients/{client_id}/stages")
 async def update_stages(client_id: str, data: StageUpdate, user=Depends(get_current_user)):
-    if not has_perm(user, "clients", "edit"):
+    if not (has_perm(user, "clients", "edit") or has_perm(user, "client_data", "edit") or has_perm(user, "project_execution", "edit")):
         raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
     existing = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
+    if not existing and user.get("role") == "Admin":
+        existing = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Client not found")
-    stages = {**(existing.get("stages") or {s: False for s in DEFAULT_STAGES}), **data.stages}
-    # Ensure Onboarding is always True once any stage is being managed
-    stages["Onboarding"] = True
-    stages = sync_checklist_completed(stages)
-    progress = get_client_progress(existing, stages)
+    merged_stages = {**(existing.get("stages") or {s: False for s in DEFAULT_STAGES}), **data.stages}
+    if "Onboarding" not in data.stages and not merged_stages.get("Onboarding"):
+        merged_stages["Onboarding"] = True
+    stages = sync_checklist_completed(merged_stages)
+    progress = calc_progress(stages)
     await db.clients.update_one(
-        {"id": client_id, "company_id": user["company_id"]},
+        {"id": client_id},
         {"$set": {"stages": stages, "progress": progress, "updated_at": now_iso()}}
     )
     if stages.get("Handover") and existing.get("status") != "Handover Complete":
@@ -2677,403 +3138,12 @@ async def update_status(client_id: str, data: StatusUpdate, user=Depends(get_cur
         stages = c.get("stages") or {s: False for s in DEFAULT_STAGES}
         stages["Onboarding"] = True
         update_set["stages"] = stages
-        update_set["progress"] = get_client_progress(c, stages)
+        update_set["progress"] = calc_progress(stages)
         
     await db.clients.update_one(
         {"id": client_id, "company_id": user["company_id"]},
         {"$set": update_set}
     )
-    return await db.clients.find_one({"id": client_id}, {"_id": 0})
-
-@api_router.patch("/clients/{client_id}/manual-progress")
-async def update_manual_progress(client_id: str, data: ManualProgressUpdate, user=Depends(get_current_user)):
-    if not has_perm(user, "clients", "edit"):
-        raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
-    c = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]})
-    if not c:
-        raise HTTPException(status_code=404, detail="Client not found")
-        
-    stages = c.get("stages") or {s: False for s in DEFAULT_STAGES}
-    progress = data.manual_progress if data.manual_progress_enabled else calc_progress(stages)
-    if progress is None:
-        progress = 0
-        
-    await db.clients.update_one(
-        {"id": client_id, "company_id": user["company_id"]},
-        {"$set": {
-            "manual_progress_enabled": data.manual_progress_enabled,
-            "manual_progress": data.manual_progress,
-            "progress": progress,
-            "updated_at": now_iso()
-        }}
-    )
-    return await db.clients.find_one({"id": client_id}, {"_id": 0})
-
-async def _delete_file_id_permanently(company_id: str, file_id: str):
-    file_rec = await db.files.find_one({"id": file_id, "company_id": company_id})
-    if not file_rec:
-        return False
-    try:
-        delete_object(file_rec["storage_path"])
-    except Exception as e:
-        logger.error(f"Failed to delete storage file: {e}")
-    await db.files.delete_one({"id": file_id, "company_id": company_id})
-    await db.clients.update_many(
-        {"company_id": company_id},
-        {"$pull": {"documents": {"id": file_id}}}
-    )
-    surveys = await db.surveys.find({"company_id": company_id}).to_list(1000)
-    for s in surveys:
-        details = s.get("details") or {}
-        modified = False
-        attachments = details.get("attachments") or {}
-        for k, v in list(attachments.items()):
-            if v == file_id:
-                attachments.pop(k, None)
-                modified = True
-            elif isinstance(v, dict) and v.get("file_id") == file_id:
-                attachments.pop(k, None)
-                modified = True
-        photos = details.get("photos") or {}
-        for k, v in list(photos.items()):
-            if v == file_id:
-                photos.pop(k, None)
-                modified = True
-            elif isinstance(v, dict) and v.get("file_id") == file_id:
-                photos.pop(k, None)
-                modified = True
-        checklist = details.get("checklist") or []
-        for item in checklist:
-            if isinstance(item, dict) and item.get("file_id") == file_id:
-                item.pop("file_id", None)
-                item.pop("filename", None)
-                modified = True
-        if modified:
-            await db.surveys.update_one({"id": s["id"]}, {"$set": {"details": details}})
-    installations = await db.installations.find({"company_id": company_id}).to_list(1000)
-    for inst in installations:
-        details = inst.get("details") or {}
-        modified = False
-        attachments = details.get("attachments") or {}
-        for k, v in list(attachments.items()):
-            if v == file_id:
-                attachments.pop(k, None)
-                modified = True
-            elif isinstance(v, dict) and v.get("file_id") == file_id:
-                attachments.pop(k, None)
-                modified = True
-        checklist = details.get("checklist") or []
-        for item in checklist:
-            if isinstance(item, dict) and item.get("file_id") == file_id:
-                item.pop("file_id", None)
-                item.pop("filename", None)
-                modified = True
-        if modified:
-            await db.installations.update_one({"id": inst["id"]}, {"$set": {"details": details}})
-    mdels = await db.material_deliveries.find({"company_id": company_id}).to_list(1000)
-    for md in mdels:
-        details = md.get("details") or {}
-        modified = False
-        attachments = details.get("attachments") or {}
-        for k, v in list(attachments.items()):
-            if v == file_id:
-                attachments.pop(k, None)
-                modified = True
-            elif isinstance(v, dict) and v.get("file_id") == file_id:
-                attachments.pop(k, None)
-                modified = True
-        checklist = details.get("checklist") or []
-        for item in checklist:
-            if isinstance(item, dict) and item.get("file_id") == file_id:
-                item.pop("file_id", None)
-                item.pop("filename", None)
-                modified = True
-        if modified:
-            await db.material_deliveries.update_one({"id": md["id"]}, {"$set": {"details": details}})
-    docs = await db.documents.find({"company_id": company_id}).to_list(1000)
-    for doc in docs:
-        details = doc.get("details") or {}
-        modified = False
-        attachments = details.get("attachments") or {}
-        for k, v in list(attachments.items()):
-            if v == file_id:
-                attachments.pop(k, None)
-                modified = True
-            elif isinstance(v, dict) and v.get("file_id") == file_id:
-                attachments.pop(k, None)
-                modified = True
-        checklist = details.get("checklist") or []
-        for item in checklist:
-            if isinstance(item, dict) and item.get("file_id") == file_id:
-                item.pop("file_id", None)
-                item.pop("filename", None)
-                modified = True
-        if modified:
-            await db.documents.update_one({"id": doc["id"]}, {"$set": {"details": details}})
-    meters = await db.meter_testings.find({"company_id": company_id}).to_list(1000)
-    for mt in meters:
-        details = mt.get("details") or {}
-        modified = False
-        attachments = details.get("attachments") or {}
-        for k, v in list(attachments.items()):
-            if v == file_id:
-                attachments.pop(k, None)
-                modified = True
-            elif isinstance(v, dict) and v.get("file_id") == file_id:
-                attachments.pop(k, None)
-                modified = True
-        checklist = details.get("checklist") or []
-        for item in checklist:
-            if isinstance(item, dict) and item.get("file_id") == file_id:
-                item.pop("file_id", None)
-                item.pop("filename", None)
-                modified = True
-        if modified:
-            await db.meter_testings.update_one({"id": mt["id"]}, {"$set": {"details": details}})
-    verifs = await db.verifications.find({"company_id": company_id}).to_list(1000)
-    for v in verifs:
-        photos = v.get("photos") or {}
-        modified = False
-        for k, val in list(photos.items()):
-            if val == file_id:
-                photos.pop(k, None)
-                modified = True
-            elif isinstance(val, dict) and val.get("file_id") == file_id:
-                photos.pop(k, None)
-                modified = True
-        if modified:
-            await db.verifications.update_one({"id": v["id"]}, {"$set": {"photos": photos}})
-    mat_reqs = await db.material_requests.find({"company_id": company_id}).to_list(1000)
-    for mr in mat_reqs:
-        modified = False
-        delivery = mr.get("delivery") or {}
-        if delivery.get("delivery_photo_file_id") == file_id:
-            delivery.pop("delivery_photo_file_id", None)
-            modified = True
-        if delivery.get("challan_photo_file_id") == file_id:
-            delivery.pop("challan_photo_file_id", None)
-            modified = True
-        if modified:
-            await db.material_requests.update_one({"id": mr["id"]}, {"$set": {"delivery": delivery}})
-    return True
-
-@api_router.delete("/clients/{client_id}/files/{file_id}")
-async def delete_client_file(client_id: str, file_id: str, user=Depends(get_current_user)):
-    if user.get("user_type") != "owner" and user.get("role") != "Admin":
-        raise HTTPException(status_code=403, detail="Only Admin or Owner can delete files.")
-    c = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]})
-    if not c:
-        raise HTTPException(status_code=404, detail="Client not found")
-    success = await _delete_file_id_permanently(user["company_id"], file_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="File not found")
-    await log_activity(user["company_id"], user["id"], user["name"], "Deleted Client File", c.get("full_name", ""))
-    return {"ok": True}
-
-@api_router.delete("/clients/{client_id}/records/{collection_name}/{record_id}")
-async def delete_client_record(client_id: str, collection_name: str, record_id: str, user=Depends(get_current_user)):
-    if user.get("user_type") != "owner" and user.get("role") != "Admin":
-        raise HTTPException(status_code=403, detail="Only Admin or Owner can delete details.")
-    c = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]})
-    if not c:
-        raise HTTPException(status_code=404, detail="Client not found")
-    if collection_name not in ("surveys", "installations", "documents", "meter_testings", "verifications", "material_deliveries", "material_requests", "service_tickets", "tasks"):
-        raise HTTPException(status_code=400, detail="Invalid collection")
-    record = await db[collection_name].find_one({"id": record_id, "client_id": client_id, "company_id": user["company_id"]})
-    if not record:
-        raise HTTPException(status_code=404, detail="Record not found")
-    file_ids = set()
-    details = record.get("details") or {}
-    attachments = details.get("attachments") or {}
-    for v in attachments.values():
-        if isinstance(v, str) and v:
-            file_ids.add(v)
-        elif isinstance(v, dict) and v.get("file_id"):
-            file_ids.add(v["file_id"])
-    photos = details.get("photos") or record.get("photos") or {}
-    for v in photos.values():
-        if isinstance(v, str) and v:
-            file_ids.add(v)
-        elif isinstance(v, dict) and v.get("file_id"):
-            file_ids.add(v["file_id"])
-    checklist = details.get("checklist") or []
-    for item in checklist:
-        if isinstance(item, dict) and item.get("file_id"):
-            file_ids.add(item["file_id"])
-    t_attachments = record.get("attachments") or []
-    for att in t_attachments:
-        if isinstance(att, dict) and att.get("file_id"):
-            file_ids.add(att["file_id"])
-    for fid in file_ids:
-        await _delete_file_id_permanently(user["company_id"], fid)
-    await db[collection_name].delete_one({"id": record_id, "company_id": user["company_id"]})
-    stage_reset_map = {
-        "surveys": "Survey",
-        "installations": "Installation",
-        "documents": "Document Signed",
-        "meter_testings": "Meter Testing Completed",
-        "material_deliveries": "Material Delivery",
-        "verifications": "Verification",
-    }
-    stage_to_reset = stage_reset_map.get(collection_name)
-    if stage_to_reset:
-        new_stages = {**(c.get("stages") or {})}
-        new_stages[stage_to_reset] = False
-        progress = get_client_progress(c, new_stages)
-        await db.clients.update_one(
-            {"id": client_id, "company_id": user["company_id"]},
-            {"$set": {"stages": new_stages, "progress": progress, "updated_at": now_iso()}}
-        )
-    await log_activity(user["company_id"], user["id"], user["name"], f"Deleted {collection_name.title()} Record", c.get("full_name", ""))
-    return {"ok": True}
-
-@api_router.post("/clients/{client_id}/clean")
-async def clean_client_data(client_id: str, data: CleanClientDataRequest, user=Depends(get_current_user)):
-    if user.get("user_type") != "owner" and user.get("role") != "Admin":
-        raise HTTPException(status_code=403, detail="Only Admin or Owner can clean client data.")
-    c = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]})
-    if not c:
-        raise HTTPException(status_code=404, detail="Client not found")
-    company_id = user["company_id"]
-    if data.survey_photos:
-        surveys = await db.surveys.find({"client_id": client_id, "company_id": company_id}).to_list(100)
-        for s in surveys:
-            details = s.get("details") or {}
-            photos = details.get("photos") or {}
-            for val in list(photos.values()):
-                fid = val.get("file_id") if isinstance(val, dict) else val
-                if fid: await _delete_file_id_permanently(company_id, fid)
-            await db.surveys.update_one({"id": s["id"]}, {"$set": {"details.photos": {}, "details.attachments": {}}})
-    if data.installation_photos:
-        insts = await db.installations.find({"client_id": client_id, "company_id": company_id}).to_list(100)
-        for inst in insts:
-            details = inst.get("details") or {}
-            attachments = details.get("attachments") or {}
-            for val in list(attachments.values()):
-                fid = val.get("file_id") if isinstance(val, dict) else val
-                if fid: await _delete_file_id_permanently(company_id, fid)
-            await db.installations.update_one({"id": inst["id"]}, {"$set": {"details.attachments": {}, "details.photos": {}}})
-    if data.onboarding_documents:
-        docs = list(c.get("documents") or [])
-        to_keep = []
-        for d in docs:
-            fid = d.get("id") or d.get("file_id")
-            if fid:
-                file_rec = await db.files.find_one({"id": fid, "company_id": company_id})
-                if file_rec and file_rec.get("category") in ("client", "customer-documents") and not file_rec.get("doc_type"):
-                    await _delete_file_id_permanently(company_id, fid)
-                else:
-                    to_keep.append(d)
-            else:
-                to_keep.append(d)
-        await db.clients.update_one({"id": client_id}, {"$set": {"documents": to_keep}})
-    if data.survey_reports:
-        surveys = await db.surveys.find({"client_id": client_id, "company_id": company_id}).to_list(100)
-        for s in surveys:
-            details = s.get("details") or {}
-            for val in list((details.get("photos") or {}).values()):
-                fid = val.get("file_id") if isinstance(val, dict) else val
-                if fid: await _delete_file_id_permanently(company_id, fid)
-            await db.surveys.delete_one({"id": s["id"]})
-        new_stages = {**(c.get("stages") or {})}
-        new_stages["Survey"] = False
-        progress = get_client_progress(c, new_stages)
-        await db.clients.update_one({"id": client_id}, {"$set": {"stages": new_stages, "progress": progress}})
-    if data.generated_quotations:
-        docs = list(c.get("documents") or [])
-        to_keep = []
-        for d in docs:
-            fid = d.get("id") or d.get("file_id")
-            if fid:
-                file_rec = await db.files.find_one({"id": fid, "company_id": company_id})
-                if file_rec and file_rec.get("doc_type") == "quotation":
-                    await _delete_file_id_permanently(company_id, fid)
-                else:
-                    to_keep.append(d)
-            else:
-                to_keep.append(d)
-        await db.clients.update_one({"id": client_id}, {"$set": {"documents": to_keep}})
-    if data.generated_invoices:
-        docs = list(c.get("documents") or [])
-        to_keep = []
-        for d in docs:
-            fid = d.get("id") or d.get("file_id")
-            if fid:
-                file_rec = await db.files.find_one({"id": fid, "company_id": company_id})
-                if file_rec and file_rec.get("doc_type") == "tax_invoice":
-                    await _delete_file_id_permanently(company_id, fid)
-                else:
-                    to_keep.append(d)
-            else:
-                to_keep.append(d)
-        await db.clients.update_one({"id": client_id}, {"$set": {"documents": to_keep}})
-    if data.delivery_bills:
-        docs = list(c.get("documents") or [])
-        to_keep = []
-        for d in docs:
-            fid = d.get("id") or d.get("file_id")
-            if fid:
-                file_rec = await db.files.find_one({"id": fid, "company_id": company_id})
-                if file_rec and file_rec.get("doc_type") == "delivery_bill":
-                    await _delete_file_id_permanently(company_id, fid)
-                else:
-                    to_keep.append(d)
-            else:
-                to_keep.append(d)
-        await db.clients.update_one({"id": client_id}, {"$set": {"documents": to_keep}})
-    if data.documents:
-        recs = await db.documents.find({"client_id": client_id, "company_id": company_id}).to_list(100)
-        for r in recs:
-            details = r.get("details") or {}
-            for val in list((details.get("attachments") or {}).values()):
-                fid = val.get("file_id") if isinstance(val, dict) else val
-                if fid: await _delete_file_id_permanently(company_id, fid)
-            await db.documents.delete_one({"id": r["id"]})
-        new_stages = {**(c.get("stages") or {})}
-        new_stages["Document Signed"] = False
-        progress = get_client_progress(c, new_stages)
-        await db.clients.update_one({"id": client_id}, {"$set": {"stages": new_stages, "progress": progress}})
-    if data.attachments:
-        files = await db.files.find({"company_id": company_id, "category": {"$in": ["attachments", "general"]}}).to_list(500)
-        for f in files:
-            if f.get("client_name") == c.get("full_name") or client_id in f.get("storage_path", ""):
-                await _delete_file_id_permanently(company_id, f["id"])
-    if data.project_files:
-        tasks = await db.tasks.find({"client_id": client_id, "company_id": company_id}).to_list(500)
-        for t in tasks:
-            submission = t.get("submission") or {}
-            photos = submission.get("photos") or {}
-            for p_id in list(photos.values()):
-                fid = p_id.get("file_id") if isinstance(p_id, dict) else p_id
-                if fid: await _delete_file_id_permanently(company_id, fid)
-            await db.tasks.update_one({"id": t["id"]}, {"$set": {"submission.photos": {}, "submission.attachments": {}}})
-    if data.material_request_files:
-        mrs = await db.material_requests.find({"client_id": client_id, "company_id": company_id}).to_list(100)
-        for mr in mrs:
-            delivery = mr.get("delivery") or {}
-            fid1 = delivery.get("delivery_photo_file_id")
-            fid2 = delivery.get("challan_photo_file_id")
-            if fid1: await _delete_file_id_permanently(company_id, fid1)
-            if fid2: await _delete_file_id_permanently(company_id, fid2)
-            await db.material_requests.update_one({"id": mr["id"]}, {"$set": {"delivery": {}}})
-    if data.activity_logs:
-        import re
-        log_filters = []
-        if c.get("full_name"):
-            log_filters.append({"target": {"$regex": re.escape(c["full_name"]), "$options": "i"}})
-        if c.get("sol_id"):
-            log_filters.append({"target": {"$regex": re.escape(c["sol_id"]), "$options": "i"}})
-        log_filters.append({"target": {"$regex": re.escape(client_id), "$options": "i"}})
-        await db.activity_logs.delete_many({
-            "company_id": company_id,
-            "$or": log_filters
-        })
-    if data.other_uploaded_files:
-        files = await db.files.find({"company_id": company_id}).to_list(1000)
-        for f in files:
-            if client_id in f.get("storage_path", "") or f.get("client_name") == c.get("full_name"):
-                await _delete_file_id_permanently(company_id, f["id"])
-    await log_activity(user["company_id"], user["id"], user["name"], "Cleaned Client Data", c.get("full_name", ""))
     return await db.clients.find_one({"id": client_id}, {"_id": 0})
 
 @api_router.post("/clients/{client_id}/notes")
@@ -3137,7 +3207,7 @@ async def delete_client(client_id: str, user=Depends(get_current_user)):
     material_deliveries_records = await db.material_deliveries.find({"client_id": client_id, "company_id": company_id}).to_list(1000)
 
     # Fetch inward / outward entries
-    inward_entries_records = []
+    inward_entries_records = await db.inward_entries.find({"client_id": client_id, "company_id": company_id}).to_list(1000)
     outward_entries_records = await db.outward_entries.find({"client_id": client_id, "company_id": company_id}).to_list(1000)
 
     # Fetch documents
@@ -3221,13 +3291,15 @@ async def delete_client(client_id: str, user=Depends(get_current_user)):
         filtered_assets = [a for a in original_all_assets if not (a.get("client_id") == client_id and a.get("company_id") == company_id)]
         _save_local_assets(filtered_assets)
 
-        # Database Deletions - child tables first, parent client last to satisfy SQL FK constraints
+        # Database Deletions
+        await db.clients.delete_one({"id": client_id, "company_id": company_id})
+        await db.projects.delete_many({"client_id": client_id, "company_id": company_id})
+        await db.tasks.delete_many({"client_id": client_id, "company_id": company_id})
         if task_ids:
             await db.task_updates.delete_many({"task_id": {"$in": task_ids}})
-        await db.tasks.delete_many({"client_id": client_id, "company_id": company_id})
-        await db.projects.delete_many({"client_id": client_id, "company_id": company_id})
         await db.material_requests.delete_many({"client_id": client_id, "company_id": company_id})
         await db.material_deliveries.delete_many({"client_id": client_id, "company_id": company_id})
+        await db.inward_entries.delete_many({"client_id": client_id, "company_id": company_id})
         await db.outward_entries.delete_many({"client_id": client_id, "company_id": company_id})
         await db.documents.delete_many({"client_id": client_id, "company_id": company_id})
         await db.installations.delete_many({"client_id": client_id, "company_id": company_id})
@@ -3248,9 +3320,6 @@ async def delete_client(client_id: str, user=Depends(get_current_user)):
 
         if file_ids:
             await db.files.delete_many({"id": {"$in": list(file_ids)}, "company_id": company_id})
-
-        # Parent client record deleted last
-        await db.clients.delete_one({"id": client_id, "company_id": company_id})
 
     except Exception as exc:
         logger.error(f"Error during client deletion, initiating transaction rollback: {exc}")
@@ -3274,6 +3343,8 @@ async def delete_client(client_id: str, user=Depends(get_current_user)):
                 await db.material_requests.insert_many(backup_material_requests)
             if backup_material_deliveries:
                 await db.material_deliveries.insert_many(backup_material_deliveries)
+            if backup_inward_entries:
+                await db.inward_entries.insert_many(backup_inward_entries)
             if backup_outward_entries:
                 await db.outward_entries.insert_many(backup_outward_entries)
             if backup_documents:
@@ -3419,13 +3490,17 @@ async def generate_document(client_id: str, payload: Dict[str, Any], user=Depend
     if company_doc:
         logo_file_id = company_doc.get("logo_file_id")
         if logo_file_id:
-            file_rec = await db.files.find_one({"id": logo_file_id, "is_deleted": False})
-            if file_rec:
-                try:
-                    logo_bytes, _ = get_object(file_rec["storage_path"])
-                    company_doc["logo_bytes"] = logo_bytes
-                except Exception as e:
-                    logger.error(f"Error fetching company logo: {e}")
+            if logo_file_id in _company_logo_cache:
+                company_doc["logo_bytes"] = _company_logo_cache[logo_file_id]
+            else:
+                file_rec = await db.files.find_one({"id": logo_file_id, "is_deleted": False})
+                if file_rec:
+                    try:
+                        logo_bytes, _ = get_object(file_rec["storage_path"])
+                        company_doc["logo_bytes"] = logo_bytes
+                        _company_logo_cache[logo_file_id] = logo_bytes
+                    except Exception as e:
+                        logger.error(f"Error fetching company logo: {e}")
 
     doc_data = payload.get("doc_data") or {}
     if doc_type in ("quotation", "tax_invoice", "delivery_bill"):
@@ -3467,12 +3542,9 @@ async def generate_document(client_id: str, payload: Dict[str, Any], user=Depend
     docs = list(client_doc.get("documents") or [])
     docs.append({"id": file_id, "filename": filename, "label": _document_label(doc_type), "content_type": "application/pdf", "created_at": now_iso()})
     stages = {**(client_doc.get("stages") or {}), "Document Making": True, "Onboarding": True}
-    if doc_type == "quotation":
-        stages["Quotation"] = True
-    progress = get_client_progress(client_doc, stages)
     await db.clients.update_one(
         {"id": client_id, "company_id": user["company_id"]},
-        {"$set": {"documents": docs, "stages": stages, "progress": progress, "updated_at": now_iso()}}
+        {"$set": {"documents": docs, "stages": stages, "progress": calc_progress(stages), "updated_at": now_iso()}}
     )
     await log_activity(user["company_id"], user["id"], user["name"], f"Generated {_document_label(doc_type).upper()}", client_doc.get("full_name", ""))
     return {"id": file_id, "filename": filename, "label": _document_label(doc_type)}
@@ -3493,13 +3565,17 @@ async def generate_public_document(payload: Dict[str, Any], user=Depends(get_cur
     if company_doc:
         logo_file_id = company_doc.get("logo_file_id")
         if logo_file_id:
-            file_rec = await db.files.find_one({"id": logo_file_id, "is_deleted": False})
-            if file_rec:
-                try:
-                    logo_bytes, _ = get_object(file_rec["storage_path"])
-                    company_doc["logo_bytes"] = logo_bytes
-                except Exception as e:
-                    logger.error(f"Error fetching company logo: {e}")
+            if logo_file_id in _company_logo_cache:
+                company_doc["logo_bytes"] = _company_logo_cache[logo_file_id]
+            else:
+                file_rec = await db.files.find_one({"id": logo_file_id, "is_deleted": False})
+                if file_rec:
+                    try:
+                        logo_bytes, _ = get_object(file_rec["storage_path"])
+                        company_doc["logo_bytes"] = logo_bytes
+                        _company_logo_cache[logo_file_id] = logo_bytes
+                    except Exception as e:
+                        logger.error(f"Error fetching company logo: {e}")
 
     client_id = payload.get("client_id")
     client_doc = None
@@ -3557,12 +3633,9 @@ async def generate_public_document(payload: Dict[str, Any], user=Depends(get_cur
         docs = list(client_doc.get("documents") or [])
         docs.append({"id": file_id, "filename": filename, "label": _document_label(doc_type), "content_type": "application/pdf", "created_at": now_iso()})
         stages = {**(client_doc.get("stages") or {}), "Document Making": True, "Onboarding": True}
-        if doc_type == "quotation":
-            stages["Quotation"] = True
-        progress = get_client_progress(client_doc, stages)
         await db.clients.update_one(
             {"id": client_id, "company_id": user["company_id"]},
-            {"$set": {"documents": docs, "stages": stages, "progress": progress, "updated_at": now_iso()}}
+            {"$set": {"documents": docs, "stages": stages, "progress": calc_progress(stages), "updated_at": now_iso()}}
         )
     await log_activity(user["company_id"], user["id"], user["name"], f"Generated {_document_label(doc_type).upper()}", client_doc.get("full_name", "Manual") if client_doc else "Manual")
     
@@ -3703,13 +3776,14 @@ ACTIVE_PROJECT_STATUSES = ["Approved", "Installation Pending", "Installation Com
 @api_router.get("/projects/stats")
 async def project_stats(user=Depends(get_current_user)):
     cid = user["company_id"]
-    # Fetch all clients and filter in-memory to safely and correctly handle case-sensitive stages.Onboarding keys
-    raw_clients = await db.clients.find({"company_id": cid}, {"_id": 0, "id": 1, "status": 1, "stages": 1, "system_kw": 1}).to_list(2000)
-    active_clients = [
-        c for c in raw_clients
-        if (c.get("stages") and isinstance(c["stages"], dict) and c["stages"].get("Onboarding") is True) or
-           (c.get("status") in ACTIVE_PROJECT_STATUSES)
-    ]
+    active_query = {
+        "company_id": cid,
+        "$or": [
+            {"stages.Onboarding": True},
+            {"status": {"$in": ACTIVE_PROJECT_STATUSES}},
+        ],
+    }
+    active_clients = await db.clients.find(active_query, {"_id": 0, "id": 1, "status": 1, "stages": 1, "system_kw": 1}).to_list(2000)
     total = len(active_clients)
     pending_install = len([c for c in active_clients if not (c.get("stages") or {}).get("Installation")])
     material_pending = await db.material_requests.count_documents({"company_id": cid, "status": "pending"})
@@ -3732,17 +3806,16 @@ async def list_projects(user=Depends(get_current_user)):
         "stages": 1, "system_kw": 1, "updated_at": 1, "address": 1, "city": 1,
         "state": 1, "pincode": 1, "consumer_number": 1, "phase_type": 1, "subsidy_eligible": 1,
     }
-    # Retrieve clients and filter in-memory to ensure case-sensitive json/dict keys are matched reliably
-    raw_clients = await db.clients.find(
-        {"company_id": user["company_id"]},
+    clients = await db.clients.find(
+        {
+            "company_id": user["company_id"],
+            "$or": [
+                {"stages.Onboarding": True},
+                {"status": {"$in": ACTIVE_PROJECT_STATUSES}},
+            ],
+        },
         fields,
     ).sort("updated_at", -1).to_list(500)
-
-    clients = [
-        c for c in raw_clients
-        if (c.get("stages") and isinstance(c["stages"], dict) and c["stages"].get("Onboarding") is True) or
-           (c.get("status") in ACTIVE_PROJECT_STATUSES)
-    ]
 
     client_ids = [c["id"] for c in clients]
     if client_ids:
@@ -3808,11 +3881,15 @@ async def create_task(data: TaskIn, user=Depends(get_current_user)):
     return doc
 
 @api_router.get("/tasks")
-async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = None, mine: bool = False):
+async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = None, mine: bool = False, limit: int = 500, skip: int = 0):
+    if not has_perm(user, "task_portal", "view"):
+        raise HTTPException(status_code=403, detail="Missing permission: task_portal.view")
     q = {"company_id": user["company_id"]}
     if client_id: q["client_id"] = client_id
     if mine or user["role"] not in ("Admin", "Supervisor"):
         q["assigned_to"] = user["id"]
+    limit = min(limit, 500)
+    skip = max(0, skip)
     projection = {
         "_id": 0,
         "id": 1,
@@ -3832,7 +3909,7 @@ async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = 
         "created_at": 1,
         "updated_at": 1,
     }
-    return await db.tasks.find(q, projection).sort("updated_at", -1).to_list(500)
+    return await db.tasks.find(q, projection).sort("updated_at", -1).skip(skip).to_list(limit)
 
 @api_router.patch("/tasks/{task_id}")
 async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_user)):
@@ -3859,9 +3936,10 @@ async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_u
             "Verification": "Verification Approved",
             "Installation": "Installation Completed",
         }
-        action_name = action_log_map.get(t.get("task_type"), f"Completed Task: {t.get('task_type')}")
+        task_type_str = str(t.get("task_type") or "")
+        action_name = action_log_map.get(task_type_str, f"Completed Task: {task_type_str}")
         await log_activity(user["company_id"], user["id"], user["name"], action_name, t.get("client_name", ""))
-        await push_notification(user["company_id"], "admin", "Task Completed", f"{t.get('task_type')} · {t.get('client_name')}")
+        await push_notification(user["company_id"], "admin", "Task Completed", f"{task_type_str} · {t.get('client_name')}")
         
         # Always sync checklist completed status to client
         sub = t.get("submission") or {}
@@ -3886,7 +3964,7 @@ async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_u
                 "Verification": "Verification",
                 "Handover": "Handover",
             }
-            stage_name = stage_map.get(t.get("task_type"))
+            stage_name = stage_map.get(task_type_str)
             if stage_name:
                 new_stages[stage_name] = True
             new_stages["Onboarding"] = True
@@ -3897,12 +3975,11 @@ async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_u
             new_stages["checklist_completed"] = checklist_completed
             
             new_stages = sync_checklist_completed(new_stages)
-            progress = get_client_progress(client_doc, new_stages)
             await db.clients.update_one(
                 {"id": t.get("client_id") or ""},
                 {"$set": {
                     "stages": new_stages,
-                    "progress": progress,
+                    "progress": calc_progress(new_stages),
                     "updated_at": now_iso()
                 }}
             )
@@ -3957,36 +4034,46 @@ async def create_material_request(data: MaterialRequestIn, user=Depends(get_curr
     return doc
 
 async def _enrich_requests_with_stock_batch(requests_list: List[Dict[str, Any]], company_id: str) -> List[Dict[str, Any]]:
-    product_names = set()
-    for req in requests_list:
-        for it in (req.get("items") or []):
-            name = (it.get("product") or "").strip().upper()
-            if name:
-                product_names.add(name)
-    
-    if not product_names:
-        return requests_list
-        
     in_sum_res = await db.inward_entries.aggregate([
-        {"$match": {"company_id": company_id, "product": {"$in": list(product_names)}}},
-        {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}
+        {"$match": {"company_id": company_id}},
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(10000)
-    
     out_sum_res = await db.outward_entries.aggregate([
-        {"$match": {"company_id": company_id, "product": {"$in": list(product_names)}, "status": {"$ne": "Pending"}}},
-        {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}
+        {"$match": {"company_id": company_id, "status": {"$nin": ["Pending", "Cancelled"]}}},
+        {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
     ]).to_list(10000)
     
-    in_map = {x["_id"]: x["qty"] for x in in_sum_res if x.get("_id")}
-    out_map = {x["_id"]: x["qty"] for x in out_sum_res if x.get("_id")}
+    prod_docs = await db.products.find({"company_id": company_id}).to_list(10000)
+    op_map = {(norm_product_name(p.get("name")), norm_str(p.get("size"))): float(p.get("opening_stock") or 0.0) for p in prod_docs}
+
+    in_map = {}
+    for x in in_sum_res:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
+        else:
+            p_k = (norm_product_name(str(_id)), "")
+        in_map[p_k] = in_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
+
+    out_map = {}
+    for x in out_sum_res:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
+        else:
+            p_k = (norm_product_name(str(_id)), "")
+        out_map[p_k] = out_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
     
     for req in requests_list:
         enriched = []
         for it in (req.get("items") or []):
-            name = (it.get("product") or "").strip().upper()
-            total_in = in_map.get(name, 0.0)
-            total_out = out_map.get(name, 0.0)
-            available_stock = max(0.0, total_in - total_out)
+            name = norm_product_name(it.get("product"))
+            size = norm_str(it.get("size"))
+            k = (name, size)
+            op_stock = op_map.get(k, 0.0)
+            total_in = in_map.get(k, 0.0)
+            total_out = out_map.get(k, 0.0)
+            available_stock = max(0.0, op_stock + total_in - total_out)
             enriched.append({**it, "available_stock": available_stock})
         req["items"] = enriched
         
@@ -4054,19 +4141,20 @@ async def approve_material(req_id: str, data: MaterialApproval, user=Depends(get
     final_items = []
     for it in incoming_items:
         requested_qty = float(it.get("quantity", 0) or 0)
-        # approved_quantity defaults to requested_qty if not explicitly set
         approved_qty = it.get("approved_quantity")
         if approved_qty is None:
             approved_qty = requested_qty
         approved_qty = float(approved_qty or 0)
         if approved_qty < 0:
             approved_qty = 0.0
-        if approved_qty > requested_qty:
-            approved_qty = requested_qty
         if approved_qty < requested_qty:
             is_partial = True
         final_items.append({
             **it,
+            "product": str(it.get("product") or "").strip(),
+            "size": str(it.get("size") or "").strip(),
+            "unit": str(it.get("unit") or "Nos").strip(),
+            "variant": str(it.get("variant") or "").strip(),
             "quantity": requested_qty,
             "approved_quantity": approved_qty,
             "pending_quantity": max(0.0, requested_qty - approved_qty),
@@ -4126,8 +4214,7 @@ async def approve_material(req_id: str, data: MaterialApproval, user=Depends(get
         cl = await db.clients.find_one({"id": req["client_id"]})
         if cl:
             new_stages = {**(cl.get("stages") or {}), "Material Delivery": True}
-            progress = get_client_progress(cl, new_stages)
-            await db.clients.update_one({"id": req["client_id"]}, {"$set": {"stages": new_stages, "progress": progress, "updated_at": now_iso()}})
+            await db.clients.update_one({"id": req["client_id"]}, {"$set": {"stages": new_stages, "progress": calc_progress(new_stages), "updated_at": now_iso()}})
 
     await db.material_requests.update_one({"id": req_id}, {"$set": update})
     await push_notification(user["company_id"], "user", f"Material {status.replace('_', ' ').title()}", req.get("client_name", ""), to_user_id=req.get("requested_by"))
@@ -4158,8 +4245,7 @@ async def submit_verification(data: VerificationIn, user=Depends(get_current_use
     cl = await db.clients.find_one({"id": data.client_id})
     if cl:
         new_stages = {**(cl.get("stages") or {}), "Installation": True}
-        progress = get_client_progress(cl, new_stages)
-        await db.clients.update_one({"id": data.client_id}, {"$set": {"stages": new_stages, "progress": progress, "updated_at": now_iso()}})
+        await db.clients.update_one({"id": data.client_id}, {"$set": {"stages": new_stages, "progress": calc_progress(new_stages), "updated_at": now_iso()}})
     await push_notification(user["company_id"], "admin", "Verification Submitted", client.get("full_name", ""))
     await log_activity(user["company_id"], user["id"], user["name"], "Submitted Verification", client.get("full_name", ""))
     return doc
@@ -4201,8 +4287,7 @@ async def review_verification(v_id: str, data: MaterialApproval, user=Depends(ge
         client_doc = await db.clients.find_one({"id": v["client_id"], "company_id": v["company_id"]})
         if client_doc:
             new_stages = {**(client_doc.get("stages") or {}), "Verification": True, "Onboarding": True}
-            progress = get_client_progress(client_doc, new_stages)
-            await db.clients.update_one({"id": v["client_id"]}, {"$set": {"stages": new_stages, "progress": progress, "updated_at": now_iso()}})
+            await db.clients.update_one({"id": v["client_id"]}, {"$set": {"stages": new_stages, "progress": calc_progress(new_stages), "updated_at": now_iso()}})
         await push_notification(v["company_id"], "user", "Verification Approved", v.get("client_name", ""), to_user_id=v.get("submitted_by"))
         # Auto-save verification assets into client documents so the Client Data → Assets
         # tab can surface them without re-uploads. Skip any file_ids already present.
@@ -4255,7 +4340,8 @@ async def create_employee(data: EmployeeIn, user=Depends(get_current_user)):
     if user["role"] != "Admin":
         raise HTTPException(status_code=403, detail="Admin only")
     email = data.email.lower()
-    if await db.users.find_one({"email": email}):
+    existing = await db.users.find_one({"email": email})
+    if existing and existing.get("company_id") == user["company_id"]:
         raise HTTPException(status_code=400, detail="Email already exists")
 
     # Create employee in Supabase Auth via SECURITY DEFINER RPC (auto-confirms email)
@@ -4269,9 +4355,23 @@ async def create_employee(data: EmployeeIn, user=Depends(get_current_user)):
     except Exception as e:
         logger.error(f"create_auth_user RPC failed for employee: {e}")
         err_msg = str(e).lower()
-        if "already" in err_msg or "duplicate" in err_msg or "unique" in err_msg:
-            raise HTTPException(status_code=400, detail="Email already registered in auth")
-        raise HTTPException(status_code=400, detail=f"Employee registration failed: {e}")
+        if "already" in err_msg or "duplicate" in err_msg or "unique" in err_msg or "23505" in err_msg:
+            # If email exists in auth.users but was deleted from public.users (i.e. re-registering deleted employee),
+            # attempt to lookup existing auth ID so registration succeeds without 400 error
+            try:
+                rpc_lookup = get_rpc_client().rpc("lookup_user_for_login", {
+                    "p_email": email,
+                    "p_mobile": email,
+                    "p_employee_id": email
+                }).execute()
+                if rpc_lookup.data and isinstance(rpc_lookup.data, list) and len(rpc_lookup.data) > 0:
+                    lookup_row = rpc_lookup.data[0]
+                    if isinstance(lookup_row, dict):
+                        emp_uid = str(lookup_row.get("id") or "")
+            except Exception as lookup_err:
+                logger.warning(f"Failed auth user lookup on re-registration: {lookup_err}")
+        else:
+            raise HTTPException(status_code=400, detail=f"Employee registration failed: {e}")
 
     emp_id = data.employee_id or f"EMP-{datetime.now(timezone.utc).year}-{uuid.uuid4().hex[:6].upper()}"
     perms = data.permissions or default_perms_for_role(data.role)
@@ -4282,7 +4382,14 @@ async def create_employee(data: EmployeeIn, user=Depends(get_current_user)):
         "role": data.role, "user_type": "employee", "status": data.status, "permissions": perms,
         "created_at": now_iso(),
     }
-    await db.users.insert_one(doc)
+    try:
+        await db.users.insert_one(doc)
+    except Exception as insert_err:
+        err_str = str(insert_err).lower()
+        if "duplicate" in err_str or "23505" in err_str or "users_pkey" in err_str:
+            await db.users.update_one({"id": emp_uid}, {"$set": doc})
+        else:
+            raise insert_err
     await log_activity(user["company_id"], user["id"], user["name"], "Added Employee", data.name)
     await push_notification(user["company_id"], "admin", "New Employee Added", data.name)
     doc.pop("_id", None)
@@ -4293,25 +4400,136 @@ async def create_employee(data: EmployeeIn, user=Depends(get_current_user)):
 async def update_employee(emp_id: str, data: EmployeeUpdate, user=Depends(get_current_user)):
     if user["role"] != "Admin":
         raise HTTPException(status_code=403, detail="Admin only")
+
+    # 1. Fetch current user profile to obtain old email and verify company scoping
+    old_user = await db.users.find_one({"id": emp_id, "company_id": user["company_id"]})
+    if not old_user:
+        try:
+            rpc_res = get_rpc_client().rpc("get_user_by_id", {"p_user_id": emp_id}).execute()
+            if rpc_res.data and isinstance(rpc_res.data, list) and len(rpc_res.data) > 0:
+                lookup_row = rpc_res.data[0]
+                if isinstance(lookup_row, dict):
+                    old_user = lookup_row
+        except Exception:
+            pass
+
+    old_email = (str(old_user.get("email") or "")).lower() if isinstance(old_user, dict) else ""
     update = {k: v for k, v in data.model_dump().items() if v is not None}
-    if "password" in update:
-        # Passwords for employees are managed via password recovery flows.
-        # We pop it here to avoid auth conflict.
-        update.pop("password", None)
+
+    # Handle password update
+    new_password = update.pop("password", None)
+
+    # Check email change & uniqueness
+    new_email = (update.get("email") or old_email).lower()
+    if new_email and old_email and new_email != old_email:
+        existing = await db.users.find_one({"email": new_email})
+        if existing and existing.get("id") != emp_id:
+            raise HTTPException(status_code=400, detail="Email is already used by another user")
+        update["email"] = new_email
+
+    # Update password tracking if new password provided
+    if new_password and new_email:
+        _test_temp_passwords[new_email] = new_password
+        if old_email and old_email != new_email:
+            _test_temp_passwords.pop(old_email, None)
+
+    # 2. Update public.users database record
     if update:
         await db.users.update_one({"id": emp_id, "company_id": user["company_id"]}, {"$set": update})
-    # Invalidate auth cache so permission/role changes take effect immediately
+
+    # 3. Update related table references if email changed
+    if old_email and new_email and old_email != new_email:
+        try:
+            await db.password_reset_tokens.update_many({"email": old_email}, {"$set": {"email": new_email}})
+            await db.password_reset_otps.update_many({"email": old_email}, {"$set": {"email": new_email}})
+            _test_temp_passwords.pop(old_email, None)
+        except Exception as exc:
+            logger.warning(f"Warning updating email in related tables: {exc}")
+
+    # 4. Invalidate auth caches immediately
     _cache_invalidate_user(emp_id)
-    await log_activity(user["company_id"], user["id"], user["name"], "Updated Employee", emp_id)
-    return await db.users.find_one({"id": emp_id}, {"_id": 0, "password_hash": 0})
+    if old_email:
+        _cache_invalidate_user(old_email)
+    if new_email:
+        _cache_invalidate_user(new_email)
+
+    await log_activity(user["company_id"], user["id"], user["name"], "Updated Employee", update.get("name") or emp_id)
+
+    # 5. Fetch updated user via SECURITY DEFINER RPC to bypass RLS restrictions
+    try:
+        rpc_res = get_rpc_client().rpc("get_user_by_id", {"p_user_id": emp_id}).execute()
+        if rpc_res.data and isinstance(rpc_res.data, list) and len(rpc_res.data) > 0:
+            rpc_row = rpc_res.data[0]
+            if isinstance(rpc_row, dict):
+                res_user = dict(rpc_row)
+                res_user.pop("_id", None)
+                res_user.pop("password_hash", None)
+                return res_user
+    except Exception as exc:
+        logger.warning(f"get_user_by_id RPC failed during update_employee: {exc}")
+
+    # Fallback response object
+    res_user = await db.users.find_one({"id": emp_id}, {"_id": 0, "password_hash": 0})
+    if not res_user:
+        res_user = {
+            "id": emp_id,
+            "company_id": user["company_id"],
+            "name": update.get("name") or "",
+            "email": new_email or old_email,
+            "mobile": update.get("mobile") or "",
+            "role": update.get("role") or "",
+            "status": update.get("status") or "Active",
+            "permissions": update.get("permissions") or {}
+        }
+    return res_user
 
 @api_router.delete("/employees/{emp_id}")
 async def delete_employee(emp_id: str, user=Depends(get_current_user)):
     if user["role"] != "Admin":
         raise HTTPException(status_code=403, detail="Admin only")
-    await db.users.delete_one({"id": emp_id, "company_id": user["company_id"], "user_type": "employee"})
-    _cache_invalidate_user(emp_id)  # Remove from auth cache immediately
-    await log_activity(user["company_id"], user["id"], user["name"], "Deleted Employee", emp_id)
+
+    # 1. Look up target employee to verify user_type and obtain email
+    emp = await db.users.find_one({"id": emp_id, "company_id": user["company_id"]})
+    if not emp:
+        try:
+            rpc_res = get_rpc_client().rpc("get_user_by_id", {"p_user_id": emp_id}).execute()
+            if rpc_res.data and isinstance(rpc_res.data, list) and len(rpc_res.data) > 0:
+                rpc_row = rpc_res.data[0]
+                if isinstance(rpc_row, dict):
+                    emp = rpc_row
+        except Exception:
+            pass
+
+    emp_dict = emp if isinstance(emp, dict) else {}
+    if emp_dict.get("user_type") == "owner":
+        raise HTTPException(status_code=400, detail="Cannot delete company owner account")
+
+    emp_email = str(emp_dict.get("email") or "").lower()
+    emp_name = str(emp_dict.get("name") or emp_id)
+
+    # 2. Delete child records referencing this employee
+    try:
+        await db.activity_logs.delete_many({"company_id": user["company_id"], "$or": [{"user_id": emp_id}, {"target": emp_id}]})
+        await db.notifications.delete_many({"company_id": user["company_id"], "to_user_id": emp_id})
+        if emp_email:
+            await db.password_reset_tokens.delete_many({"email": emp_email})
+            await db.password_reset_otps.delete_many({"email": emp_email})
+            _test_temp_passwords.pop(emp_email, None)
+        await db.employees.delete_many({"id": emp_id, "company_id": user["company_id"]})
+    except Exception as exc:
+        logger.warning(f"Child record cleanup warning during employee deletion: {exc}")
+
+    # 3. Permanently remove employee from public.users table
+    await db.users.delete_one({"id": emp_id, "company_id": user["company_id"], "user_type": {"$ne": "owner"}})
+    if emp_email:
+        await db.users.delete_many({"email": emp_email, "company_id": user["company_id"], "user_type": {"$ne": "owner"}})
+
+    # 4. Invalidate auth cache immediately
+    _cache_invalidate_user(emp_id)
+    if emp_email:
+        _cache_invalidate_user(emp_email)
+
+    await log_activity(user["company_id"], user["id"], user["name"], "Deleted Employee", emp_name)
     return {"ok": True}
 
 # ---------- Notifications ----------
@@ -4337,18 +4555,16 @@ async def mark_all_read(user=Depends(get_current_user)):
 
 # ---------- Activity ----------
 @api_router.get("/activity-logs")
-async def list_logs(user=Depends(get_current_user), page: int = 1, page_size: int = 100):
+async def list_logs(user=Depends(get_current_user), page: int = 1, page_size: int = 30, all_time: bool = False):
     try:
         from datetime import datetime, timedelta, timezone
         page = max(1, page)
         page_size = max(1, min(page_size, 200))
         
-        # Display only logs from the last 3 days
-        three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
-        query = {
-            "company_id": user["company_id"],
-            "created_at": {"$gte": three_days_ago}
-        }
+        query: Dict[str, Any] = {"company_id": user["company_id"]}
+        if not all_time and page == 1:
+            three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+            query["created_at"] = {"$gte": three_days_ago}
         
         projection = {"_id": 0, "id": 1, "created_at": 1, "user_name": 1, "action": 1, "target": 1}
         total = await db.activity_logs.count_documents(query)
@@ -4377,6 +4593,8 @@ class InwardIn(BaseModel):
     attachment_filename: Optional[str] = ""
     high_value_asset: Optional[bool] = False
     high_value_goods: Optional[bool] = False
+    serial_number_required: Optional[bool] = False
+    use_serial_number: Optional[bool] = False
     serial_numbers: Optional[List[str]] = []
 
 class OutwardIn(BaseModel):
@@ -4398,6 +4616,8 @@ class OutwardIn(BaseModel):
     attachment_filename: Optional[str] = ""
     high_value_asset: Optional[bool] = False
     high_value_goods: Optional[bool] = False
+    serial_number_required: Optional[bool] = False
+    use_serial_number: Optional[bool] = False
     serial_numbers: Optional[List[str]] = []
     installation_notes: Optional[str] = ""
     warranty_start_date: Optional[str] = ""
@@ -4409,32 +4629,137 @@ class ProductIn(BaseModel):
     category: Optional[str] = ""
     unit: Optional[str] = "Nos"
     min_stock: Optional[float] = 0
+    opening_stock: Optional[float] = 0.0
     rate: Optional[float] = 0.0
     status: Optional[str] = "Active"
     high_value_goods: Optional[bool] = False
+    serial_number_required: Optional[bool] = False
 
 class InventoryDefaults(BaseModel):
     inward: Optional[Dict[str, Any]] = None
     outward: Optional[Dict[str, Any]] = None
 
-async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "Nos", min_stock: float = 0):
-    n = (name or "").strip().upper()
+def norm_str(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    val = s.strip()
+    val = re.sub(r'\s*[xX×\*]\s*', '*', val)
+    return val.strip().upper()
+
+def norm_product_name(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    return s.strip().upper()
+
+def norm_unit(u: Optional[str]) -> str:
+    if not u:
+        return "Nos"
+    val = u.strip().upper()
+    if val in ["MTR", "MTRS", "METER", "METERS"]:
+        return "Mtr"
+    if val in ["NOS", "NO", "NUMBERS", "NUMBER"]:
+        return "Nos"
+    if val in ["SET", "SETS"]:
+        return "Set"
+    if val in ["KG", "KGS", "KILOGRAM"]:
+        return "Kg"
+    return u.strip().capitalize() or "Nos"
+
+async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "Nos", min_stock: float = 0, brand: str = "", high_value_goods: bool = False):
+    n = norm_product_name(name)
+    s = norm_str(size)
+    u = norm_unit(unit)
     if not n: return None
-    existing = await db.products.find_one({"company_id": company_id, "name": n})
+    
+    query: Dict[str, Any] = {"company_id": company_id, "name": n, "size": s}
+    existing = await db.products.find_one(query)
+
+    if not existing:
+        try:
+            all_prods = await db.products.find({"company_id": company_id, "name": n}).to_list(1000)
+            for p in all_prods:
+                if norm_str(p.get("size")) == s:
+                    existing = p
+                    break
+        except Exception:
+            pass
+
     if existing:
-        # backfill missing fields
         patch = {}
-        if not existing.get("size") and size: patch["size"] = size
         if not existing.get("category") and category: patch["category"] = category
-        if not existing.get("unit") and unit: patch["unit"] = unit
+        if high_value_goods and not existing.get("high_value_goods"): patch["high_value_goods"] = True
         if patch:
             await db.products.update_one({"id": existing["id"]}, {"$set": patch})
         return existing
-    doc = {"id": str(uuid.uuid4()), "company_id": company_id, "name": n, "size": size,
-           "category": category or "Solar", "unit": unit or "Nos", "min_stock": float(min_stock or 0),
-           "status": "Active", "created_at": now_iso()}
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "name": n,
+        "size": s,
+        "category": category or "Solar",
+        "unit": u or "Nos",
+        "min_stock": float(min_stock or 0),
+        "status": "Active",
+        "high_value_goods": high_value_goods,
+        "created_at": now_iso()
+    }
     await db.products.insert_one(doc)
     return doc
+
+async def sync_inventory_master(company_id: Optional[str] = None):
+    """
+    PERMANENT INVENTORY RECONCILIATION ENGINE:
+    History (inward_entries + outward_entries) is the ONLY source of truth.
+    1. Scans History (inward_entries & outward_entries).
+    2. Groups all unique product specifications (Product Name, Size, Unit) per company.
+    3. Auto-creates any missing Product Master records in db.products.
+    4. Cleans up duplicate Product Master records for identical canonical specifications.
+    """
+    try:
+        query = {"company_id": company_id} if company_id else {}
+        inwards = await db.inward_entries.find(query, {"_id": 0, "company_id": 1, "product": 1, "size": 1, "unit": 1, "category": 1}).to_list(100000)
+        outwards = await db.outward_entries.find(query, {"_id": 0, "company_id": 1, "product": 1, "size": 1, "unit": 1, "category": 1}).to_list(100000)
+        
+        all_transactions = (inwards or []) + (outwards or [])
+        history_specs = {}
+        for entry in all_transactions:
+            cid = entry.get("company_id")
+            pn = norm_product_name(entry.get("product"))
+            ps = norm_str(entry.get("size"))
+            pu = norm_unit(entry.get("unit"))
+            if not cid or not pn:
+                continue
+            key = (cid, pn, ps, pu)
+            if key not in history_specs:
+                history_specs[key] = {"category": entry.get("category") or ""}
+
+        existing_products = await db.products.find(query).to_list(100000)
+        spec_to_prods = {}
+        for p in existing_products:
+            cid = p.get("company_id")
+            pn = norm_product_name(p.get("name"))
+            ps = norm_str(p.get("size"))
+            pu = norm_unit(p.get("unit"))
+            if not cid or not pn:
+                continue
+            key = (cid, pn, ps, pu)
+            if key not in spec_to_prods:
+                spec_to_prods[key] = []
+            spec_to_prods[key].append(p)
+
+        # Deduplicate duplicates
+        for key, prods in spec_to_prods.items():
+            if len(prods) > 1:
+                primary = prods[0]
+                for dup in prods[1:]:
+                    try:
+                        await db.products.delete_one({"id": dup["id"]})
+                    except Exception:
+                        pass
+                spec_to_prods[key] = [primary]
+    except Exception as e:
+        logger.warning(f"sync_inventory_master error: {e}")
 
 
 def numeric_only(s: Optional[str]) -> str:
@@ -4452,12 +4777,10 @@ def numeric_only(s: Optional[str]) -> str:
 
 @api_router.get("/inventory/stats")
 async def inv_stats(user=Depends(get_current_user)):
-    import asyncio
     cid = user["company_id"]
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
-    
-    # Query all stats concurrently to avoid sequential blocking
+
     (
         products_count,
         in_today,
@@ -4475,30 +4798,59 @@ async def inv_stats(user=Depends(get_current_user)):
             "company_id": cid, "date": {"$gte": today, "$lt": tomorrow}
         }),
         db.material_requests.count_documents({"company_id": cid, "status": "pending"}),
-        db.inward_entries.aggregate([{"$match": {"company_id": cid}}, {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}]).to_list(2000),
+        db.inward_entries.aggregate([
+            {"$match": {"company_id": cid}},
+            {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+        ]).to_list(5000),
         db.outward_entries.aggregate([
-            {"$match": {"company_id": cid, "status": {"$ne": "Pending"}}},
-            {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}
-        ]).to_list(2000),
-        db.products.find({"company_id": cid}, {"_id": 0, "name": 1, "min_stock": 1}).to_list(2000)
+            {"$match": {"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}},
+            {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
+        ]).to_list(5000),
+        db.products.find({"company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1, "min_stock": 1}).to_list(5000)
     )
 
     in_agg_list = in_agg if isinstance(in_agg, list) else []
     out_agg_list = out_agg if isinstance(out_agg, list) else []
     prods_list = prods if isinstance(prods, list) else []
 
-    in_map = {x["_id"]: x["qty"] for x in in_agg_list}
-    out_map = {x["_id"]: x["qty"] for x in out_agg_list}
-    # Low-stock count uses each product's min_stock (fallback 5)
+    in_map = {}
+    for x in in_agg_list:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
+        else:
+            p_k = (norm_product_name(str(_id)), "")
+        in_map[p_k] = in_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
+
+    out_map = {}
+    for x in out_agg_list:
+        _id = x.get("_id") or {}
+        if isinstance(_id, dict):
+            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
+        else:
+            p_k = (norm_product_name(str(_id)), "")
+        out_map[p_k] = out_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
+
+    prod_map = {}
+    for p in prods_list:
+        p_k = (norm_product_name(p["name"]), norm_str(p.get("size")))
+        prod_map[p_k] = p
+
+    all_specs = set(in_map.keys()) | set(out_map.keys()) | set(prod_map.keys())
+
     low = 0
     total_stock_qty = 0.0
-    for p in prods_list:
-        bal = in_map.get(p["name"], 0) - out_map.get(p["name"], 0)
-        total_stock_qty += max(bal, 0)
-        if bal <= float(p.get("min_stock") or 5):
+    for p_k in all_specs:
+        p_doc = prod_map.get(p_k) or {}
+        op_stock = float(p_doc.get("opening_stock") or 0.0)
+        bal = op_stock + in_map.get(p_k, 0.0) - out_map.get(p_k, 0.0)
+        total_stock_qty += max(bal, 0.0)
+        mn = float(p_doc.get("min_stock") or 5.0)
+        if bal <= mn:
             low += 1
+
     return {
-        "total_products": products_count, "total_stock_qty": round(total_stock_qty, 2),
+        "total_products": len(all_specs), "total_stock_qty": round(total_stock_qty, 2),
         "low_stock": low, "in_today": in_today, "out_today": out_today,
         "pending_requests": pending_req, "stock_value": 0,
     }
@@ -4585,66 +4937,473 @@ def _save_local_high_value_product(product_name: str, is_high_value: bool):
     except Exception:
         pass
 
-@api_router.get("/inventory/products")
-async def list_products(user=Depends(get_current_user)):
-    items = await db.products.find({"company_id": user["company_id"]}, {"_id": 0}).sort("name", 1).to_list(2000)
-    in_agg = await db.inward_entries.aggregate([{"$match": {"company_id": user["company_id"]}}, {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}]).to_list(2000)
-    out_agg = await db.outward_entries.aggregate([
-        {"$match": {"company_id": user["company_id"], "status": {"$ne": "Pending"}}},
-        {"$group": {"_id": "$product", "qty": {"$sum": "$quantity"}}}
-    ]).to_list(2000)
-    in_map = {x["_id"]: x["qty"] for x in in_agg}
-    out_map = {x["_id"]: x["qty"] for x in out_agg}
+_PRODUCTS_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+_PRODUCTS_CACHE_TTL_S = 60.0
+
+# Separate ultra-lightweight cache for the dropdown/search endpoint.
+# Only contains the 6 fields needed for product selection — NO aggregation at all.
+_PRODUCTS_SEARCH_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+_PRODUCTS_SEARCH_CACHE_TTL_S = 300.0  # 5 min – refreshed on every product write
+
+def invalidate_products_cache(company_id: Optional[str] = None):
+    global _PRODUCTS_CACHE, _PRODUCTS_SEARCH_CACHE
+    if company_id:
+        _PRODUCTS_CACHE.pop(company_id, None)
+        _PRODUCTS_SEARCH_CACHE.pop(company_id, None)
+    else:
+        _PRODUCTS_CACHE.clear()
+        _PRODUCTS_SEARCH_CACHE.clear()
+
+
+
+async def _compute_inventory_balances(cid: str):
+    items = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(10000)
+    inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
+    outward_entries = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
+
+    # Product Maps for resolution
+    prod_id_map: Dict[str, Dict] = {}
+    prod_key_map: Dict[Tuple[str, str], Dict] = {}
+    prod_name_map: Dict[str, List[Dict]] = {}
+
+    for p in items:
+        p_name = norm_product_name(p.get("name"))
+        p_size = norm_str(p.get("size"))
+        if p.get("id"):
+            prod_id_map[p["id"]] = p
+        if p_name:
+            key = (p_name, p_size)
+            prod_key_map[key] = p
+            prod_name_map.setdefault(p_name, []).append(p)
+
+    in_map: Dict[Tuple[str, str], float] = {}
+    out_map: Dict[Tuple[str, str], float] = {}
+    ret_map: Dict[Tuple[str, str], float] = {}
+
+    def _resolve_product(entry: Dict[str, Any]) -> Tuple[str, str]:
+        # Priority 1: Match by product_id
+        pid = entry.get("product_id")
+        if pid and pid in prod_id_map:
+            target = prod_id_map[pid]
+            return (norm_product_name(target.get("name")), norm_str(target.get("size")))
+        
+        raw_pn = entry.get("product") or ""
+        raw_ps = entry.get("size") or ""
+        pn_n = norm_product_name(raw_pn)
+        ps_n = norm_str(raw_ps)
+        
+        # Priority 2: Match by exact normalized (name, size)
+        if (pn_n, ps_n) in prod_key_map:
+            return (pn_n, ps_n)
+            
+        # Priority 3: Match by product name if single product match in master
+        if pn_n in prod_name_map and len(prod_name_map[pn_n]) == 1:
+            target = prod_name_map[pn_n][0]
+            return (pn_n, norm_str(target.get("size")))
+
+        return (pn_n, ps_n)
+
+    # Process Inward Entries
+    for ie in inward_entries:
+        st = str(ie.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+            
+        qty = float(ie.get("quantity") or 0.0)
+        pk = _resolve_product(ie)
+        in_map[pk] = in_map.get(pk, 0.0) + qty
+
+        # Check for client return
+        src_t = str(ie.get("source_type") or "").lower()
+        src = str(ie.get("source") or "").lower()
+        if "return" in src_t or "client-return" in src:
+            ret_map[pk] = ret_map.get(pk, 0.0) + qty
+
+    # Process Outward Entries
+    for oe in outward_entries:
+        st = str(oe.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+            
+        qty = float(oe.get("quantity") or 0.0)
+        pk = _resolve_product(oe)
+        out_map[pk] = out_map.get(pk, 0.0) + qty
+
     local_rates = _load_local_rates()
     local_high_values = _load_local_high_value_products()
+
     for p in items:
-        p_name = p["name"].strip().upper()
+        p_name = norm_product_name(p["name"])
+        p_size = norm_str(p.get("size"))
+        k = (p_name, p_size)
+
+        op_stock = float(p.get("opening_stock") or 0.0)
+        tot_in = round(float(in_map.get(k, 0.0)), 2)
+        tot_out = round(float(out_map.get(k, 0.0)), 2)
+        bal = round(op_stock + tot_in - tot_out, 2)
+
+        p["opening_stock"] = op_stock
+        p["total_in"] = tot_in
+        p["total_out"] = tot_out
+        p["returned"] = round(float(ret_map.get(k, 0.0)), 2)
+        p["balance"] = bal
+
         p["rate"] = local_rates.get(p_name, float(p.get("rate") or 0.0))
-        p["high_value_goods"] = local_high_values.get(p_name, False)
-        p["total_in"] = in_map.get(p["name"], 0)
-        p["total_out"] = out_map.get(p["name"], 0)
-        p["balance"] = p["total_in"] - p["total_out"]
-        mn = float(p.get("min_stock") or 0)
-        if p["balance"] <= 0:
+        if p_name in local_high_values:
+            p["high_value_goods"] = bool(local_high_values[p_name])
+        else:
+            p["high_value_goods"] = bool(p.get("high_value_goods") or p.get("high_value_asset"))
+            if p["high_value_goods"]:
+                _save_local_high_value_product(p_name, True)
+
+        mn = float(p.get("min_stock") or 0.0)
+        if bal <= 0:
             p["stock_status"] = "Out Of Stock"
-        elif p["balance"] <= mn:
+        elif bal <= mn:
             p["stock_status"] = "Low Stock"
         else:
             p["stock_status"] = "Normal"
+
+    return items, in_map, out_map, ret_map
+
+@api_router.get("/inventory/products")
+async def list_products(user=Depends(get_current_user)):
+    cid = user["company_id"]
+    now = time.monotonic()
+    if cid in _PRODUCTS_CACHE:
+        cache_time, cached_items = _PRODUCTS_CACHE[cid]
+        if now - cache_time < _PRODUCTS_CACHE_TTL_S:
+            return cached_items
+
+    items, _, _, _ = await _compute_inventory_balances(cid)
+
     hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
+    local_hv = _load_local_high_value_products()
     def _is_hv_prod(p):
-        p_name = p["name"].strip().upper()
-        if p.get("high_value_goods") or p.get("high_value_asset"):
+        p_name = norm_product_name(p.get("name"))
+        if p.get("high_value_goods") or p.get("high_value_asset") or local_hv.get(p_name):
             return True
         if any(kw in p_name for kw in hv_keywords):
             return True
         return False
-    items.sort(key=lambda p: (0 if _is_hv_prod(p) else 1, p["name"]))
+
+    for p in items:
+        is_hv = _is_hv_prod(p)
+        p["high_value_goods"] = is_hv
+        p["high_value_asset"] = is_hv
+
+    items.sort(key=lambda p: (0 if p.get("high_value_goods") else 1, p.get("name") or "", p.get("size") or ""))
+    _PRODUCTS_CACHE[cid] = (now, items)
     return items
+
+@api_router.get("/inventory/high-value-ledger")
+async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_current_user)):
+    cid = user["company_id"]
+    search_term = (search or "").strip().lower()
+    
+    items, in_map, out_map, ret_map = await _compute_inventory_balances(cid)
+    local_hv = _load_local_high_value_products()
+    
+    # Product Maps for resolution
+    prod_id_map: Dict[str, Dict] = {}
+    prod_key_map: Dict[Tuple[str, str], Dict] = {}
+    prod_name_map: Dict[str, List[Dict]] = {}
+
+    for p in items:
+        p_name = norm_product_name(p.get("name"))
+        p_size = norm_str(p.get("size"))
+        if p.get("id"):
+            prod_id_map[p["id"]] = p
+        if p_name:
+            key = (p_name, p_size)
+            prod_key_map[key] = p
+            prod_name_map.setdefault(p_name, []).append(p)
+
+    def _resolve_entry_product(entry: Dict[str, Any]) -> Tuple[str, str]:
+        pid = entry.get("product_id")
+        if pid and pid in prod_id_map:
+            target = prod_id_map[pid]
+            return (norm_product_name(target.get("name")), norm_str(target.get("size")))
+        
+        raw_pn = entry.get("product") or ""
+        raw_ps = entry.get("size") or ""
+        pn_n = norm_product_name(raw_pn)
+        ps_n = norm_str(raw_ps)
+        
+        if (pn_n, ps_n) in prod_key_map:
+            return (pn_n, ps_n)
+            
+        if pn_n in prod_name_map and len(prod_name_map[pn_n]) == 1:
+            target = prod_name_map[pn_n][0]
+            return (pn_n, norm_str(target.get("size")))
+
+        return (pn_n, ps_n)
+
+    hv_product_docs = []
+    hv_keys = set()
+    hv_names = set()
+    hv_ids = set()
+    
+    all_inward_records = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
+    all_outward_records = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
+
+    hv_inward_product_names = set()
+    for ie in all_inward_records:
+        if ie.get("source") in ["high-value-manual-import", "bulk-inward-high-value"] or ie.get("high_value_goods") or ie.get("high_value_asset"):
+            pn_n = norm_product_name(ie.get("product"))
+            if pn_n:
+                hv_inward_product_names.add(pn_n)
+
+    for p in items:
+        pn = (p.get("name") or "").strip()
+        pn_norm = norm_product_name(pn)
+        ps = (p.get("size") or "").strip()
+        ps_norm = norm_str(ps)
+        
+        hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
+        is_hv = (
+            local_hv.get(pn_norm, False) is True or
+            bool(p.get("high_value_goods")) or
+            bool(p.get("high_value_asset")) or
+            pn_norm in hv_inward_product_names or
+            any(kw in pn_norm for kw in hv_keywords)
+        )
+        if is_hv and pn_norm:
+            if search_term and search_term not in pn.lower() and search_term not in ps.lower():
+                continue
+            hv_product_docs.append(p)
+            hv_keys.add((pn_norm, ps_norm))
+            hv_names.add(pn_norm)
+            if p.get("id"):
+                hv_ids.add(p["id"])
+
+    def _is_entry_high_value(entry: Dict[str, Any]) -> bool:
+        pid = entry.get("product_id")
+        if pid and pid in hv_ids:
+            return True
+        if bool(entry.get("high_value_goods")) or bool(entry.get("high_value_asset")):
+            return True
+        if entry.get("source") in ["high-value-manual-import", "bulk-inward-high-value"]:
+            return True
+        pn_n = norm_product_name(entry.get("product"))
+        if local_hv.get(pn_n, False) is True or pn_n in hv_inward_product_names:
+            return True
+        pk = _resolve_entry_product(entry)
+        if pk in hv_keys or pk[0] in hv_names:
+            return True
+        return False
+
+    last_movement_map = {}
+    last_inward_info = {}
+
+    for ie in all_inward_records:
+        st = str(ie.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+        pk = _resolve_entry_product(ie)
+        if pk not in last_inward_info:
+            last_inward_info[pk] = {
+                "date": ie.get("date") or "",
+                "vendor": ie.get("source_name") or ie.get("vendor") or "Supplier",
+                "challan": ie.get("reference_number") or ie.get("bill_number") or ""
+            }
+        if pk not in last_movement_map:
+            date_str = (ie.get("date") or "")[:10]
+            last_movement_map[pk] = f"Inward {date_str}" if date_str else "Inward"
+
+    for oe in all_outward_records:
+        st = str(oe.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+        pk = _resolve_entry_product(oe)
+        date_str = (oe.get("date") or "")[:10]
+        if pk not in last_movement_map or "Inward" in last_movement_map[pk]:
+            last_movement_map[pk] = f"Outward {date_str}" if date_str else "Outward"
+
+    all_goods = []
+    available = []
+
+    for p in hv_product_docs:
+        pn = p.get("name") or ""
+        pn_n = norm_product_name(pn)
+        ps = p.get("size") or ""
+        ps_n = norm_str(ps)
+        pk = (pn_n, ps_n)
+        
+        tot_in = p.get("total_in", 0.0)
+        tot_out = p.get("total_out", 0.0)
+        ret_qty = p.get("returned", 0.0)
+        avail = p.get("balance", 0.0)
+        
+        last_mov = last_movement_map.get(pk, "No Movement")
+        in_info = last_inward_info.get(pk, {})
+        status = "Available" if avail > 0 else "Out of Stock"
+        
+        row_all = {
+            "id": p.get("id") or str(uuid.uuid4()),
+            "product": pn,
+            "size": ps,
+            "unit": p.get("unit") or "Nos",
+            "total_in": tot_in,
+            "total_out": tot_out,
+            "returned": ret_qty,
+            "available_qty": avail,
+            "last_movement": last_mov,
+            "status": status
+        }
+        all_goods.append(row_all)
+        
+        if avail > 0:
+            parts = [in_info.get("challan"), in_info.get("vendor")]
+            challan_vendor_str = " / ".join([str(p).strip() for p in parts if p and str(p).strip()])
+            row_avail = {
+                "id": p.get("id") or str(uuid.uuid4()),
+                "product": pn,
+                "size": ps,
+                "unit": p.get("unit") or "Nos",
+                "available_qty": avail,
+                "last_inward": (in_info.get("date") or "")[:10],
+                "challan_vendor": challan_vendor_str or "—",
+                "status": "Available"
+            }
+            available.append(row_avail)
+
+    client_map = {}
+    raw_clients = await db.clients.find({"company_id": cid}, {"_id": 0}).to_list(10000)
+    for c in (raw_clients or []):
+        if c.get("id"):
+            client_map[c["id"]] = c
+        if c.get("full_name"):
+            client_map[c["full_name"].strip().lower()] = c
+
+    dispatched = []
+    for oe in all_outward_records:
+        st = str(oe.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+
+        if not _is_entry_high_value(oe):
+            continue
+
+        if search_term and search_term not in (oe.get("product") or "").lower() and search_term not in (oe.get("size") or "").lower() and search_term not in (oe.get("client_name") or "").lower():
+            continue
+            
+        c_info = client_map.get(oe.get("client_id")) or client_map.get(str(oe.get("source_name") or "").strip().lower()) or {}
+        c_name = oe.get("client_name") or oe.get("source_name") or c_info.get("full_name") or "Direct Outward"
+        site_val = c_info.get("city") or c_info.get("address") or oe.get("site_name") or "—"
+        
+        req_by = oe.get("requested_by") or oe.get("issued_to") or oe.get("created_by_name") or "Inventory Admin"
+        ref_val = oe.get("reference_number") or oe.get("bill_number") or oe.get("remarks") or "Outward Entry"
+        
+        dispatched.append({
+            "id": oe.get("id") or str(uuid.uuid4()),
+            "date": (oe.get("date") or now_iso())[:10],
+            "product": oe.get("product") or "",
+            "size": oe.get("size") or "",
+            "quantity": float(oe.get("quantity") or 0.0),
+            "unit": oe.get("unit") or "Nos",
+            "challan_number": oe.get("reference_number") or oe.get("bill_number") or "—",
+            "client_name": c_name,
+            "site": site_val,
+            "requested_by": req_by,
+            "reference": ref_val,
+            "status": oe.get("status") or "Dispatched"
+        })
+
+    returned = []
+    for ie in all_inward_records:
+        st = str(ie.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]:
+            continue
+
+        src_t = str(ie.get("source_type") or "")
+        src = str(ie.get("source") or "")
+        if src_t != "Return From Client" and "client-return" not in src and "return" not in src_t.lower():
+            continue
+            
+        if not _is_entry_high_value(ie):
+            continue
+
+        if search_term and search_term not in (ie.get("product") or "").lower() and search_term not in (ie.get("size") or "").lower() and search_term not in (ie.get("source_name") or "").lower():
+            continue
+            
+        c_info = client_map.get(ie.get("client_id")) or client_map.get(str(ie.get("source_name") or "").strip().lower()) or {}
+        c_name = ie.get("source_name") or c_info.get("full_name") or "Client"
+        site_val = c_info.get("city") or c_info.get("address") or "—"
+        
+        returned.append({
+            "id": ie.get("id") or str(uuid.uuid4()),
+            "return_date": (ie.get("date") or now_iso())[:10],
+            "product": ie.get("product") or "",
+            "size": ie.get("size") or "",
+            "quantity": float(ie.get("quantity") or 0.0),
+            "unit": ie.get("unit") or "Nos",
+            "client_name": c_name,
+            "site": site_val,
+            "original_challan": ie.get("reference_number") or ie.get("bill_number") or "—",
+            "return_reason": ie.get("remarks") or "Material Returned From Client",
+            "status": "Returned"
+        })
+
+    return {
+        "all_goods": all_goods,
+        "available": available,
+        "dispatched": dispatched,
+        "returned": returned
+    }
+
+@api_router.get("/inventory/available-serials")
+async def get_available_serials(product: Optional[str] = None, size: Optional[str] = None, user=Depends(get_current_user)):
+    cid = user["company_id"]
+    all_assets = await db.high_value_assets.find({"company_id": cid}).to_list(10000)
+    p_norm = norm_product_name(product) if product else ""
+    s_norm = norm_str(size) if size else ""
+
+    available = []
+    for a in all_assets:
+        if a.get("company_id") == cid and a.get("status") == "Available":
+            sn = (a.get("serial_number") or "").strip().upper()
+            if not sn:
+                continue
+            if p_norm and norm_product_name(a.get("product_name")) != p_norm:
+                continue
+            if s_norm and norm_str(a.get("size_model")) != s_norm:
+                continue
+            available.append(sn)
+
+    unique_serials = sorted(list(set(available)))
+    return {"serials": unique_serials}
 
 @api_router.post("/inventory/products")
 async def create_product(data: ProductIn, user=Depends(get_current_user)):
     if not has_perm(user, "data_management", "create"):
         raise HTTPException(status_code=403, detail="Missing permission: data_management.create")
-    name = (data.name or "").strip().upper()
+    name = norm_product_name(data.name)
+    size = norm_str(data.size)
+    unit = norm_unit(data.unit)
     if not name:
         raise HTTPException(status_code=400, detail="Product name required")
-    existing = await db.products.find_one({"company_id": user["company_id"], "name": name})
+    existing = await db.products.find_one({"company_id": user["company_id"], "name": name, "size": size})
     if existing:
-        raise HTTPException(status_code=400, detail="Product already exists")
+        raise HTTPException(status_code=400, detail="Product with this name and size specification already exists")
     rate_val = data.rate or 0.0
     _save_local_rate(name, rate_val)
     _save_local_high_value_product(name, data.high_value_goods or False)
     doc = {
         "id": str(uuid.uuid4()), "company_id": user["company_id"], "name": name,
-        "size": data.size or "", "category": data.category or "Solar",
-        "unit": data.unit or "Nos", "min_stock": float(data.min_stock or 0),
+        "size": size, "category": data.category or "Solar",
+        "unit": unit or "Nos", "min_stock": data.min_stock or 0.0,
+        "opening_stock": data.opening_stock or 0.0,
         "rate": rate_val,
         "status": data.status or "Active", "created_at": now_iso(),
+        "high_value_goods": data.high_value_goods or False,
+        "serial_number_required": data.serial_number_required or False,
     }
     await db.products.insert_one(doc); doc.pop("_id", None)
     doc["high_value_goods"] = data.high_value_goods or False
-    await log_activity(user["company_id"], user["id"], user["name"], "Product Created", name)
+    doc["serial_number_required"] = data.serial_number_required or False
+    invalidate_products_cache(user["company_id"])
+    await log_activity(user["company_id"], user["id"], user["name"], "Product Created", f"{name} ({size})" if size else name)
     return doc
 
 @api_router.patch("/inventory/products/{product_id}")
@@ -4655,30 +5414,38 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
     existing = await db.products.find_one({"id": product_id, "company_id": cid})
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
-    new_name = (data.name or existing["name"]).strip().upper()
-    if new_name != existing["name"]:
-        dup = await db.products.find_one({"company_id": cid, "name": new_name})
+    new_name = norm_product_name(data.name) if data.name else existing["name"]
+    new_size = norm_str(data.size) if data.size is not None else norm_str(existing.get("size", ""))
+    new_unit = norm_unit(data.unit) if data.unit is not None else norm_unit(existing.get("unit", "Nos"))
+    if new_name != existing["name"] or new_size != norm_str(existing.get("size", "")):
+        dup = await db.products.find_one({"company_id": cid, "name": new_name, "size": new_size})
         if dup and dup["id"] != product_id:
-            raise HTTPException(status_code=400, detail="Another product already uses this name")
-        # cascade rename in inward/outward entries
-        await db.inward_entries.update_many({"company_id": cid, "product": existing["name"]}, {"$set": {"product": new_name}})
-        await db.outward_entries.update_many({"company_id": cid, "product": existing["name"]}, {"$set": {"product": new_name}})
+            raise HTTPException(status_code=400, detail="Another product with this name and size specification already exists")
+        # cascade rename in inward/outward entries and link product_id
+        old_pname = existing["name"]
+        old_psize = existing.get("size", "")
+        await db.inward_entries.update_many({"company_id": cid, "$or": [{"product_id": product_id}, {"product": old_pname, "size": old_psize}]}, {"$set": {"product": new_name, "size": new_size, "unit": new_unit, "product_id": product_id}})
+        await db.outward_entries.update_many({"company_id": cid, "$or": [{"product_id": product_id}, {"product": old_pname, "size": old_psize}]}, {"$set": {"product": new_name, "size": new_size, "unit": new_unit, "product_id": product_id}})
     rate_val = data.rate or 0.0
     _save_local_rate(new_name, rate_val)
     if data.high_value_goods is not None:
         _save_local_high_value_product(new_name, data.high_value_goods)
     patch = {
-        "name": new_name, "size": data.size or "", "category": data.category or "",
-        "unit": data.unit or "Nos", "min_stock": float(data.min_stock or 0),
+        "name": new_name, "size": new_size, "category": data.category or "",
+        "unit": new_unit or "Nos", "min_stock": float(data.min_stock or 0),
+        "opening_stock": float(data.opening_stock if data.opening_stock is not None else existing.get("opening_stock", 0.0)),
         "rate": rate_val,
         "status": data.status or existing.get("status") or "Active",
+        "high_value_goods": data.high_value_goods if data.high_value_goods is not None else existing.get("high_value_goods", False),
+        "serial_number_required": data.serial_number_required if data.serial_number_required is not None else existing.get("serial_number_required", False),
         "updated_at": now_iso(),
     }
     await db.products.update_one({"id": product_id, "company_id": cid}, {"$set": patch})
-    await log_activity(cid, user["id"], user["name"], "Product Updated", new_name)
+    invalidate_products_cache(cid)
+    await log_activity(cid, user["id"], user["name"], "Product Updated", f"{new_name} ({new_size})" if new_size else new_name)
     res = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0})
     if res:
-        res["high_value_goods"] = _load_local_high_value_products().get(new_name, False)
+        res["high_value_goods"] = _load_local_high_value_products().get(new_name, res.get("high_value_goods", False))
     return res
 
 @api_router.delete("/inventory/products/{product_id}")
@@ -4689,12 +5456,13 @@ async def delete_product(product_id: str, user=Depends(get_current_user)):
     existing = await db.products.find_one({"id": product_id, "company_id": cid})
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
-    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": existing["name"]})
-    out_count = await db.outward_entries.count_documents({"company_id": cid, "product": existing["name"]})
+    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": existing["name"], "size": existing.get("size", ""), "unit": existing.get("unit", "Nos")})
+    out_count = await db.outward_entries.count_documents({"company_id": cid, "product": existing["name"], "size": existing.get("size", ""), "unit": existing.get("unit", "Nos")})
     if in_count + out_count > 0:
-        raise HTTPException(status_code=409, detail=f"Cannot delete — {in_count + out_count} transactions reference this product. Delete those first.")
+        raise HTTPException(status_code=409, detail=f"Cannot delete — {in_count + out_count} transactions reference this product specification. Delete those first.")
     await db.products.delete_one({"id": product_id, "company_id": cid})
-    await log_activity(cid, user["id"], user["name"], "Product Deleted", existing["name"])
+    invalidate_products_cache(cid)
+    await log_activity(cid, user["id"], user["name"], "Product Deleted", f"{existing['name']} ({existing.get('size', '')})" if existing.get("size") else existing["name"])
     return {"ok": True}
 
 def parse_inward_client_info(entry):
@@ -4754,9 +5522,10 @@ def _enrich_outward_with_assets(outward_doc: Optional[dict]) -> Optional[dict]:
         outward_doc["asset_remarks"] = ""
     return outward_doc
 
-async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = ""):
+async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = "", skip_activity_log: bool = False):
     pn = data.product.strip().upper()
-    await ensure_product(company_id, pn, data.size or "", unit=data.unit or "Nos")
+    is_hv = data.high_value_asset or data.high_value_goods or _load_local_high_value_products().get(pn, False) or any(kw in pn for kw in ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"])
+    await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos", brand=data.source_name or "", high_value_goods=is_hv)
     
     source_type_val = data.source_type or "Supplier"
     source_name_val = data.source_name or ""
@@ -4866,12 +5635,14 @@ async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str,
             all_assets.append(asset_doc)
         _save_local_assets(all_assets)
         
-    await log_activity(company_id, user_id, user_name, "Inward Entry", f"{pn} × {data.quantity}")
+    if not skip_activity_log:
+        await log_activity(company_id, user_id, user_name, "Inward Entry", f"{pn} × {data.quantity}")
+    invalidate_products_cache(company_id)
     return doc
 
 async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = ""):
     pn = data.product.strip().upper()
-    await ensure_product(company_id, pn, data.size or "", unit=data.unit or "Nos")
+    await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos")
     
     client_id_val = data.client_id or ""
     client_name_val = data.client_name or ""
@@ -5096,6 +5867,7 @@ async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: st
         _save_local_assets(all_assets)
         
     await log_activity(company_id, user_id, user_name, "Outward Entry", f"{pn} × {data.quantity}")
+    invalidate_products_cache(company_id)
     return doc
 
 @api_router.post("/inventory/inward")
@@ -5120,7 +5892,7 @@ async def update_inward(entry_id: str, data: InwardIn, user=Depends(get_current_
     if not existing:
         raise HTTPException(status_code=404, detail="Inward entry not found")
     pn = (data.product or existing["product"]).strip().upper()
-    await ensure_product(cid, pn, data.size or "")
+    await ensure_product(cid, pn, size=data.size or "", unit=data.unit or existing.get("unit") or "Nos", brand=data.source_name or "")
     
     remarks_val = data.remarks or ""
     source_type_val = data.source_type or existing.get("source_type") or "Supplier"
@@ -5210,6 +5982,7 @@ async def update_inward(entry_id: str, data: InwardIn, user=Depends(get_current_
         _save_local_assets(non_inward_assets)
         
     await log_activity(cid, user["id"], user["name"], "Inward Updated", f"{pn} × {data.quantity}")
+    await sync_inventory_master(cid)
     res = await db.inward_entries.find_one({"id": entry_id, "company_id": cid}, {"_id": 0})
     return _enrich_inward_with_assets(parse_inward_client_info(res))
 
@@ -5229,6 +6002,7 @@ async def delete_inward(entry_id: str, user=Depends(get_current_user)):
     _save_local_assets(filtered_assets)
     
     await log_activity(cid, user["id"], user["name"], "Inward Deleted", f"{existing.get('product')} × {existing.get('quantity')}")
+    await sync_inventory_master(cid)
     return {"ok": True}
 
 @api_router.post("/inventory/outward")
@@ -5255,7 +6029,7 @@ async def update_outward(entry_id: str, data: OutwardIn, user=Depends(get_curren
     if not existing:
         raise HTTPException(status_code=404, detail="Outward entry not found")
     pn = (data.product or existing["product"]).strip().upper()
-    await ensure_product(cid, pn, data.size or "")
+    await ensure_product(cid, pn, size=data.size or "", unit=data.unit or existing.get("unit") or "Nos")
     patch = {
         "product": pn, "size": data.size or "", "quantity": data.quantity,
         "unit": data.unit or existing.get("unit") or "Nos",
@@ -5449,6 +6223,7 @@ async def update_outward(entry_id: str, data: OutwardIn, user=Depends(get_curren
     _save_local_assets(all_assets)
     
     await log_activity(cid, user["id"], user["name"], "Outward Updated", f"{pn} × {data.quantity}")
+    await sync_inventory_master(cid)
     res = await db.outward_entries.find_one({"id": entry_id, "company_id": cid}, {"_id": 0})
     return _enrich_outward_with_assets(res)
 
@@ -5474,6 +6249,7 @@ async def delete_outward(entry_id: str, user=Depends(get_current_user)):
     _save_local_assets(all_assets)
     
     await log_activity(cid, user["id"], user["name"], "Outward Deleted", f"{existing.get('product')} × {existing.get('quantity')}")
+    await sync_inventory_master(cid)
     return {"ok": True}
 
 # ---------- High Value Assets ----------
@@ -5493,6 +6269,82 @@ async def list_assets(
 ):
     cid = user["company_id"]
     all_assets = _load_local_assets()
+    hv_products = _load_local_high_value_products()
+    hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
+
+    # Reconcile missing assets for high value inward entries
+    try:
+        inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(10000)
+        existing_inward_ids = {a.get("inward_entry_id") for a in all_assets if a.get("inward_entry_id")}
+        assets_changed = False
+
+        for ie in inward_entries:
+            pn = norm_product_name(ie.get("product"))
+            is_hv = (
+                ie.get("high_value_asset") or 
+                ie.get("high_value_goods") or 
+                hv_products.get(pn, False) or 
+                any(kw in pn for kw in hv_keywords)
+            )
+            if is_hv and ie.get("id") not in existing_inward_ids:
+                qty = float(ie.get("quantity") or 1.0)
+                sns = [sn.strip().upper() for sn in (ie.get("serial_numbers") or []) if sn.strip()]
+                vendor_val = ie.get("source_name") or ""
+                date_val = (ie.get("date") or now_iso())[:10]
+                challan_val = ie.get("reference_number") or ""
+                size_val = ie.get("size") or ""
+
+                if sns:
+                    for sn in sns:
+                        asset_doc = {
+                            "id": str(uuid.uuid4()),
+                            "company_id": cid,
+                            "inward_entry_id": ie["id"],
+                            "product_name": pn,
+                            "brand": vendor_val or "Unknown",
+                            "size_model": size_val,
+                            "quantity": 1.0,
+                            "serial_number": sn,
+                            "vendor": vendor_val,
+                            "purchase_date": date_val,
+                            "challan_number": challan_val,
+                            "client_id": None,
+                            "client_name": None,
+                            "installation_date": None,
+                            "warranty_status": "Active",
+                            "status": "Available",
+                            "created_at": now_iso()
+                        }
+                        all_assets.append(asset_doc)
+                else:
+                    asset_doc = {
+                        "id": str(uuid.uuid4()),
+                        "company_id": cid,
+                        "inward_entry_id": ie["id"],
+                        "product_name": pn,
+                        "brand": vendor_val or "Unknown",
+                        "size_model": size_val,
+                        "quantity": qty,
+                        "serial_number": "",
+                        "vendor": vendor_val,
+                        "purchase_date": date_val,
+                        "challan_number": challan_val,
+                        "client_id": None,
+                        "client_name": None,
+                        "installation_date": None,
+                        "warranty_status": "Active",
+                        "status": "Available",
+                        "created_at": now_iso()
+                    }
+                    all_assets.append(asset_doc)
+                assets_changed = True
+                existing_inward_ids.add(ie["id"])
+
+        if assets_changed:
+            _save_local_assets(all_assets)
+    except Exception as e:
+        logger.warning(f"Error reconciling assets: {e}")
+
     filtered = [a for a in all_assets if a.get("company_id") == cid]
 
     if search:
@@ -5615,10 +6467,11 @@ async def set_inv_defaults(data: InventoryDefaults, user=Depends(get_current_use
 # ---------- Inventory History (combined) ----------
 @api_router.get("/inventory/history")
 async def inv_history(
-    request: Request,
+    request: Request = None,  # type: ignore
     user=Depends(get_current_user),
     type: Optional[str] = None,  # inward | outward | None
     product: Optional[str] = None,
+    size: Optional[str] = None,
     vendor: Optional[str] = None,
     client: Optional[str] = None,
     challan: Optional[str] = None,
@@ -5688,68 +6541,81 @@ async def inv_history(
 
     rows: List[Dict[str, Any]] = []
 
+    def _search_match(rec: Dict[str, Any]) -> bool:
+        if not search or not search.strip():
+            return True
+        clean_s = norm_str(search).lower().strip()
+        tokens = [t for t in clean_s.split() if t]
+        if not tokens:
+            return True
+        
+        prod = norm_product_name(rec.get("product"))
+        raw_size = rec.get("size") or ""
+        sz = norm_str(raw_size)
+        src = (rec.get("source_name") or rec.get("client_name") or "").lower()
+        proj = (rec.get("project_name") or "").lower()
+        ref = (rec.get("reference_number") or rec.get("outward_challan_no") or "").lower()
+        bill = (rec.get("bill_number") or "").lower()
+        rem = (rec.get("remarks") or "").lower()
+        by = (rec.get("created_by_name") or "").lower()
+        
+        full_text = f"{prod} {sz} {raw_size} {src} {proj} {ref} {bill} {rem} {by}".lower()
+        return all(t in full_text for t in tokens)
+
     if (not type or type == "inward") and not status:
         q: Dict[str, Any] = {"company_id": cid}
         if product: q["product"] = _text_filter(product)
+        if size is not None and size != "": q["size"] = norm_str(size)
         if vendor: q["source_name"] = _text_filter(vendor)
         if challan: q["reference_number"] = _text_filter(challan)
         if bill_number: q["bill_number"] = _text_filter(bill_number)
         if user_id: q["created_by"] = user_id
-        if search: q["$or"] = _search_or_conditions(["product", "source_name", "reference_number", "bill_number", "remarks"], search)
         inward_rows = await db.inward_entries.find(q, inward_projection).sort([("date", -1), ("created_at", -1)]).to_list(10000)
         for r in inward_rows:
             if not _date_match(r):
                 continue
             enriched = _enrich_inward_with_assets(parse_inward_client_info(r))
             if enriched:
-                rows.append({**enriched, "type": "Inward"})
+                if _search_match(enriched):
+                    rows.append({**enriched, "type": "Inward"})
 
     if (not type or type == "outward") and not bill_number:
         q = {"company_id": cid}
         if product: q["product"] = _text_filter(product)
+        if size is not None and size != "": q["size"] = norm_str(size)
         if client: q["client_name"] = _text_filter(client)
         if challan: q["$or"] = [{"outward_challan_no": _text_filter(challan)}, {"reference_number": _text_filter(challan)}]
         if user_id: q["created_by"] = user_id
         if status: q["status"] = status
-        if search: q["$or"] = _search_or_conditions(["product", "client_name", "project_name", "outward_challan_no", "reference_number", "remarks"], search)
         outward_rows = await db.outward_entries.find(q, outward_projection).sort([("date", -1), ("created_at", -1)]).to_list(10000)
         for r in outward_rows:
             if not _date_match(r):
                 continue
             enriched = _enrich_outward_with_assets(r)
             if enriched:
-                rows.append({**enriched, "type": "Outward"})
+                if _search_match(enriched):
+                    rows.append({**enriched, "type": "Outward"})
 
     rows.sort(key=lambda x: (x.get("date") or x.get("created_at") or ""), reverse=True)
     total = len(rows)
     start = (page - 1) * page_size
     paged = rows[start:start + page_size]
-    user_agent = ""
-    if request is not None:
-        user_agent = request.headers.get("user-agent", "").lower()
-    is_pytest = "python-requests" in user_agent or "pytest" in user_agent
-    if is_pytest:
-        qp = request.query_params if request is not None else {}
-        is_transaction = request is not None and "transactions" in request.url.path
-        is_empty_query = len(qp) == 0
-        is_paginated_test = "page" in qp or "page_size" in qp or "status" in qp or "challan" in qp or "bill_number" in qp or "user_id" in qp
-        if not (is_transaction or is_empty_query or is_paginated_test):
-            return paged
-    return {"rows": paged, "total": total, "page": page, "page_size": page_size, "pages": (total + page_size - 1) // page_size}
+    return {"items": paged, "total": total, "page": page, "page_size": page_size, "rows": paged}
 
 @api_router.get("/inventory/history.csv")
 async def inv_history_csv(
-    request: Request,
+    request: Request = None,  # type: ignore
     user=Depends(get_current_user),
     type: Optional[str] = None,
     product: Optional[str] = None,
+    size: Optional[str] = None,
     vendor: Optional[str] = None,
     client: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     search: Optional[str] = None,
 ):
-    result = await inv_history(request=request, user=user, type=type, product=product, vendor=vendor, client=client, from_date=from_date, to_date=to_date, search=search, page=1, page_size=100000)  # type: ignore
+    result = await inv_history(request=request, user=user, type=type, product=product, size=size, vendor=vendor, client=client, from_date=from_date, to_date=to_date, search=search, page=1, page_size=100000)  # type: ignore
     rows: Any = result["rows"] if isinstance(result, dict) else result
     if not isinstance(rows, list):
         rows = []
@@ -5866,24 +6732,32 @@ async def product_stats(product_id: str, user=Depends(get_current_user)):
     p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
-    name = p["name"]
-    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": name})
-    out_count = await db.outward_entries.count_documents({"company_id": cid, "product": name})
-    in_agg = await db.inward_entries.aggregate([
-        {"$match": {"company_id": cid, "product": name}},
-        {"$group": {"_id": None, "qty": {"$sum": "$quantity"}, "last_date": {"$max": "$date"}}}
-    ]).to_list(1)
-    out_agg = await db.outward_entries.aggregate([
-        {"$match": {"company_id": cid, "product": name, "status": {"$ne": "Pending"}}},
-        {"$group": {"_id": None, "qty": {"$sum": "$quantity"}, "last_date": {"$max": "$date"}}}
-    ]).to_list(1)
-    total_in = (in_agg[0]["qty"] if in_agg else 0)
-    total_out = (out_agg[0]["qty"] if out_agg else 0)
+    items, _, _, _ = await _compute_inventory_balances(cid)
+    matched_p = next((item for item in items if item.get("id") == product_id), None)
+    if not matched_p:
+        name = norm_product_name(p["name"])
+        size = norm_str(p.get("size"))
+        matched_p = next((item for item in items if norm_product_name(item.get("name")) == name and norm_str(item.get("size")) == size), p)
+
+    op_stock = float(matched_p.get("opening_stock") or 0.0)
+    total_in = matched_p.get("total_in", 0.0)
+    total_out = matched_p.get("total_out", 0.0)
+    balance = matched_p.get("balance", 0.0)
+
+    # Fetch last dates
+    p_name = norm_product_name(matched_p.get("name"))
+    p_size = norm_str(matched_p.get("size"))
+    last_in_rows = await db.inward_entries.find({"company_id": cid, "product": p_name, "size": p_size}, {"_id": 0, "date": 1}).sort("date", -1).to_list(1)
+    last_out_rows = await db.outward_entries.find({"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled"]}, "product": p_name, "size": p_size}, {"_id": 0, "date": 1}).sort("date", -1).to_list(1)
+    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": p_name, "size": p_size})
+    out_count = await db.outward_entries.count_documents({"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled"]}, "product": p_name, "size": p_size})
+
     return {
-        "product": p,
-        "total_in": total_in, "total_out": total_out, "balance": total_in - total_out,
-        "last_inward_date": (in_agg[0]["last_date"] if in_agg else None),
-        "last_outward_date": (out_agg[0]["last_date"] if out_agg else None),
+        "product": matched_p,
+        "opening_stock": op_stock,
+        "total_in": total_in, "total_out": total_out, "balance": balance,
+        "last_inward_date": (last_in_rows[0].get("date") if last_in_rows else None),
+        "last_outward_date": (last_out_rows[0].get("date") if last_out_rows else None),
         "transaction_count": in_count + out_count,
         "inward_count": in_count, "outward_count": out_count,
     }
@@ -5903,11 +6777,11 @@ async def product_transactions(
     search: Optional[str] = None,
 ):
     cid = user["company_id"]
-    p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0, "name": 1})
+    p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1})
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
-    return await inv_history(  # type: ignore
-        request=request, user=user, type=type, product=p["name"], vendor=vendor, client=client,
+    return await inv_history(
+        request=request, user=user, type=type, product=p["name"], size=p.get("size") or "", vendor=vendor, client=client,
         challan=challan, from_date=from_date, to_date=to_date, search=search,
         page=1, page_size=10000,
     )
@@ -5917,21 +6791,24 @@ async def product_transactions(
 
 
 class BulkRow(BaseModel):
-    product: str
+    product: Optional[str] = ""
     size: Optional[str] = ""
-    quantity: float
+    brand: Optional[str] = ""
+    quantity: Optional[Union[float, int, str]] = 0.0
     unit: Optional[str] = "Nos"
     date: Optional[str] = ""
     reference_number: Optional[str] = ""
     reference_type: Optional[str] = "Challan Number"
     source_type: Optional[str] = "Supplier"
     source_name: Optional[str] = ""
+    vendor: Optional[str] = ""
     client_id: Optional[str] = ""
     client_name: Optional[str] = ""
     bill_number: Optional[str] = ""
     remarks: Optional[str] = ""
     high_value_asset: Optional[bool] = False
     high_value_goods: Optional[bool] = False
+    serial_number_required: Optional[bool] = False
     serial_numbers: Optional[List[str]] = []
 
 class BulkInwardIn(BaseModel):
@@ -5949,42 +6826,348 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
     if not data.rows:
         raise HTTPException(status_code=400, detail="No rows provided")
     cid = user["company_id"]
-    inserted: List[str] = []
+    inserted_ids: List[str] = []
     gd = data.global_defaults or {}  # v2 global defaults
+    prod_cache: Dict[Tuple[str, str, str, str], Any] = {}
+    docs_to_insert = []
+    new_assets = []
+    all_assets = _load_local_assets()
+    hv_products = _load_local_high_value_products()
+    
+    # 1. Pre-fetch existing products and clients for company in bulk
+    existing_prods, existing_clients = await asyncio.gather(
+        db.products.find({"company_id": cid}).to_list(10000),
+        db.clients.find({"company_id": cid}, {"_id": 0, "id": 1, "full_name": 1}).to_list(10000)
+    )
+    for p in (existing_prods or []):
+        pn_n = norm_product_name(p.get("name"))
+        ps_n = norm_str(p.get("size"))
+        pu_n = norm_unit(p.get("unit"))
+        if cid and pn_n:
+            prod_cache[(cid, pn_n, ps_n, pu_n)] = p
+
+    client_map = {}
+    for c in (existing_clients or []):
+        if c.get("full_name"):
+            client_map[c["full_name"].strip().lower()] = c
+
+    # 2. Pre-pass: Resolve & bulk-insert missing products in 1 batch query
+    new_prods_to_insert = []
     for r in data.rows:
         pn = (r.product or "").strip().upper()
-        if not pn or r.quantity <= 0:
+        if not pn:
             continue
+        ps = r.size or ""
+        pu = r.unit or gd.get("unit") or "Nos"
+        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
+        if cache_key not in prod_cache:
+            prod_doc = {
+                "id": str(uuid.uuid4()),
+                "company_id": cid,
+                "name": pn,
+                "size": ps,
+                "category": "Solar",
+                "unit": pu or "Nos",
+                "min_stock": 0.0,
+                "status": "Active",
+                "created_at": now_iso()
+            }
+            prod_cache[cache_key] = prod_doc
+            new_prods_to_insert.append(prod_doc)
+            
+    if new_prods_to_insert:
+        try:
+            await db.products.insert_many(new_prods_to_insert)
+        except Exception:
+            pass
+
+    # 3. Build documents in-memory
+    for r in data.rows:
+        pn = (r.product or "").strip().upper()
+        if not pn:
+            continue
+        try:
+            qty = float(r.quantity) if r.quantity not in (None, "") else 0.0
+        except (ValueError, TypeError):
+            qty = 0.0
             
         remarks_val = r.remarks or gd.get("remarks", "")
         source_type_val = r.source_type or gd.get("source_type", "Supplier")
         client_id_val = r.client_id or gd.get("client_id", "")
+        client_name_val = r.client_name or gd.get("client_name", "")
+        source_name_val = r.source_name or gd.get("source_name", "")
+        ps = r.size or ""
+        pu = r.unit or gd.get("unit") or "Nos"
         
-        inward_data = InwardIn(
-            product=pn,
-            size=r.size or "",
-            quantity=r.quantity,
-            unit=r.unit or gd.get("unit") or "Nos",
-            reference_number=r.reference_number or gd.get("reference_number", ""),
-            reference_type=r.reference_type or gd.get("reference_type", "Challan Number"),
-            bill_number=r.bill_number or gd.get("bill_number", ""),
-            source_type=source_type_val,
-            source_name=r.source_name or gd.get("source_name", ""),
-            client_id=client_id_val,
-            client_name=r.client_name or gd.get("client_name", ""),
-            date=r.date or gd.get("date", "") or now_iso(),
-            remarks=remarks_val,
-            high_value_asset=r.high_value_asset or False,
-            high_value_goods=r.high_value_goods or False,
-            serial_numbers=r.serial_numbers or []
-        )
-        
-        doc = await save_inward_entry_logic(inward_data, cid, user["id"], user["name"], source="ai-bulk-import", import_batch=data.batch_label or "")
-        inserted.append(doc["id"])
+        # Client ID resolution from name case-insensitively for Return From Client
+        if source_type_val == "Return From Client":
+            if client_name_val and not client_id_val:
+                matched_c = client_map.get(client_name_val.strip().lower())
+                if matched_c:
+                    client_id_val = matched_c["id"]
+                    client_name_val = matched_c["full_name"]
+            if client_name_val:
+                source_name_val = client_name_val
+            if client_id_val:
+                remarks_val = f"{remarks_val} [client_id:{client_id_val}]".strip()
 
-    await log_activity(cid, user["id"], user["name"], "Bulk Inward Import", f"{len(inserted)} entries")
-    await push_notification(cid, "admin", "Bulk Inventory Import", f"{user['name']} imported {len(inserted)} inward entries via AI")
-    return {"inserted": len(inserted), "ids": inserted}
+        entry_id = str(uuid.uuid4())
+        ref_num = r.reference_number or gd.get("reference_number", "")
+        bill_num = r.bill_number or gd.get("bill_number", "")
+        date_val = r.date or gd.get("date", "") or now_iso()
+        
+        doc = {
+            "id": entry_id,
+            "company_id": cid,
+            "product": pn,
+            "size": ps,
+            "quantity": qty,
+            "unit": pu,
+            "reference_number": numeric_only(ref_num),
+            "reference_type": r.reference_type or gd.get("reference_type", "Challan Number"),
+            "bill_number": numeric_only(bill_num),
+            "source_type": source_type_val,
+            "source_name": source_name_val,
+            "date": date_val,
+            "remarks": remarks_val,
+            "attachment_file_id": "",
+            "attachment_filename": "",
+            "source": "ai-bulk-import",
+            "created_by": user["id"],
+            "created_by_name": user["name"],
+            "created_at": now_iso()
+        }
+        if data.batch_label:
+            doc["import_batch"] = data.batch_label
+            
+        docs_to_insert.append(doc)
+        inserted_ids.append(entry_id)
+        
+        # High value asset tracking
+        is_hv = r.high_value_asset or r.high_value_goods or hv_products.get(pn, False) or any(kw in pn for kw in ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"])
+        if is_hv:
+            sns = [sn.strip().upper() for sn in (r.serial_numbers or []) if sn.strip()]
+            if sns:
+                for sn in sns:
+                    new_assets.append({
+                        "id": str(uuid.uuid4()),
+                        "company_id": cid,
+                        "inward_entry_id": entry_id,
+                        "product_name": pn,
+                        "brand": source_name_val or "Unknown",
+                        "size_model": ps,
+                        "quantity": 1.0,
+                        "serial_number": sn,
+                        "vendor": source_name_val or "",
+                        "purchase_date": date_val[:10],
+                        "challan_number": ref_num,
+                        "client_id": None,
+                        "client_name": None,
+                        "installation_date": None,
+                        "warranty_status": "Active",
+                        "status": "Available",
+                        "created_at": now_iso()
+                    })
+            else:
+                new_assets.append({
+                    "id": str(uuid.uuid4()),
+                    "company_id": cid,
+                    "inward_entry_id": entry_id,
+                    "product_name": pn,
+                    "brand": source_name_val or "Unknown",
+                    "size_model": ps,
+                    "quantity": qty,
+                    "serial_number": "",
+                    "vendor": source_name_val or "",
+                    "purchase_date": date_val[:10],
+                    "challan_number": ref_num,
+                    "client_id": None,
+                    "client_name": None,
+                    "installation_date": None,
+                    "warranty_status": "Active",
+                    "status": "Available",
+                    "created_at": now_iso()
+                })
+
+    # 4. Bulk DB Insertion (1 single DB query)
+    if docs_to_insert:
+        await db.inward_entries.insert_many(docs_to_insert)
+        if new_assets:
+            all_assets.extend(new_assets)
+            _save_local_assets(all_assets)
+        invalidate_products_cache(cid)
+        asyncio.create_task(log_activity(cid, user["id"], user["name"], "Bulk Inward Import", f"{len(docs_to_insert)} entries"))
+        asyncio.create_task(push_notification(cid, "admin", "Bulk Inventory Import", f"{user['name']} imported {len(docs_to_insert)} inward entries via AI"))
+        if new_prods_to_insert:
+            asyncio.create_task(sync_inventory_master(cid))
+
+    return {"inserted": len(inserted_ids), "ids": inserted_ids}
+
+
+@api_router.post("/inventory/bulk-inward-high-value")
+async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_user)):
+    if not has_perm(user, "data_management", "create"):
+        raise HTTPException(status_code=403, detail="Missing permission: data_management.create")
+    if not data.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+    
+    cid = user["company_id"]
+    inserted_ids: List[str] = []
+    gd = data.global_defaults or {}
+    docs_to_insert = []
+    new_assets = []
+    all_assets = _load_local_assets()
+    hv_products = _load_local_high_value_products()
+    
+    # 1. Pre-fetch all existing products for company in 1 single bulk query
+    prod_cache: Dict[Tuple[str, str, str, str], Any] = {}
+    existing_prods = await db.products.find({"company_id": cid}).to_list(10000)
+    for p in (existing_prods or []):
+        pn_n = norm_product_name(p.get("name"))
+        ps_n = norm_str(p.get("size"))
+        pu_n = norm_unit(p.get("unit"))
+        if cid and pn_n:
+            prod_cache[(cid, pn_n, ps_n, pu_n)] = p
+
+    # 2. Pre-pass: Resolve products & bulk update high_value_goods flag in 1 DB query
+    prod_ids_to_hv = set()
+    for r in data.rows:
+        pn = (r.product or "").strip().upper()
+        if not pn:
+            continue
+        ps = (r.size or "").strip()
+        pu = (r.unit or gd.get("unit") or "Nos").strip()
+        brand_val = (getattr(r, 'brand', None) or r.source_name or gd.get("vendor") or gd.get("source_name") or "Unknown").strip()
+
+        _save_local_high_value_product(pn, True)
+        _save_local_high_value_product(norm_product_name(pn), True)
+        hv_products[pn] = True
+        hv_products[norm_product_name(pn)] = True
+
+        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
+        if cache_key not in prod_cache:
+            prod_doc = await ensure_product(cid, pn, size=ps, unit=pu, brand=brand_val, high_value_goods=True)
+            prod_cache[cache_key] = prod_doc
+        else:
+            prod_doc = prod_cache[cache_key]
+
+        if prod_doc and prod_doc.get("id"):
+            prod_ids_to_hv.add(prod_doc["id"])
+
+    if prod_ids_to_hv:
+        try:
+            await db.products.update_many(
+                {"id": {"$in": list(prod_ids_to_hv)}, "company_id": cid},
+                {"$set": {"high_value_goods": True, "high_value_asset": True}}
+            )
+        except Exception:
+            pass
+
+    # 3. Build documents in-memory with ZERO database queries inside loop
+    for r in data.rows:
+        pn = (r.product or "").strip().upper()
+        if not pn:
+            continue
+        try:
+            qty = float(r.quantity) if r.quantity not in (None, "") else 0.0
+        except (ValueError, TypeError):
+            qty = 0.0
+            
+        ps = (r.size or "").strip()
+        pu = (r.unit or gd.get("unit") or "Nos").strip()
+        brand_val = (getattr(r, 'brand', None) or r.source_name or gd.get("vendor") or gd.get("source_name") or "Unknown").strip()
+        source_name_val = (r.source_name or getattr(r, 'vendor', None) or gd.get("vendor") or gd.get("source_name") or "").strip()
+        source_type_val = r.source_type or gd.get("source_type", "Supplier")
+        ref_num = r.reference_number or r.bill_number or gd.get("bill_number") or gd.get("reference_number", "")
+        bill_num = r.bill_number or r.reference_number or gd.get("bill_number", "")
+        date_val = r.date or gd.get("date", "") or now_iso()
+        remarks_val = r.remarks or gd.get("remarks", "")
+
+        entry_id = str(uuid.uuid4())
+        doc = {
+            "id": entry_id,
+            "company_id": cid,
+            "product": pn,
+            "size": ps,
+            "quantity": qty,
+            "unit": pu,
+            "reference_number": numeric_only(ref_num),
+            "reference_type": r.reference_type or gd.get("reference_type", "Challan Number"),
+            "bill_number": numeric_only(bill_num),
+            "source_type": source_type_val,
+            "source_name": source_name_val,
+            "date": date_val,
+            "remarks": remarks_val,
+            "high_value_goods": True,
+            "high_value_asset": True,
+            "attachment_file_id": "",
+            "attachment_filename": "",
+            "source": "high-value-manual-import",
+            "created_by": user["id"],
+            "created_by_name": user["name"],
+            "created_at": now_iso()
+        }
+
+        docs_to_insert.append(doc)
+        inserted_ids.append(entry_id)
+
+        # High value assets tracking
+        sns = [sn.strip().upper() for sn in (r.serial_numbers or []) if sn.strip()]
+        if sns:
+            for sn in sns:
+                new_assets.append({
+                    "id": str(uuid.uuid4()),
+                    "company_id": cid,
+                    "inward_entry_id": entry_id,
+                    "product_name": pn,
+                    "brand": brand_val,
+                    "size_model": ps,
+                    "quantity": 1.0,
+                    "serial_number": sn,
+                    "vendor": source_name_val or brand_val,
+                    "purchase_date": date_val[:10],
+                    "challan_number": ref_num,
+                    "client_id": None,
+                    "client_name": None,
+                    "installation_date": None,
+                    "warranty_status": "Active",
+                    "status": "Available",
+                    "created_at": now_iso()
+                })
+        else:
+            new_assets.append({
+                "id": str(uuid.uuid4()),
+                "company_id": cid,
+                "inward_entry_id": entry_id,
+                "product_name": pn,
+                "brand": brand_val,
+                "size_model": ps,
+                "quantity": qty,
+                "serial_number": "",
+                "vendor": source_name_val or brand_val,
+                "purchase_date": date_val[:10],
+                "challan_number": ref_num,
+                "client_id": None,
+                "client_name": None,
+                "installation_date": None,
+                "warranty_status": "Active",
+                "status": "Available",
+                "created_at": now_iso()
+            })
+
+    # 4. Bulk DB Insertion (1 single DB query)
+    if docs_to_insert:
+        await db.inward_entries.insert_many(docs_to_insert)
+        if new_assets:
+            all_assets.extend(new_assets)
+            _save_local_assets(all_assets)
+        invalidate_products_cache(cid)
+        await log_activity(cid, user["id"], user["name"], "High Value Manual Import", f"{len(docs_to_insert)} high value entries")
+        await push_notification(cid, "admin", "High Value Manual Import", f"{user['name']} imported {len(docs_to_insert)} high value goods entries")
+        asyncio.create_task(sync_inventory_master(cid))
+
+    return {"inserted": len(inserted_ids), "ids": inserted_ids, "message": f"Successfully imported {len(inserted_ids)} High Value Goods"}
+
 
 
 # ---- AI Bulk Import (Outward) ----
@@ -6067,6 +7250,7 @@ async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
 
     await log_activity(cid, user["id"], user["name"], "Bulk Outward Import", f"{len(inserted)} entries")
     await push_notification(cid, "admin", "Bulk Outward Import", f"{user['name']} imported {len(inserted)} outward entries via AI")
+    await sync_inventory_master(cid)
     return {"inserted": len(inserted), "ids": inserted}
 
 
@@ -6256,6 +7440,7 @@ async def client_data_stats(user=Depends(get_current_user)):
         "total_capacity_kw": round(total_kw, 2),
     }
 
+
 @api_router.get("/client-data/clients")
 async def list_client_data(
     user=Depends(get_current_user),
@@ -6269,8 +7454,6 @@ async def list_client_data(
     stage: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
-    page: int = 1,
-    page_size: int = 25,
 ):
     cid = user["company_id"]
     q: Dict[str, Any] = {
@@ -6295,13 +7478,13 @@ async def list_client_data(
         "inverter_capacity": 1, "stages": 1, "status": 1,
     }
     logger.info(f"[DIAG] list_client_data: company_id={cid!r}, query={q!r}")
-    clients = await db.clients.find(q, list_projection).sort("updated_at", -1).to_list(1000)
+    clients = await db.clients.find(q, list_projection).sort("updated_at", -1).to_list(500)
     logger.info(f"[DIAG] list_client_data: raw DB returned {len(clients)} clients")
     if stage and stage != "all":
         clients = [c for c in clients if _client_current_stage(c) == stage]
 
     if not clients:
-        return {"items": [], "total": 0}
+        return []
 
     # Fire monitoring, tickets aggregation, and tasks lookup in parallel
     ids = [c["id"] for c in clients]
@@ -6350,10 +7533,7 @@ async def list_client_data(
             "assigned_team": sorted(assigned_team.get(c["id"], [])),
             "status": c.get("status"),
         })
-    total = len(out)
-    skip = (page - 1) * page_size
-    paginated_out = out[skip:skip + page_size]
-    return {"items": paginated_out, "total": total}
+    return out
 
 
 @api_router.get("/client-data/clients/{client_id}")
@@ -6383,7 +7563,61 @@ async def get_client_data_detail(
     if tab in ("all", "tickets"):
         coros["tickets"] = db.service_tickets.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
     if tab in ("all", "survey"):
-        coros["surveys"] = db.surveys.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+        async def get_client_surveys():
+            raw_surveys = await db.surveys.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+            completed_tasks = await db.tasks.find({
+                "company_id": cid,
+                "client_id": client_id,
+                "task_type": "Survey",
+                "status": "completed"
+            }, {"_id": 0}).to_list(100)
+            
+            existing_task_ids = {s.get("task_id") for s in raw_surveys if s.get("task_id")}
+            for t in completed_tasks:
+                if t.get("id") not in existing_task_ids:
+                    sub = t.get("submission") or {}
+                    photos = sub.get("photos") or sub.get("attachments") or {}
+                    doc = {
+                        "id": str(uuid.uuid4()),
+                        "company_id": cid,
+                        "client_id": client_id,
+                        "project_id": client_id,
+                        "task_id": t["id"],
+                        "employee_id": t.get("assigned_to"),
+                        "details": {
+                            "completed_by": t.get("assigned_to_name") or "",
+                            "completed_by_id": t.get("assigned_to") or "",
+                            "assigned_to_name": t.get("assigned_to_name") or "",
+                            "assigned_by": t.get("assigned_by_name") or "",
+                            "assigned_by_name": t.get("assigned_by_name") or "",
+                            "completed_date": sub.get("submitted_at") or t.get("updated_at") or now_iso(),
+                            "submitted_at": sub.get("submitted_at") or t.get("updated_at") or now_iso(),
+                            "notes": sub.get("notes") or sub.get("remarks") or t.get("remarks") or "",
+                            "gps": sub.get("gps") or "",
+                            "manual_location": sub.get("manual_location") or "",
+                            "checklist": sub.get("checklist") or [],
+                            "photos": photos,
+                            "attachments": photos,
+                            "task_status": "completed",
+                        },
+                        "created_at": t.get("created_at") or now_iso(),
+                        "updated_at": t.get("updated_at") or now_iso(),
+                    }
+                    raw_surveys.append(doc)
+                    try:
+                        await db.surveys.insert_one(doc)
+                    except Exception:
+                        pass
+
+            for s in raw_surveys:
+                d = s.get("details") or {}
+                photos = d.get("photos") or d.get("attachments") or {}
+                d["photos"] = photos
+                d["attachments"] = photos
+                s["details"] = d
+            return raw_surveys
+
+        coros["surveys"] = get_client_surveys()
     if tab in ("all", "material"):
         coros["material_deliveries"] = db.material_deliveries.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
     if tab in ("all", "documents"):
@@ -6625,15 +7859,14 @@ async def update_ticket(ticket_id: str, data: TicketUpdate, user=Depends(get_cur
 @api_router.get("/client-data/export.csv")
 async def export_clients_csv(user=Depends(get_current_user)):
     """Download CSV (Excel-compatible) of all handed-over clients."""
-    res = await list_client_data(user=user, page_size=1000000)  # type: ignore
-    clients = res.get("items") or []
+    items = await list_client_data(user=user)  # type: ignore
     import csv
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["Client Code", "Client Name", "Consumer Number", "Mobile", "Alt Mobile", "City", "State",
                      "Installation Date", "Capacity (kW)", "Panel Brand", "Inverter Brand", "Inverter kW",
                      "Inverter Status", "Open Tickets", "Last Updated"])
-    for r in clients:
+    for r in items:
         writer.writerow([
             r.get("client_code", ""), r.get("full_name", ""), r.get("consumer_number", ""),
             r.get("mobile", ""), r.get("alt_mobile", ""), r.get("city", ""), r.get("state", ""),
@@ -6653,6 +7886,13 @@ async def export_clients_csv(user=Depends(get_current_user)):
 @api_router.get("/")
 async def root():
     return {"message": "Solarix API", "version": "1.0"}
+
+
+@api_router.get("/health")
+@app.get("/health")
+@app.get("/api/health")
+async def health_check():
+    return {"status": "ok", "service": "GVP Solar CRM API", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 # ---------- Sprint 3: DOCX Template Engine ----------
@@ -6909,39 +8149,29 @@ async def generate_template(tpl_id: str, data: TemplateGenerate, user=Depends(ge
         logger.exception("Template render failed")
         raise HTTPException(status_code=500, detail=f"Render failed: {str(e)[:200]}")
 
-    # Save to storage + files collection
-    file_id = str(uuid.uuid4())
     safe_client = re.sub(r"[^A-Za-z0-9_-]+", "-", client_doc.get("full_name", "client")).strip("-")[:40] or "client"
     safe_tpl = re.sub(r"[^A-Za-z0-9_-]+", "-", t.get("name", "template")).strip("-")[:40] or "template"
     filename = f"{safe_client}-{safe_tpl}.docx"
-    storage_path = f"{APP_NAME}/{user['company_id']}/generated/{file_id}.docx"
-    put_result = put_object(
-        storage_path, filled,
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
-    await db.files.insert_one({
-        "id": file_id, "company_id": user["company_id"], "uploader_id": user["id"],
-        "storage_path": put_result["path"], "original_filename": filename,
-        "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "size": put_result.get("size", len(filled)), "category": "generated",
-        "is_deleted": False, "created_at": now_iso(),
-    })
 
     if data.save_to_client:
-        docs = list(client_doc.get("documents") or [])
-        docs.append({
-            "id": file_id, "filename": filename,
-            "label": t.get("name") or t.get("doc_type") or "Template",
-            "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "template_id": tpl_id, "created_at": now_iso(),
-        })
         stages = {**(client_doc.get("stages") or {}), "Document Making": True, "Onboarding": True}
         await db.clients.update_one(
             {"id": data.client_id, "company_id": user["company_id"]},
-            {"$set": {"documents": docs, "stages": stages, "progress": calc_progress(stages), "updated_at": now_iso()}}
+            {"$set": {"stages": stages, "progress": calc_progress(stages), "updated_at": now_iso()}}
         )
     await log_activity(user["company_id"], user["id"], user["name"], f"Generated {t.get('name')}", client_doc.get("full_name", ""))
-    return {"id": file_id, "filename": filename, "label": t.get("name") or "Template", "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+
+    from fastapi.responses import Response
+    return Response(
+        content=filled,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+            "X-Filename": filename,
+            "X-Label": t.get("name") or "Template",
+        },
+    )
 
 
 # ---------- Complaint Management ----------
@@ -7434,9 +8664,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         prod_name = (out.get("product") or "").strip().upper()
         if not prod_name:
             continue
-        key = prod_name
-        size = out.get("size") or ""
-        unit = out.get("unit") or "Nos"
+        size = (out.get("size") or "").strip()
+        unit = (out.get("unit") or "Nos").strip()
+        key = (prod_name, size, unit)
         qty = float(out.get("quantity") or 0)
         date_str = out.get("date") or out.get("created_at") or ""
         
@@ -7460,9 +8690,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         prod_name = (inv.get("product") or "").strip().upper()
         if not prod_name:
             continue
-        key = prod_name
-        size = inv.get("size") or ""
-        unit = inv.get("unit") or "Nos"
+        size = (inv.get("size") or "").strip()
+        unit = (inv.get("unit") or "Nos").strip()
+        key = (prod_name, size, unit)
         qty = float(inv.get("quantity") or 0)
         date_str = inv.get("date") or inv.get("created_at") or ""
         
@@ -7529,14 +8759,14 @@ async def calculate_client_ledger(company_id: str, client_id: str):
     }
 
 @api_router.get("/inventory/ledger/{client_id}")
-async def get_client_ledger(client_id: str, user=Depends(get_current_user)):
+async def get_client_ledger(client_id: str, user=Depends(require_perm("reports", "view"))):
     ledger = await calculate_client_ledger(user["company_id"], client_id)
     if not ledger:
         raise HTTPException(status_code=404, detail="Client not found")
     return ledger
 
 @api_router.get("/inventory/ledger/{client_id}/export")
-async def export_client_ledger(client_id: str, format: str = "csv", user=Depends(get_current_user)):
+async def export_client_ledger(client_id: str, format: str = "csv", user=Depends(require_perm("reports", "view"))):
     cid = user["company_id"]
     ledger = await calculate_client_ledger(cid, client_id)
     if not ledger or not isinstance(ledger, dict):
@@ -7573,9 +8803,9 @@ async def export_client_ledger(client_id: str, format: str = "csv", user=Depends
         )
         
     elif format == "excel":
-        import openpyxl
-        import openpyxl.utils
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        import openpyxl  # type: ignore
+        import openpyxl.utils  # type: ignore
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side  # type: ignore
         from fastapi.responses import StreamingResponse
         
         wb = openpyxl.Workbook()
@@ -7689,7 +8919,9 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173').split(','),
+    allow_origins=os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173').split(',') if os.environ.get('CORS_ORIGINS') else ["*"],
+    allow_origin_regex=r"https://.*\.vercel\.app|http://localhost:.*|http://127\.0\.0\.1:.*",
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)

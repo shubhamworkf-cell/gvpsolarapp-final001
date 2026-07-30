@@ -2,9 +2,10 @@ import React, { useMemo, useState } from "react";
 import api, { formatApiError } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Pencil, Trash2, Plus, Boxes } from "lucide-react";
+import { Pencil, Trash2, Plus, Boxes, Search, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Field, SelectField, ConfirmDialog, UNIT_OPTIONS, CATEGORY_OPTIONS } from "./_shared";
 import ProductDrawer from "./ProductDrawer";
@@ -15,7 +16,7 @@ const STATUS_STYLES = {
   "Out Of Stock": "bg-red-50 text-red-700 border-red-200",
 };
 
-const EMPTY = () => ({ name: "", size: "", category: "Solar Panel", unit: "Nos", min_stock: 0, rate: "", status: "Active", high_value_goods: false });
+const EMPTY = () => ({ name: "", size: "", category: "Solar Panel", unit: "Nos", min_stock: 0, rate: "", status: "Active", high_value_goods: false, serial_number_required: false });
 
 export default function ProductMasterTab({ products, onChanged, globalSearch }) {
   const [open, setOpen] = useState(false);
@@ -56,40 +57,95 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
     } catch (e) { toast.error(formatApiError(e)); setConfirmDel(null); }
   };
 
+  const [localSearch, setLocalSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 25;
 
   const filtered = useMemo(() => {
-    if (!globalSearch) return products;
-    const s = globalSearch.toLowerCase();
-    return products.filter((p) =>
-      p.name.toLowerCase().includes(s) ||
-      (p.size || "").toLowerCase().includes(s) ||
-      (p.category || "").toLowerCase().includes(s)
-    );
-  }, [products, globalSearch]);
+    const list = Array.isArray(products) ? products : [];
+    const rawSearch = (localSearch || globalSearch || "").toLowerCase().trim();
+    if (!rawSearch) return list;
+    const cleanSearch = rawSearch.replace(/\s*[xX×\*]\s*/g, "*");
+    const tokens = cleanSearch.split(/\s+/).filter(Boolean);
+
+    return list.filter((p) => {
+      const name = (p.name || "").toLowerCase();
+      const rawSize = (p.size || "").toLowerCase();
+      const size = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
+      const brand = (p.brand || "").toLowerCase();
+      const category = (p.category || "").toLowerCase();
+      const sku = (p.sku || p.code || p.product_code || p.id || "").toLowerCase();
+
+      const fullText = `${name} ${size} ${rawSize} ${brand} ${category} ${sku}`;
+      return tokens.every((token) => fullText.includes(token));
+    });
+  }, [products, localSearch, globalSearch]);
+
+  const handleDownloadCSV = () => {
+    if (!filtered || filtered.length === 0) {
+      toast.error("No product data to export");
+      return;
+    }
+    const headers = ["Product Name", "Size", "Category", "Unit", "Min Stock", "Rate", "Current Stock", "Status"];
+    const rows = filtered.map(p => [
+      `"${(p.name || "").replace(/"/g, '""')}"`,
+      `"${(p.size || "").replace(/"/g, '""')}"`,
+      `"${(p.category || "Solar").replace(/"/g, '""')}"`,
+      `"${(p.unit || "Nos").replace(/"/g, '""')}"`,
+      p.min_stock || 0,
+      p.rate || 0,
+      p.balance || 0,
+      `"${(p.stock_status || "Normal").replace(/"/g, '""')}"`
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "Product_Master.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [globalSearch]);
+  }, [localSearch, globalSearch]);
 
-  const totalPages = Math.ceil(filtered.length / itemsPerPage);
+  const totalPages = Math.ceil((filtered?.length ?? 0) / itemsPerPage);
   const paginated = useMemo(() => {
-    return filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+    return (filtered || []).slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
   }, [filtered, currentPage, itemsPerPage]);
 
   return (
     <div className="space-y-4">
       <Card className="border-slate-200">
         <CardContent className="p-0">
-          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-slate-100">
             <div>
               <div className="text-base font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>Product Master</div>
-              <div className="text-xs text-slate-500">{filtered.length} of {products.length} products</div>
+              <div className="text-xs text-slate-500">{(filtered?.length ?? 0)} of {(products?.length ?? 0)} products</div>
             </div>
-            <Button className="bg-blue-600 hover:bg-blue-700" onClick={startAdd} data-testid="add-product-btn">
-              <Plus className="w-4 h-4 mr-1.5" /> Add Product
-            </Button>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="relative w-64 sm:w-80">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Input
+                  placeholder="Search by name, size, brand, category, SKU…"
+                  className="pl-9 bg-white h-9 text-xs"
+                  value={localSearch}
+                  onChange={(e) => setLocalSearch(e.target.value)}
+                  data-testid="product-master-search"
+                />
+              </div>
+
+              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50" onClick={handleDownloadCSV} data-testid="product-master-download-btn">
+                <Download className="w-4 h-4 mr-1.5 text-blue-600" /> Download
+              </Button>
+
+              <Button className="bg-blue-600 hover:bg-blue-700" onClick={startAdd} data-testid="add-product-btn">
+                <Plus className="w-4 h-4 mr-1.5" /> Add Product
+              </Button>
+            </div>
           </div>
           <div className="overflow-x-auto max-h-[65vh]">
             <table className="w-full text-sm" data-testid="products-table">
@@ -107,7 +163,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {(filtered?.length ?? 0) === 0 ? (
                   <tr><td colSpan={9} className="px-4 py-16 text-center">
                     <Boxes className="w-10 h-10 mx-auto text-slate-300 mb-2" />
                     <div className="text-sm font-semibold text-slate-700">No products yet</div>
@@ -148,7 +204,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
           {totalPages > 1 && (
             <div className="p-4 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 bg-white">
               <div className="text-xs text-slate-500">
-                Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filtered.length)} of {filtered.length} products
+                Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, (filtered?.length ?? 0))} of {(filtered?.length ?? 0)} products
               </div>
               <div className="flex gap-1">
                 <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</Button>
@@ -172,16 +228,39 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
             <Field label="Min Stock (alert level)" type="number" value={form.min_stock} onChange={(v) => setForm({ ...form, min_stock: v })} testid="pm-min" />
             <Field label="Rate / Unit Price" type="number" value={form.rate} onChange={(v) => setForm({ ...form, rate: v })} testid="pm-rate" />
             <SelectField label="Status" value={form.status} onChange={(v) => setForm({ ...form, status: v })} options={["Active", "Inactive"]} testid="pm-status" />
-            <div className="col-span-2 flex items-center gap-2 py-1">
+            <div className="col-span-2 flex flex-col gap-2 py-1">
               <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={form.high_value_goods || false}
-                  onChange={(e) => setForm({ ...form, high_value_goods: e.target.checked })}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setForm(prev => ({
+                      ...prev,
+                      high_value_goods: checked,
+                      serial_number_required: checked ? prev.serial_number_required : false
+                    }));
+                  }}
                   className="w-4 h-4 accent-blue-600 rounded border-slate-300"
+                  data-testid="pm-hv-checkbox"
                 />
-                High Value Goods (Requires serial tracking)
+                High Value Goods
               </label>
+
+              {form.high_value_goods && (
+                <div className="ml-6 flex items-center gap-2 py-1 bg-slate-50 p-2 rounded border border-slate-200 w-fit">
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.serial_number_required || false}
+                      onChange={(e) => setForm(prev => ({ ...prev, serial_number_required: e.target.checked }))}
+                      className="w-3.5 h-3.5 accent-blue-600 rounded border-slate-300"
+                      data-testid="pm-sn-required-checkbox"
+                    />
+                    Serial Number Required (Default = OFF)
+                  </label>
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

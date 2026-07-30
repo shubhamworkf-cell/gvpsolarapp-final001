@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef, useEffect } from "react";
+import React, { useMemo, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import RaiseComplaintDialog, { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, SEND_TO_TARGETS } from "@/components/RaiseComplaintDialog";
 import { usePermission } from "@/lib/permissions";
+import { useDebounce } from "@/hooks/useDebounce";
 
 const STATUS_STYLES = {
   Open: "bg-slate-100 text-slate-700 border-slate-200",
@@ -41,7 +42,7 @@ export default function Complaints() {
 
   const [openDialog, setOpenDialog] = useState(false);
   const [search, setSearch] = useState("");
-  const [querySearch, setQuerySearch] = useState("");
+  const debouncedSearch = useDebounce(search, 300);
 
   // Admin filters (only used in 'all' view)
   const [scope, setScope] = useState(isAdmin ? "all" : "mine");
@@ -59,22 +60,13 @@ export default function Complaints() {
     if (filterCategory !== "all") f.category = filterCategory;
     if (filterStartDate) f.start_date = filterStartDate;
     if (filterEndDate) f.end_date = filterEndDate;
-    if (querySearch) f.search = querySearch;
+    if (debouncedSearch) f.search = debouncedSearch;
     return f;
-  }, [scope, filterStatus, filterPriority, filterCategory, filterStartDate, filterEndDate, querySearch]);
+  }, [scope, filterStatus, filterPriority, filterCategory, filterStartDate, filterEndDate, debouncedSearch]);
 
   const { data: rows = [], isLoading: rowsLoading } = useComplaintList(filters);
   const { data: stats = { total: 0, open: 0, in_progress: 0, resolved: 0, high_priority: 0, mine: 0 }, isLoading: statsLoading } = useComplaintStats();
   const loading = rowsLoading || statsLoading;
-
-  const [page, setPage] = useState(1);
-  const pageSize = 15;
-  const totalPages = Math.ceil(rows.length / pageSize);
-  const paginatedRows = useMemo(() => {
-    return rows.slice((page - 1) * pageSize, page * pageSize);
-  }, [rows, page]);
-
-  useEffect(() => { setPage(1); }, [rows.length, filters]);
 
   const invalidateComplaints = useInvalidateComplaints();
 
@@ -185,19 +177,8 @@ export default function Complaints() {
               )}
             </div>
           )}
-          {paginatedRows.map((c) => <ComplaintRow key={c.id} c={c} />)}
+          {rows.map((c) => <ComplaintRow key={c.id} c={c} />)}
         </div>
-        {totalPages > 1 && (
-          <div className="p-4 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs">
-            <div className="text-slate-500">
-              Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)} of {rows.length} complaints
-            </div>
-            <div className="flex gap-1">
-              <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>Previous</Button>
-              <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Next</Button>
-            </div>
-          </div>
-        )}
       </Card>
 
       <RaiseComplaintDialog open={openDialog} onOpenChange={setOpenDialog} onCreated={invalidateComplaints} />

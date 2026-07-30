@@ -29,6 +29,13 @@ const PAGES = [
   { key: "team", label: "Team & Access" },
 ];
 const PERMS = ["view", "create", "edit", "delete", "approve"];
+const PROJ_EXEC_TAB_PERMS = [
+  { key: "verification", label: "Verification" },
+  { key: "approval", label: "Approval" },
+  { key: "reject", label: "Reject" },
+  { key: "project_assignment", label: "Project Assignment" },
+  { key: "retry", label: "Retry" },
+];
 
 const emptyPerms = () => PAGES.reduce((acc, p) => ({ ...acc, [p.key]: PERMS.reduce((a, k) => ({ ...a, [k]: false }), {}) }), {});
 
@@ -54,6 +61,23 @@ export default function Team() {
 
   const togglePerm = (page, perm) => {
     setForm((f) => ({ ...f, permissions: { ...f.permissions, [page]: { ...f.permissions[page], [perm]: !f.permissions[page]?.[perm] } } }));
+  };
+
+  const toggleProjExecTab = (tabKey) => {
+    setForm((f) => {
+      const pe = f.permissions?.project_execution || {};
+      const currentVal = pe[tabKey] !== undefined ? pe[tabKey] : (pe.view !== false);
+      return {
+        ...f,
+        permissions: {
+          ...f.permissions,
+          project_execution: {
+            ...pe,
+            [tabKey]: !currentVal,
+          },
+        },
+      };
+    });
   };
 
   const onRoleChange = (role) => setForm((f) => ({ ...f, role, permissions: defaultPermsForRole(role) }));
@@ -187,6 +211,29 @@ export default function Team() {
             </div>
           </div>
 
+          <div className="mt-6">
+            <div className="flex items-center gap-2 mb-3">
+              <ShieldCheck className="w-4 h-4 text-blue-600" />
+              <div className="font-semibold text-slate-900">Project Execution Tab Permissions</div>
+            </div>
+            <div className="border border-slate-200 rounded-lg p-4 bg-slate-50 flex flex-wrap gap-x-6 gap-y-3" data-testid="proj-exec-tab-matrix">
+              {PROJ_EXEC_TAB_PERMS.map((tp) => {
+                const pe = form.permissions?.project_execution || {};
+                const isChecked = pe[tp.key] !== undefined ? !!pe[tp.key] : (pe.view !== false);
+                return (
+                  <label key={tp.key} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                    <Checkbox
+                      checked={isChecked}
+                      onCheckedChange={() => toggleProjExecTab(tp.key)}
+                      data-testid={`perm-proj-exec-${tp.key}`}
+                    />
+                    <span>{tp.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
           <DialogFooter className="mt-4">
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button onClick={submit} disabled={saving} className="bg-blue-600 hover:bg-blue-700" data-testid="save-employee-btn">{saving ? "Saving…" : "Save Employee"}</Button>
@@ -206,10 +253,31 @@ const F = ({ label, children }) => (
 
 function defaultPermsForRole(role) {
   const base = emptyPerms();
-  if (role === "Admin") return PAGES.reduce((a, p) => ({ ...a, [p.key]: PERMS.reduce((ax, k) => ({ ...ax, [k]: true }), {}) }), {});
+  if (role === "Admin") {
+    const res = PAGES.reduce((a, p) => ({ ...a, [p.key]: PERMS.reduce((ax, k) => ({ ...ax, [k]: true }), {}) }), {});
+    res.project_execution = {
+      ...res.project_execution,
+      verification: true,
+      approval: true,
+      reject: true,
+      project_assignment: true,
+      retry: true,
+    };
+    return res;
+  }
   const grant = (page, perms) => { base[page] = PERMS.reduce((a, k) => ({ ...a, [k]: perms.includes(k) }), {}); };
   if (role === "Installer") { grant("task_portal", ["view", "edit"]); grant("clients", ["view"]); }
-  if (role === "Supervisor") ["dashboard", "clients", "task_portal", "project_execution"].forEach((p) => grant(p, ["view", "create", "edit", "approve"]));
+  if (role === "Supervisor") {
+    ["dashboard", "clients", "task_portal", "project_execution"].forEach((p) => grant(p, ["view", "create", "edit", "approve"]));
+    base.project_execution = {
+      ...base.project_execution,
+      verification: true,
+      approval: true,
+      reject: true,
+      project_assignment: true,
+      retry: true,
+    };
+  }
   if (role === "Sales Executive") ["dashboard", "clients"].forEach((p) => grant(p, ["view", "create", "edit"]));
   if (role === "Inventory Manager") ["data_management", "reports"].forEach((p) => grant(p, ["view", "create", "edit"]));
   if (role === "Documentation Executive") ["documents", "clients"].forEach((p) => grant(p, ["view", "create", "edit"]));

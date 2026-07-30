@@ -3,8 +3,9 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, fileUrl } from "@/lib/api";
 import { useClientDataDetail, useLedger } from "@/hooks/useClientDataHooks";
+import { useDeleteClient } from "@/hooks/useClients";
+import { usePermission } from "@/lib/permissions";
 import { useEmployeeList } from "@/hooks/useTeam";
-import { useAuth } from "@/context/AuthContext";
 
 const STAGES = [
   "Onboarding",
@@ -35,7 +36,7 @@ import {
   ArrowLeft, Phone, MessageCircle, Download, MapPin, User, FileImage, Image as ImageIcon,
   Plus, Save, Eye, EyeOff, ExternalLink, Calendar, Wrench, AlertTriangle, Paperclip,
   Clock, CheckCircle2, ChevronRight, Activity, Megaphone, ClipboardList,
-  Truck, FileText, Gauge, Package, ScrollText, Check, Trash2
+  Truck, FileText, Gauge, Package, ScrollText, Check, Trash2, Edit3
 } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
@@ -83,24 +84,8 @@ export default function ClientDataDetail() {
   const [zoom, setZoom] = useState(null); // file_id of zoomed asset
   const [complaintOpen, setComplaintOpen] = useState(false);
   const [visitedTabs, setVisitedTabs] = useState(new Set(["info"]));
-  const [cleanDialogOpen, setCleanDialogOpen] = useState(false);
-  const [cleanSections, setCleanSections] = useState({
-    survey_photos: false,
-    installation_photos: false,
-    onboarding_documents: false,
-    survey_reports: false,
-    generated_quotations: false,
-    generated_invoices: false,
-    delivery_bills: false,
-    documents: false,
-    attachments: false,
-    project_files: false,
-    material_request_files: false,
-    activity_logs: false,
-    other_uploaded_files: false,
-  });
-  const [cleanLoading, setCleanLoading] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: 'file'|'record', fileId, collection, recordId, label }
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState(null);
 
   useEffect(() => {
     setVisitedTabs((prev) => {
@@ -111,112 +96,92 @@ export default function ClientDataDetail() {
     });
   }, [tab]);
 
-  // TanStack Query calls — load client-related data on-demand (lazy loading of tabs)
-  const { data: clientInfo, isLoading: clientInfoLoading } = useClientDataDetail(id, "info");
+  // TanStack Query calls — load ALL client-related data in parallel
+  const { data: clientData, isLoading: clientDataLoading } = useClientDataDetail(id, "all");
   const { data: employees = [], isLoading: employeesLoading } = useEmployeeList();
-  const { data: ledger = null, isLoading: ledgerLoading } = useLedger(id, tab === "material_ledger");
+  const { data: ledger = null, isLoading: ledgerLoading } = useLedger(id);
 
-  const { data: surveysData, isLoading: surveysLoading } = useClientDataDetail(id, "survey", { enabled: tab === "survey" });
-  const { data: materialDelsData, isLoading: materialDelsLoading } = useClientDataDetail(id, "material", { enabled: tab === "material" });
-  const { data: materialRequestsData, isLoading: materialRequestsLoading } = useClientDataDetail(id, "material_history", { enabled: tab === "material_history" });
-  const { data: inwardData, isLoading: inwardLoading } = useClientDataDetail(id, "inward", { enabled: tab === "material_history" });
-  const { data: outwardData, isLoading: outwardLoading } = useClientDataDetail(id, "outward", { enabled: tab === "material_history" });
-  const { data: documentsData, isLoading: documentsLoading } = useClientDataDetail(id, "documents", { enabled: tab === "documents" });
-  const { data: meterData, isLoading: meterLoading } = useClientDataDetail(id, "meter", { enabled: tab === "meter" });
-  const { data: installationData, isLoading: installationLoading } = useClientDataDetail(id, "installation", { enabled: tab === "installation" });
-  const { data: verificationData, isLoading: verificationLoading } = useClientDataDetail(id, "verification", { enabled: tab === "verification" });
-  const { data: assetsData, isLoading: assetsLoading } = useClientDataDetail(id, "assets", { enabled: tab === "assets" });
-  const { data: hvAssetsData, isLoading: hvAssetsLoading } = useClientDataDetail(id, "hva", { enabled: tab === "hva" });
-  const { data: ticketsData, isLoading: ticketsLoading } = useClientDataDetail(id, "tickets", { enabled: tab === "tickets" });
-  const { data: tasksData, isLoading: tasksLoading } = useClientDataDetail(id, "tasks", { enabled: tab === "tasks" });
-  const { data: logsData, isLoading: logsLoading } = useClientDataDetail(id, "activity_logs", { enabled: tab === "activity" });
+  const data = clientData;
+  const loading = clientDataLoading;
 
-  const data = clientInfo;
-  const loading = clientInfoLoading;
+  const c = clientData?.client || {};
+  const monitoring = clientData?.monitoring;
+  const inverter_status = clientData?.inverter_status;
 
-  const c = clientInfo?.client || {};
-  const monitoring = clientInfo?.monitoring;
-  const inverter_status = clientInfo?.inverter_status;
+  const surveys = clientData?.surveys || [];
+  const materialDeliveries = clientData?.material_deliveries || [];
+  const materialRequests = clientData?.material_requests || [];
+  const documents = clientData?.documents || [];
+  const meterTestings = clientData?.meter_testings || [];
+  const installations = clientData?.installations || [];
+  const verifications = clientData?.verifications || [];
+  const assets = clientData?.assets || [];
+  const highValueAssets = clientData?.high_value_assets || [];
+  const tickets = clientData?.tickets || [];
+  const tasks = clientData?.tasks || [];
+  const inward = clientData?.inward || [];
+  const outward = clientData?.outward || [];
+  const activityLogs = clientData?.activity_logs || [];
 
-  const { user } = useAuth();
-  const isAdminOrOwner = user?.user_type === "owner" || user?.role === "Admin";
-  const canEditStages = isAdminOrOwner || !!(user?.permissions?.project_execution?.edit);
-  const [stageUpdating, setStageUpdating] = React.useState(false);
+  const canDelete = usePermission("clients", "delete");
+  const deleteClientMutation = useDeleteClient();
 
-  useEffect(() => {
-    // no-op: manual progress removed
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [c?.id]);
+  const handleOpenEdit = () => {
+    setEditForm({
+      full_name: c.full_name || "",
+      mobile: c.mobile || "",
+      alt_mobile: c.alt_mobile || "",
+      consumer_number: c.consumer_number || "",
+      address: c.address || "",
+      city: c.city || "",
+      state: c.state || "",
+      pincode: c.pincode || "",
+      aadhaar: c.aadhaar || "",
+      system_kw: c.system_kw || 0,
+      panel_make: c.panel_make || "",
+      panel_wattage: c.panel_wattage || 0,
+      num_panels: c.num_panels || 0,
+      inverter_make: c.inverter_make || "",
+      inverter_capacity: c.inverter_capacity || "",
+      inverter_serial: c.inverter_serial || "",
+      phase_type: c.phase_type || "Single Phase",
+      subsidy_eligible: c.subsidy_eligible ?? false,
+      status: c.status || "Lead",
+    });
+    setEditOpen(true);
+  };
 
-  const surveys = surveysData?.surveys || [];
-  const materialDeliveries = materialDelsData?.material_deliveries || [];
-  const materialRequests = materialRequestsData?.material_requests || [];
-  const documents = documentsData?.documents || [];
-  const meterTestings = meterData?.meter_testings || [];
-  const installations = installationData?.installations || [];
-  const verifications = verificationData?.verifications || [];
-  const assets = assetsData?.assets || [];
-  const highValueAssets = hvAssetsData?.high_value_assets || [];
-  const tickets = ticketsData?.tickets || [];
-  const tasks = tasksData?.tasks || [];
-  const inward = inwardData?.inward || [];
-  const outward = outwardData?.outward || [];
-  const activityLogs = logsData?.activity_logs || [];
+  const handleSaveEdit = async () => {
+    if (!editForm) return;
+    try {
+      const payload = {
+        ...editForm,
+        system_kw: Number(editForm.system_kw) || 0,
+        panel_wattage: Number(editForm.panel_wattage) || 0,
+        num_panels: Number(editForm.num_panels) || 0,
+      };
+      await api.put(`/clients/${id}`, payload);
+      queryClient.invalidateQueries({ queryKey: ["client-data"] });
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Client details updated successfully");
+      setEditOpen(false);
+      setEditForm(null);
+    } catch (e) {
+      toast.error(formatApiError(e));
+    }
+  };
+
+  const handleDeleteClient = () => {
+    if (!window.confirm("Are you sure you want to delete this client? This action cannot be undone.")) return;
+    deleteClientMutation.mutate(id, {
+      onSuccess: () => navigate("/client-data"),
+    });
+  };
 
   const handleInvalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["client-data", id] });
-  };
-
-  const handleCleanSubmit = async () => {
-    const anySelected = Object.values(cleanSections).some(Boolean);
-    if (!anySelected) {
-      toast.error("Please select at least one section to clean.");
-      return;
-    }
-    setCleanLoading(true);
-    try {
-      await api.post(`/clients/${id}/clean`, cleanSections);
-      toast.success("Selected sections cleaned successfully.");
-      setCleanDialogOpen(false);
-      setCleanSections({
-        survey_photos: false, installation_photos: false,
-        onboarding_documents: false, survey_reports: false,
-        generated_quotations: false, generated_invoices: false,
-        delivery_bills: false, documents: false,
-        attachments: false, project_files: false,
-        material_request_files: false, activity_logs: false,
-        other_uploaded_files: false,
-      });
-      handleInvalidate();
-    } catch (err) {
-      toast.error(formatApiError(err));
-    } finally {
-      setCleanLoading(false);
-    }
-  };
-
-  const handleDeleteFile = async (fileId, label) => {
-    try {
-      await api.delete(`/clients/${id}/files/${fileId}`);
-      toast.success(`${label || "File"} deleted permanently.`);
-      handleInvalidate();
-    } catch (err) {
-      toast.error(formatApiError(err));
-    } finally {
-      setDeleteConfirm(null);
-    }
-  };
-
-  const handleDeleteRecord = async (collection, recordId, label) => {
-    try {
-      await api.delete(`/clients/${id}/records/${collection}/${recordId}`);
-      toast.success(`${label || "Record"} deleted permanently.`);
-      handleInvalidate();
-    } catch (err) {
-      toast.error(formatApiError(err));
-    } finally {
-      setDeleteConfirm(null);
-    }
   };
 
   if (loading) {
@@ -278,18 +243,16 @@ export default function ClientDataDetail() {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {isAdminOrOwner && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-orange-300 text-orange-700 hover:bg-orange-50"
-              onClick={() => setCleanDialogOpen(true)}
-              data-testid="clean-client-data-btn"
-            >
-              <Trash2 className="w-4 h-4 mr-1.5" /> Clean Client Data
-            </Button>
-          )}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-blue-300 text-blue-700 hover:bg-blue-50"
+            onClick={handleOpenEdit}
+            data-testid="edit-client-btn"
+          >
+            <Edit3 className="w-4 h-4 mr-1.5" /> Edit
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -308,6 +271,17 @@ export default function ClientDataDetail() {
                 </Button>
               </a>
             </>
+          )}
+          {canDelete && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-red-300 text-red-700 hover:bg-red-50"
+              onClick={handleDeleteClient}
+              data-testid="delete-client-btn"
+            >
+              <Trash2 className="w-4 h-4 mr-1.5" /> Delete Client
+            </Button>
           )}
         </div>
       </div>
@@ -332,65 +306,49 @@ export default function ClientDataDetail() {
         </TabsList>
 
         <div style={{ display: tab === "info" ? "block" : "none" }}>
-          <BasicInfoSection
-            client={c}
-            canEditStages={canEditStages}
-            onStageToggle={async (stageName, currentValue) => {
-              if (stageUpdating) return;
-              setStageUpdating(true);
-              try {
-                await api.patch(`/clients/${id}/stages`, { stages: { [stageName]: !currentValue } });
-                handleInvalidate();
-                toast.success(!currentValue ? `✓ ${stageName} marked complete` : `${stageName} marked incomplete`);
-              } catch (err) {
-                toast.error(formatApiError(err));
-              } finally {
-                setStageUpdating(false);
-              }
-            }}
-          />
+          <BasicInfoSection client={c} />
         </div>
         <div style={{ display: tab === "survey" ? "block" : "none" }}>
-          {surveysLoading ? <TabSkeleton /> : <SurveyDetailsSection surveys={surveys} onZoom={setZoom} onDeleteRecord={isAdminOrOwner ? (r, l) => setDeleteConfirm({ type: "record", collection: "surveys", recordId: r, label: l }) : null} onDeleteFile={isAdminOrOwner ? (f, l) => setDeleteConfirm({ type: "file", fileId: f, label: l }) : null} />}
+          {loading ? <TabSkeleton /> : <SurveyDetailsSection surveys={surveys} onZoom={setZoom} />}
         </div>
         <div style={{ display: tab === "material" ? "block" : "none" }}>
-          {materialDelsLoading ? <TabSkeleton /> : <WorkflowDetailsSection title="Material Delivery" icon={Truck} records={materialDeliveries} onZoom={setZoom} onDeleteRecord={isAdminOrOwner ? (r, l) => setDeleteConfirm({ type: "record", collection: "material_deliveries", recordId: r, label: l }) : null} onDeleteFile={isAdminOrOwner ? (f, l) => setDeleteConfirm({ type: "file", fileId: f, label: l }) : null} />}
+          {loading ? <TabSkeleton /> : <WorkflowDetailsSection title="Material Delivery" icon={Truck} records={materialDeliveries} onZoom={setZoom} />}
         </div>
         <div style={{ display: tab === "material_history" ? "block" : "none" }}>
-          {(materialRequestsLoading || inwardLoading || outwardLoading) ? <TabSkeleton /> : <MaterialHistorySection requests={materialRequests} inward={inward} outward={outward} />}
+          {loading ? <TabSkeleton /> : <MaterialHistorySection requests={materialRequests} inward={inward} outward={outward} />}
         </div>
         <div style={{ display: tab === "material_ledger" ? "block" : "none" }}>
           {ledgerLoading ? <TabSkeleton /> : <MaterialLedgerSection ledger={ledger} loading={ledgerLoading} />}
         </div>
         <div style={{ display: tab === "documents" ? "block" : "none" }}>
-          {documentsLoading ? <TabSkeleton /> : <WorkflowDetailsSection title="Document" icon={FileText} records={documents} onZoom={setZoom} onDeleteRecord={isAdminOrOwner ? (r, l) => setDeleteConfirm({ type: "record", collection: "documents", recordId: r, label: l }) : null} onDeleteFile={isAdminOrOwner ? (f, l) => setDeleteConfirm({ type: "file", fileId: f, label: l }) : null} />}
+          {loading ? <TabSkeleton /> : <WorkflowDetailsSection title="Document" icon={FileText} records={documents} onZoom={setZoom} />}
         </div>
         <div style={{ display: tab === "meter" ? "block" : "none" }}>
-          {meterLoading ? <TabSkeleton /> : <WorkflowDetailsSection title="Meter Testing" icon={Gauge} records={meterTestings} onZoom={setZoom} onDeleteRecord={isAdminOrOwner ? (r, l) => setDeleteConfirm({ type: "record", collection: "meter_testings", recordId: r, label: l }) : null} onDeleteFile={isAdminOrOwner ? (f, l) => setDeleteConfirm({ type: "file", fileId: f, label: l }) : null} />}
+          {loading ? <TabSkeleton /> : <WorkflowDetailsSection title="Meter Testing" icon={Gauge} records={meterTestings} onZoom={setZoom} />}
         </div>
         <div style={{ display: tab === "installation" ? "block" : "none" }}>
-          {installationLoading ? <TabSkeleton /> : <WorkflowDetailsSection title="Installation" icon={Wrench} records={installations} onZoom={setZoom} onDeleteRecord={isAdminOrOwner ? (r, l) => setDeleteConfirm({ type: "record", collection: "installations", recordId: r, label: l }) : null} onDeleteFile={isAdminOrOwner ? (f, l) => setDeleteConfirm({ type: "file", fileId: f, label: l }) : null} />}
+          {loading ? <TabSkeleton /> : <WorkflowDetailsSection title="Installation" icon={Wrench} records={installations} onZoom={setZoom} />}
         </div>
         <div style={{ display: tab === "verification" ? "block" : "none" }}>
-          {verificationLoading ? <TabSkeleton /> : <WorkflowDetailsSection title="Verification" icon={CheckCircle2} records={verifications} onZoom={setZoom} onDeleteRecord={isAdminOrOwner ? (r, l) => setDeleteConfirm({ type: "record", collection: "verifications", recordId: r, label: l }) : null} onDeleteFile={isAdminOrOwner ? (f, l) => setDeleteConfirm({ type: "file", fileId: f, label: l }) : null} />}
+          {loading ? <TabSkeleton /> : <WorkflowDetailsSection title="Verification" icon={CheckCircle2} records={verifications} onZoom={setZoom} />}
         </div>
         <div style={{ display: tab === "assets" ? "block" : "none" }}>
-          {assetsLoading ? <TabSkeleton /> : <AssetsSection assets={assets} onZoom={setZoom} />}
+          {loading ? <TabSkeleton /> : <AssetsSection assets={assets} onZoom={setZoom} />}
         </div>
         <div style={{ display: tab === "hva" ? "block" : "none" }}>
-          {hvAssetsLoading ? <TabSkeleton /> : <HighValueAssetsSection assets={highValueAssets} />}
+          {loading ? <TabSkeleton /> : <HighValueAssetsSection assets={highValueAssets} />}
         </div>
         <div style={{ display: tab === "monitoring" ? "block" : "none" }}>
           {loading ? <TabSkeleton /> : <MonitoringSection clientId={id} monitoring={monitoring} status={inverter_status} onSaved={handleInvalidate} />}
         </div>
         <div style={{ display: tab === "tickets" ? "block" : "none" }}>
-          {(ticketsLoading || employeesLoading) ? <TabSkeleton /> : <TicketsSection clientId={id} clientName={c.full_name} tickets={tickets} employees={employees} onChanged={handleInvalidate} />}
+          {loading ? <TabSkeleton /> : <TicketsSection clientId={id} clientName={c.full_name} tickets={tickets} employees={employees} onChanged={handleInvalidate} />}
         </div>
         <div style={{ display: tab === "tasks" ? "block" : "none" }}>
-          {tasksLoading ? <TabSkeleton /> : <TasksSection tasks={tasks} loading={tasksLoading} />}
+          {loading ? <TabSkeleton /> : <TasksSection tasks={tasks} loading={loading} />}
         </div>
         <div style={{ display: tab === "activity" ? "block" : "none" }}>
-          {logsLoading ? <TabSkeleton /> : <ActivitySection logs={activityLogs} />}
+          {loading ? <TabSkeleton /> : <ActivitySection logs={activityLogs} />}
         </div>
       </Tabs>
 
@@ -417,84 +375,107 @@ export default function ClientDataDetail() {
         onCreated={() => toast.success("Complaint raised — track it in Complaint Center")}
       />
 
-      {/* Clean Client Data Dialog */}
-      <Dialog open={cleanDialogOpen} onOpenChange={setCleanDialogOpen}>
-        <DialogContent className="max-w-md">
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="edit-client-dialog">
           <DialogHeader>
-            <DialogTitle className="text-red-700 flex items-center gap-2"><Trash2 className="w-5 h-5" /> Clean Client Data</DialogTitle>
-            <DialogDescription className="text-slate-600">
-              <span className="font-semibold text-red-600">⚠ This action is permanent and cannot be undone.</span><br />
-              Select sections to permanently clear for <strong>{c.full_name}</strong>.
-            </DialogDescription>
+            <DialogTitle>Edit Client Details</DialogTitle>
+            <DialogDescription>Modify any client, address, system, panel, or inverter details below.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 my-2">
-            {[
-              { key: "survey_photos", label: "Survey Photos" },
-              { key: "installation_photos", label: "Installation Photos" },
-              { key: "onboarding_documents", label: "Onboarding Documents" },
-              { key: "survey_reports", label: "Survey Reports & Records" },
-              { key: "generated_quotations", label: "Generated Quotations" },
-              { key: "generated_invoices", label: "Generated Invoices" },
-              { key: "delivery_bills", label: "Delivery Bills" },
-              { key: "documents", label: "Signed Documents Records" },
-              { key: "attachments", label: "Attachments" },
-              { key: "project_files", label: "Project Files (Task Submissions)" },
-              { key: "material_request_files", label: "Material Request Files" },
-              { key: "activity_logs", label: "Activity Logs" },
-              { key: "other_uploaded_files", label: "Other Uploaded Files" },
-            ].map(({ key, label }) => (
-              <label key={key} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer hover:text-slate-900">
-                <input
-                  type="checkbox"
-                  checked={cleanSections[key] || false}
-                  onChange={(e) => setCleanSections(prev => ({ ...prev, [key]: e.target.checked }))}
-                  className="rounded border-slate-300 text-red-600 focus:ring-red-500 w-4 h-4"
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-          <DialogFooter className="gap-2 flex-wrap">
-            <Button variant="outline" size="sm" onClick={() => setCleanDialogOpen(false)} disabled={cleanLoading}>Cancel</Button>
-            <Button
-              size="sm"
-              className="bg-red-600 hover:bg-red-700 text-white"
-              onClick={handleCleanSubmit}
-              disabled={cleanLoading}
-            >
-              {cleanLoading ? "Cleaning…" : "Permanently Clean Selected"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          {editForm && (
+            <div className="grid md:grid-cols-2 gap-4 py-3 text-sm">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Full Name</Label>
+                <Input value={editForm.full_name} onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Mobile Number</Label>
+                <Input value={editForm.mobile} onChange={(e) => setEditForm({ ...editForm, mobile: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Alternate Mobile</Label>
+                <Input value={editForm.alt_mobile} onChange={(e) => setEditForm({ ...editForm, alt_mobile: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Consumer Number</Label>
+                <Input value={editForm.consumer_number} onChange={(e) => setEditForm({ ...editForm, consumer_number: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Aadhaar Number</Label>
+                <Input value={editForm.aadhaar} onChange={(e) => setEditForm({ ...editForm, aadhaar: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">System Capacity (kW)</Label>
+                <Input type="number" step="0.1" value={editForm.system_kw} onChange={(e) => setEditForm({ ...editForm, system_kw: e.target.value })} />
+              </div>
 
-      {/* Delete File / Record Confirm Dialog */}
-      <Dialog open={!!deleteConfirm} onOpenChange={(o) => !o && setDeleteConfirm(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-red-700 flex items-center gap-2">
-              <Trash2 className="w-5 h-5" /> {deleteConfirm?.type === "file" ? "Delete File" : "Delete Record"}
-            </DialogTitle>
-            <DialogDescription>
-              <span className="font-semibold text-red-600">⚠ This action is permanent and cannot be undone.</span><br />
-              Are you sure you want to permanently delete <strong>{deleteConfirm?.label}</strong>?
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 flex-wrap">
-            <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
-            <Button
-              size="sm"
-              className="bg-red-600 hover:bg-red-700 text-white"
-              onClick={() => {
-                if (deleteConfirm?.type === "file") {
-                  handleDeleteFile(deleteConfirm.fileId, deleteConfirm.label);
-                } else {
-                  handleDeleteRecord(deleteConfirm.collection, deleteConfirm.recordId, deleteConfirm.label);
-                }
-              }}
-            >
-              Delete Permanently
-            </Button>
+              <div className="md:col-span-2 space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Address</Label>
+                <Input value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">City</Label>
+                <Input value={editForm.city} onChange={(e) => setEditForm({ ...editForm, city: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">State</Label>
+                <Input value={editForm.state} onChange={(e) => setEditForm({ ...editForm, state: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Pincode</Label>
+                <Input value={editForm.pincode} onChange={(e) => setEditForm({ ...editForm, pincode: e.target.value })} />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Panel Make / Brand</Label>
+                <Input value={editForm.panel_make} onChange={(e) => setEditForm({ ...editForm, panel_make: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Panel Wattage (Wp)</Label>
+                <Input type="number" value={editForm.panel_wattage} onChange={(e) => setEditForm({ ...editForm, panel_wattage: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Number of Panels</Label>
+                <Input type="number" value={editForm.num_panels} onChange={(e) => setEditForm({ ...editForm, num_panels: e.target.value })} />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Inverter Make / Brand</Label>
+                <Input value={editForm.inverter_make} onChange={(e) => setEditForm({ ...editForm, inverter_make: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Inverter Capacity</Label>
+                <Input value={editForm.inverter_capacity} onChange={(e) => setEditForm({ ...editForm, inverter_capacity: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Inverter Serial Number</Label>
+                <Input value={editForm.inverter_serial} onChange={(e) => setEditForm({ ...editForm, inverter_serial: e.target.value })} />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Phase Type</Label>
+                <Select value={editForm.phase_type} onValueChange={(val) => setEditForm({ ...editForm, phase_type: val })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Single Phase">Single Phase</SelectItem>
+                    <SelectItem value="Three Phase">Three Phase</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Subsidy Eligible</Label>
+                <Select value={editForm.subsidy_eligible ? "yes" : "no"} onValueChange={(val) => setEditForm({ ...editForm, subsidy_eligible: val === "yes" })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="yes">Yes</SelectItem>
+                    <SelectItem value="no">No</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveEdit} className="bg-blue-600 hover:bg-blue-700">Save Changes</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -510,11 +491,42 @@ const InfoRow = ({ label, value }) => (
   </div>
 );
 
-function BasicInfoSection({ client: c, canEditStages, onStageToggle }) {
+function BasicInfoSection({ client: c }) {
+  const queryClient = useQueryClient();
+
   const completedCount = React.useMemo(() => {
     if (!c || !c.stages) return 0;
     return STAGES.filter((s) => c.stages?.[s]).length;
   }, [c]);
+
+  const currentStage = React.useMemo(() => {
+    if (!c || !c.stages) return "Onboarding";
+    const next = STAGES.find((s) => !c.stages?.[s]);
+    return next || STAGES[STAGES.length - 1];
+  }, [c]);
+
+  const handleToggleStage = async (stage) => {
+    if (!c || !c.id) return;
+    const currentStages = c.stages || {};
+    const isDone = !!currentStages[stage];
+    const updatedStages = { ...currentStages, [stage]: !isDone };
+    try {
+      const { data: updatedClient } = await api.patch(`/clients/${c.id}/stages`, { stages: updatedStages });
+      if (updatedClient) {
+        queryClient.setQueryData(queryKeys.clientData.tab(id, tab), (prev) => {
+          if (!prev) return prev;
+          return { ...prev, client: updatedClient };
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["client-data"] });
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success(`${stage} ${!isDone ? "marked as completed" : "reset"}`);
+    } catch (e) {
+      toast.error(formatApiError(e));
+    }
+  };
 
   return (
     <div className="grid lg:grid-cols-3 gap-4">
@@ -524,13 +536,13 @@ function BasicInfoSection({ client: c, canEditStages, onStageToggle }) {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
             <div>
               <div className="text-sm font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>Project Progress Timeline</div>
-              <div className="text-xs text-slate-500">
-                {canEditStages
-                  ? "Click any stage to mark it complete or incomplete."
-                  : "Current stage and completed workflow steps."}
-              </div>
+              <div className="text-xs text-slate-500">Current stage, completed steps, and total progress.</div>
             </div>
-            <div className="grid grid-cols-2 gap-4 text-right">
+            <div className="grid grid-cols-3 gap-4 text-right">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Current Stage</div>
+                <div className="text-xs font-semibold text-slate-900">{currentStage}</div>
+              </div>
               <div>
                 <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Completed Steps</div>
                 <div className="text-xs font-semibold text-slate-900">{completedCount} / {STAGES.length}</div>
@@ -542,51 +554,30 @@ function BasicInfoSection({ client: c, canEditStages, onStageToggle }) {
             </div>
           </div>
 
-          <div className="relative overflow-x-auto scrollbar-hidden -mx-4 px-4 py-2">
-            <div className="relative min-w-max">
-              <div className="hidden sm:block absolute top-7 left-4 right-4 h-0.5 bg-slate-200" />
-              <div
-                className="hidden sm:block absolute top-7 left-4 h-0.5 bg-blue-600 transition-all duration-500"
-                style={{ width: `calc((100% - 2rem) * ${(c.progress || 0) / 100})` }}
-              />
-              <div className="flex gap-3 relative z-10">
+          <div className="relative" data-testid="progress-timeline">
+            <div className="hidden sm:block absolute top-7 left-4 right-4 h-0.5 bg-slate-200 pointer-events-none" />
+            <div className="hidden sm:block absolute top-7 left-4 h-0.5 bg-blue-600 transition-all pointer-events-none" style={{ width: `calc((100% - 2rem) * ${(c.progress || 0) / 100})` }} />
+            <div className="scrollbar-hidden -mx-4 overflow-x-auto px-4 py-2 sm:mx-0 sm:overflow-visible sm:px-0">
+              <div className="flex gap-3 min-w-full sm:min-w-0">
                 {STAGES.map((s, i) => {
                   const done = !!c.stages?.[s];
-                  if (canEditStages) {
-                    return (
-                      <button
-                        key={s}
-                        type="button"
-                        title={done ? `Unmark "${s}"` : `Mark "${s}" complete`}
-                        onClick={() => onStageToggle(s, done)}
-                        className={`flex min-w-[75px] flex-col items-center rounded-xl border px-1.5 py-2 text-center text-[10px] transition-all cursor-pointer select-none
-                          ${done
-                            ? "border-blue-200 bg-blue-50/50 hover:bg-blue-100/60 hover:border-blue-300"
-                            : "border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300"
-                          }`}
-                      >
-                        <div className={`flex h-7 w-7 items-center justify-center rounded-full border transition-colors
-                          ${done
-                            ? "bg-blue-600 border-blue-600 text-white"
-                            : "bg-white border-slate-300 text-slate-400 hover:border-blue-400 hover:text-blue-500"
-                          }`}
-                        >
-                          {done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[10px] font-semibold">{i + 1}</span>}
-                        </div>
-                        <div className="mt-1.5 font-medium leading-tight text-slate-700">{s}</div>
-                      </button>
-                    );
-                  }
+                  const isCurrent = currentStage === s;
                   return (
-                    <div
+                    <button
                       key={s}
-                      className={`flex min-w-[75px] flex-col items-center rounded-xl border px-1.5 py-2 text-center text-[10px] ${done ? "border-blue-200 bg-blue-50/50" : "border-slate-200 bg-white"}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleStage(s);
+                      }}
+                      className={`flex min-w-[80px] flex-col items-center rounded-xl border px-2 py-2 text-center text-[10px] transition-all cursor-pointer hover:border-blue-300 hover:bg-blue-50/70 ${done ? "border-blue-200 bg-blue-50/60" : "border-slate-200 bg-white"} ${isCurrent ? "shadow-md border-blue-400 bg-blue-100/70" : ""}`}
+                      data-testid={`stage-${s.replace(/\s/g, "-").toLowerCase()}`}
                     >
-                      <div className={`flex h-7 w-7 items-center justify-center rounded-full border ${done ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-300 text-slate-400"}`}>
+                      <div className={`flex h-7 w-7 items-center justify-center rounded-full border transition-colors ${done ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-300 text-slate-400"}`}>
                         {done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[10px] font-semibold">{i + 1}</span>}
                       </div>
-                      <div className="mt-1.5 font-medium leading-tight text-slate-700">{s}</div>
-                    </div>
+                      <div className={`mt-1.5 font-medium leading-tight ${done ? "text-slate-900 font-semibold" : "text-slate-600"}`}>{s}</div>
+                    </button>
                   );
                 })}
               </div>
@@ -597,7 +588,7 @@ function BasicInfoSection({ client: c, canEditStages, onStageToggle }) {
 
       <Card className="border-slate-200 lg:col-span-2">
         <CardContent className="p-5">
-          <div className="text-sm font-semibold text-slate-900 mb-2" style={{ fontFamily: "Outfit" }}>Customer &amp; Address</div>
+          <div className="text-sm font-semibold text-slate-900 mb-2" style={{ fontFamily: "Outfit" }}>Customer & Address</div>
           <InfoRow label="Client Name" value={c.full_name} />
           <InfoRow label="Address" value={[c.address, c.city, c.state, c.pincode].filter(Boolean).join(", ")} />
           <InfoRow label="Mobile" value={c.mobile} />
@@ -1099,7 +1090,7 @@ function TicketDetailDialog({ ticket, onClose, onChanged, employees }) {
   );
 }
 
-function SurveyDetailsSection({ surveys, onZoom, onDeleteRecord, onDeleteFile }) {
+function SurveyDetailsSection({ surveys, onZoom }) {
   const [selectedIdx, setSelectedIdx] = useState(0);
 
   if (!surveys || surveys.length === 0) {
@@ -1113,42 +1104,46 @@ function SurveyDetailsSection({ surveys, onZoom, onDeleteRecord, onDeleteFile })
     );
   }
 
-  const s = surveys[selectedIdx];
-  const details = s.details || {};
-  const checklist = details.checklist || [];
-  const photos = details.photos || {};
-  const photoEntries = Object.entries(photos);
+  const s = surveys[selectedIdx] || {};
+  const details = s.details || s.submission || {};
+  const checklist = details.checklist || s.submission?.checklist || [];
+  
+  // Combine all possible photo sources so no survey photo is ever missed
+  const rawPhotos = {
+    ...(s.submission?.photos || {}),
+    ...(s.submission?.attachments || {}),
+    ...(s.details?.attachments || {}),
+    ...(s.details?.photos || {}),
+    ...(s.attachments || {}),
+    ...(s.photos || {}),
+  };
+  
+  const photoEntries = Object.entries(rawPhotos).filter(([_, val]) => {
+    if (!val) return false;
+    if (typeof val === "string") return val.trim().length > 0;
+    if (typeof val === "object") return Boolean(val.file_id || val.id || val.url);
+    return false;
+  });
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {surveys.length > 1 && (
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
-            <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Select Survey:</Label>
-            <Select value={String(selectedIdx)} onValueChange={(val) => setSelectedIdx(Number(val))}>
-              <SelectTrigger className="w-[260px] bg-white">
-                <SelectValue placeholder="Choose survey report" />
-              </SelectTrigger>
-              <SelectContent>
-                {surveys.map((item, idx) => (
-                  <SelectItem key={item.id} value={String(idx)}>
-                    {dayjs(item.details?.submitted_at || item.created_at).format("DD MMM YYYY HH:mm")} · By {item.details?.assigned_to_name || "Employee"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-        {onDeleteRecord && (
-          <button
-            type="button"
-            onClick={() => onDeleteRecord(s.id, `Survey Report – ${dayjs(s.created_at).format("DD MMM YYYY")}`)}
-            className="flex items-center gap-1.5 text-xs text-red-600 hover:text-red-800 bg-red-50 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Delete This Record
-          </button>
-        )}
-      </div>
+      {surveys.length > 1 && (
+        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Select Survey:</Label>
+          <Select value={String(selectedIdx)} onValueChange={(val) => setSelectedIdx(Number(val))}>
+            <SelectTrigger className="w-[260px] bg-white">
+              <SelectValue placeholder="Choose survey report" />
+            </SelectTrigger>
+            <SelectContent>
+              {surveys.map((item, idx) => (
+                <SelectItem key={item.id} value={String(idx)}>
+                  {dayjs(item.details?.submitted_at || item.created_at).format("DD MMM YYYY HH:mm")} · By {item.details?.assigned_to_name || "Employee"}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-3 gap-4">
         {/* Left column: Info + Checklist */}
@@ -1209,7 +1204,7 @@ function SurveyDetailsSection({ surveys, onZoom, onDeleteRecord, onDeleteFile })
                           onClick={() => onZoom({ file_id: fileId, label: `Survey - ${label}` })}
                           className="relative aspect-video w-full overflow-hidden bg-slate-100 hover:opacity-95 transition"
                         >
-                          <img src={fileUrl(fileId)} alt={label} className="w-full h-full object-cover" />
+                          <img src={fileUrl(fileId)} alt={label} loading="lazy" className="w-full h-full object-cover" />
                           <div className="absolute top-2 left-2">
                             <Badge className="bg-black/60 text-white border-none text-[9px]">{label}</Badge>
                           </div>
@@ -1217,7 +1212,7 @@ function SurveyDetailsSection({ surveys, onZoom, onDeleteRecord, onDeleteFile })
                         <div className="p-2.5 space-y-1.5 bg-white flex-1 flex flex-col justify-between">
                           <div className="text-xs text-slate-700 leading-normal font-normal">
                             {note ? (
-                              <span className="text-slate-800 font-medium">"{note}"</span>
+                              <span className="text-slate-800 font-medium">“{note}”</span>
                             ) : (
                               <span className="text-slate-400 italic text-[11px]">No photo note</span>
                             )}
@@ -1226,20 +1221,6 @@ function SurveyDetailsSection({ surveys, onZoom, onDeleteRecord, onDeleteFile })
                             {photoGps && <div className="flex items-center"><MapPin className="w-2.5 h-2.5 mr-1" /> {photoGps}</div>}
                             {captureTime && <div className="flex items-center"><Clock className="w-2.5 h-2.5 mr-1" /> {dayjs(captureTime).format("DD MMM YYYY HH:mm")}</div>}
                             {uploadedBy && <div className="flex items-center"><User className="w-2.5 h-2.5 mr-1" /> {uploadedBy}</div>}
-                          </div>
-                          <div className="flex items-center gap-1.5 pt-1.5 border-t border-slate-100/80">
-                            <a href={fileUrl(fileId)} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 px-2 py-0.5 rounded hover:bg-blue-50 transition-colors">
-                              <Download className="w-3 h-3" /> Download
-                            </a>
-                            {onDeleteFile && (
-                              <button
-                                type="button"
-                                onClick={() => onDeleteFile(fileId, `Survey Photo – ${label}`)}
-                                className="flex items-center gap-1 text-[10px] text-red-500 hover:text-red-700 px-2 py-0.5 rounded hover:bg-red-50 transition-colors"
-                              >
-                                <Trash2 className="w-3 h-3" /> Delete
-                              </button>
-                            )}
                           </div>
                         </div>
                       </div>
@@ -1281,7 +1262,7 @@ function SurveyDetailsSection({ surveys, onZoom, onDeleteRecord, onDeleteFile })
   );
 }
 
-function WorkflowDetailsSection({ title, icon: Icon, records = [], onZoom, onDeleteRecord, onDeleteFile }) {
+function WorkflowDetailsSection({ title, icon: Icon, records = [], onZoom }) {
   const [selectedIdx, setSelectedIdx] = useState(0);
 
   if (!records || records.length === 0) {
@@ -1343,17 +1324,6 @@ function WorkflowDetailsSection({ title, icon: Icon, records = [], onZoom, onDel
           </Select>
         </div>
       )}
-      <div className="flex justify-end">
-        {onDeleteRecord && (
-          <button
-            type="button"
-            onClick={() => onDeleteRecord(s.id, `${title} Record – ${dayjs(s.created_at).format("DD MMM YYYY")}`)}
-            className="flex items-center gap-1.5 text-xs text-red-600 hover:text-red-800 bg-red-50 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Delete This Record
-          </button>
-        )}
-      </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
         {/* Left/Main Column: Info + Notes + Attachments */}
@@ -1399,7 +1369,7 @@ function WorkflowDetailsSection({ title, icon: Icon, records = [], onZoom, onDel
                           onClick={() => onZoom({ file_id: fileId, label: label })}
                           className="relative aspect-video w-full overflow-hidden bg-slate-100 hover:opacity-95 transition flex items-center justify-center"
                         >
-                          <img src={fileUrl(fileId)} alt={label} className="w-full h-full object-cover error-fallback-hidden" onError={(e) => {
+                          <img src={fileUrl(fileId)} alt={label} loading="lazy" className="w-full h-full object-cover error-fallback-hidden" onError={(e) => {
                             e.target.style.display = "none";
                           }} />
                           <div className="absolute inset-0 flex items-center justify-center bg-slate-100 text-slate-400">
@@ -1413,19 +1383,10 @@ function WorkflowDetailsSection({ title, icon: Icon, records = [], onZoom, onDel
                           <div className="text-xs text-slate-700 leading-normal font-medium truncate">
                             {filename || label}
                           </div>
-                          <div className="flex items-center gap-1.5 text-[9px] font-mono mt-1">
-                            <a href={fileUrl(fileId)} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">
-                              <Download className="w-3 h-3" /> Download
+                          <div className="text-[9px] text-slate-400 font-mono mt-1">
+                            <a href={fileUrl(fileId)} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                              Download File
                             </a>
-                            {onDeleteFile && (
-                              <button
-                                type="button"
-                                onClick={() => onDeleteFile(fileId, `${label}`)}
-                                className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:underline"
-                              >
-                                <Trash2 className="w-3 h-3" /> Delete
-                              </button>
-                            )}
                           </div>
                         </div>
                       </div>

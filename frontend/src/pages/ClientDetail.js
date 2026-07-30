@@ -2,7 +2,6 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, fileUrl } from "@/lib/api";
-import { useAuth } from "@/context/AuthContext";
 import { useClientDetail } from "@/hooks/useClients";
 import { queryKeys } from "@/lib/queryKeys";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,22 +36,46 @@ const STATUSES = ["Lead", "Survey Pending", "Quotation Sent", "Approved", "Insta
 export default function ClientDetail() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const [editMode, setEditMode] = useState(params.get("edit") === "1");
+  const [editData, setEditData] = useState(null);
   const [note, setNote] = useState("");
   const [tplOpen, setTplOpen] = useState(false);
 
   // — React Query: cached for 3 min, no refetch on re-navigation —
   const { data: client, isLoading } = useClientDetail(id);
-  const isAdminOrOwner = user?.user_type === "owner" || user?.role === "Admin";
-  const canEditStages = isAdminOrOwner || !!(user?.permissions?.project_execution?.edit);
 
+  // Sync editData when client is loaded or edit mode changes
+  const handleStartEdit = () => {
+    setEditData({
+      full_name: client?.full_name || "",
+      mobile: client?.mobile || "",
+      alt_mobile: client?.alt_mobile || "",
+      consumer_number: client?.consumer_number || "",
+      address: client?.address || "",
+      city: client?.city || "",
+      state: client?.state || "",
+      pincode: client?.pincode || "",
+      aadhaar: client?.aadhaar || "",
+      system_kw: client?.system_kw || 0,
+      panel_make: client?.panel_make || "",
+      panel_wattage: client?.panel_wattage || 0,
+      num_panels: client?.num_panels || 0,
+      inverter_make: client?.inverter_make || "",
+      inverter_capacity: client?.inverter_capacity || "",
+      inverter_serial: client?.inverter_serial || "",
+      phase_type: client?.phase_type || "Single Phase",
+      subsidy_eligible: client?.subsidy_eligible ?? false,
+      status: client?.status || "Lead",
+    });
+    setEditMode(true);
+  };
 
-  const setClient = useCallback((newData) => {
-    queryClient.setQueryData(queryKeys.clients.detail(id), newData);
-  }, [queryClient, id]);
+  const handleCancelEdit = () => {
+    setEditData(null);
+    setEditMode(false);
+  };
 
   // Redirect to clients list if the client is not found after loading
   useEffect(() => {
@@ -60,9 +83,11 @@ export default function ClientDetail() {
   }, [isLoading, client, nav]);
 
   const invalidate = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(id) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.clients.list() });
-  }, [queryClient, id]);
+    queryClient.invalidateQueries({ queryKey: ["clients"] });
+    queryClient.invalidateQueries({ queryKey: ["client-data"] });
+    queryClient.invalidateQueries({ queryKey: ["projects"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  }, [queryClient]);
 
   const currentStage = React.useMemo(() => {
     if (!client?.stages) return "Onboarding";
@@ -75,18 +100,11 @@ export default function ClientDetail() {
   }, [client]);
 
   const toggleStage = async (stage) => {
-    const nextVal = !client.stages?.[stage];
-    const stagesPayload = {};
-    STAGES.forEach((s) => {
-      const val = s === stage ? nextVal : client.stages?.[s];
-      if (val !== undefined && val !== null) {
-        stagesPayload[s] = !!val;
-      }
-    });
+    const stages = { ...client.stages, [stage]: !client.stages?.[stage] };
     try {
-      await api.patch(`/clients/${id}/stages`, { stages: stagesPayload });
+      await api.patch(`/clients/${id}/stages`, { stages });
       invalidate();
-      toast.success(`${stage} ${nextVal ? "completed" : "reset"}`);
+      toast.success(`${stage} ${!client.stages?.[stage] ? "completed" : "reset"}`);
     } catch (e) { toast.error(formatApiError(e)); }
   };
 
@@ -110,12 +128,19 @@ export default function ClientDetail() {
   };
 
   const saveEdit = async () => {
+    if (!editData) return;
     try {
-      const payload = { ...client, system_kw: Number(client.system_kw) || 0 };
-      delete payload.id; delete payload.sol_id; delete payload.created_at; delete payload.updated_at; delete payload.notes; delete payload.progress; delete payload.company_id; delete payload.created_by;
+      const payload = {
+        ...editData,
+        system_kw: Number(editData.system_kw) || 0,
+        panel_wattage: Number(editData.panel_wattage) || 0,
+        num_panels: Number(editData.num_panels) || 0,
+      };
+      delete payload.id; delete payload.sol_id; delete payload.created_at; delete payload.updated_at; delete payload.notes; delete payload.progress; delete payload.company_id; delete payload.created_by; delete payload.high_value_assets;
       await api.put(`/clients/${id}`, payload);
-      toast.success("Client updated");
+      toast.success("Client updated successfully");
       setEditMode(false);
+      setEditData(null);
       invalidate();
     } catch (e) { toast.error(formatApiError(e)); }
   };
@@ -146,7 +171,14 @@ export default function ClientDetail() {
               <SelectTrigger className="w-56" data-testid="status-select"><SelectValue /></SelectTrigger>
               <SelectContent>{STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
             </Select>
-            {editMode ? <Button onClick={saveEdit} className="bg-blue-600 hover:bg-blue-700">Save Changes</Button> : <Button variant="outline" onClick={() => setEditMode(true)}>Edit</Button>}
+            {editMode ? (
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={handleCancelEdit}>Cancel</Button>
+                <Button onClick={saveEdit} className="bg-blue-600 hover:bg-blue-700">Save Changes</Button>
+              </div>
+            ) : (
+              <Button variant="outline" onClick={handleStartEdit}>Edit</Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -170,29 +202,28 @@ export default function ClientDetail() {
               </div>
               <div>
                 <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Progress</div>
-                <div className="text-sm font-semibold text-blue-600">{client.progress || 0}%</div>
+                <div className="text-sm font-semibold text-blue-600">{client.progress}%</div>
               </div>
             </div>
           </div>
 
-          <div className="relative overflow-x-auto scrollbar-hidden -mx-4 px-4 py-3" data-testid="progress-timeline">
-            <div className="relative min-w-max">
-              <div className="hidden sm:block absolute top-10 left-5 right-5 h-0.5 bg-slate-200" />
-              <div className="hidden sm:block absolute top-10 left-5 h-0.5 bg-blue-600 transition-all duration-500" style={{ width: `calc((100% - 2.5rem) * ${(client.progress || 0) / 100})` }} />
-              <div className="flex gap-4 relative z-10">
+          <div className="relative" data-testid="progress-timeline">
+            <div className="hidden sm:block absolute top-10 left-5 right-5 h-0.5 bg-slate-200 pointer-events-none" />
+            <div className="hidden sm:block absolute top-10 left-5 h-0.5 bg-blue-600 transition-all pointer-events-none" style={{ width: `calc((100% - 2.5rem) * ${client.progress / 100})` }} />
+            <div className="scrollbar-hidden -mx-4 overflow-x-auto px-4 py-3 sm:mx-0 sm:overflow-visible sm:px-0">
+              <div className="flex gap-4 min-w-full sm:min-w-0">
                 {STAGES.map((s, i) => {
                   const done = !!client.stages?.[s];
                   const isCurrent = currentStage === s;
                   return (
                     <button
                       key={s}
-                      onClick={() => canEditStages && toggleStage(s)}
-                      disabled={!canEditStages}
-                      title={canEditStages ? (done ? `Unmark "${s}"` : `Mark "${s}" complete`) : s}
-                      className={`flex min-w-[88px] flex-col items-center rounded-2xl border px-2 py-3 text-center transition-colors
-                        ${done ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"}
-                        ${isCurrent ? "shadow-lg border-blue-400 bg-blue-100" : ""}
-                        ${canEditStages ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleStage(s);
+                      }}
+                      className={`flex min-w-[88px] flex-col items-center rounded-2xl border px-2 py-3 text-center transition-colors cursor-pointer hover:border-blue-300 ${done ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"} ${isCurrent ? "shadow-lg border-blue-400 bg-blue-100" : ""}`}
                       data-testid={`stage-${s.replace(/\s/g, "-").toLowerCase()}`}
                     >
                       <div className={`flex h-10 w-10 items-center justify-center rounded-full border-2 ${done ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-slate-300 text-slate-400"}`}>
@@ -256,15 +287,24 @@ export default function ClientDetail() {
               <Row label="Inverter Serial">{client.inverter_serial || "—"}</Row>
             </div>
 
-            {editMode && (
+            {editMode && editData && (
               <div className="mt-6 pt-6 border-t border-slate-200 grid md:grid-cols-2 gap-4">
-                <EF label="Full Name" v={client.full_name} k="full_name" set={setClient} c={client} />
-                <EF label="Mobile" v={client.mobile} k="mobile" set={setClient} c={client} />
-                <EF label="Consumer #" v={client.consumer_number} k="consumer_number" set={setClient} c={client} />
-                <EF label="System KW" v={client.system_kw} k="system_kw" type="number" set={setClient} c={client} />
-                <EF label="Panel Make" v={client.panel_make} k="panel_make" set={setClient} c={client} />
-                <EF label="Inverter Make" v={client.inverter_make} k="inverter_make" set={setClient} c={client} />
-                <EF label="Address" v={client.address} k="address" set={setClient} c={client} full />
+                <EF label="Full Name" v={editData.full_name} k="full_name" set={setEditData} />
+                <EF label="Mobile" v={editData.mobile} k="mobile" set={setEditData} />
+                <EF label="Alternate Mobile" v={editData.alt_mobile} k="alt_mobile" set={setEditData} />
+                <EF label="Consumer #" v={editData.consumer_number} k="consumer_number" set={setEditData} />
+                <EF label="Aadhaar #" v={editData.aadhaar} k="aadhaar" set={setEditData} />
+                <EF label="System KW" v={editData.system_kw} k="system_kw" type="number" set={setEditData} />
+                <EF label="Address" v={editData.address} k="address" set={setEditData} full />
+                <EF label="City" v={editData.city} k="city" set={setEditData} />
+                <EF label="State" v={editData.state} k="state" set={setEditData} />
+                <EF label="Pincode" v={editData.pincode} k="pincode" set={setEditData} />
+                <EF label="Panel Make" v={editData.panel_make} k="panel_make" set={setEditData} />
+                <EF label="Panel Wattage (Wp)" v={editData.panel_wattage} k="panel_wattage" type="number" set={setEditData} />
+                <EF label="Number of Panels" v={editData.num_panels} k="num_panels" type="number" set={setEditData} />
+                <EF label="Inverter Make" v={editData.inverter_make} k="inverter_make" set={setEditData} />
+                <EF label="Inverter Capacity" v={editData.inverter_capacity} k="inverter_capacity" set={setEditData} />
+                <EF label="Inverter Serial" v={editData.inverter_serial} k="inverter_serial" set={setEditData} />
               </div>
             )}
 
@@ -368,9 +408,9 @@ const Row = ({ label, children }) => (
   </div>
 );
 
-const EF = ({ label, v, k, type = "text", set, c, full }) => (
+const EF = ({ label, v, k, type = "text", set, full }) => (
   <div className={full ? "md:col-span-2" : ""}>
     <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</Label>
-    <Input type={type} value={v || ""} onChange={(e) => set({ ...c, [k]: e.target.value })} className="mt-1" />
+    <Input type={type} value={v !== undefined && v !== null ? v : ""} onChange={(e) => set((prev) => ({ ...prev, [k]: e.target.value }))} className="mt-1" />
   </div>
 );

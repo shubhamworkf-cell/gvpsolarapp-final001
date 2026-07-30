@@ -2,8 +2,10 @@ import React, { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Activity } from "lucide-react";
+import { Search, Activity, Download } from "lucide-react";
+import { toast } from "sonner";
 import { CATEGORY_OPTIONS } from "./_shared";
 
 const STATUS_STYLES = {
@@ -18,14 +20,58 @@ export default function BalanceTab({ products, globalSearch }) {
   const [categoryFilter, setCategoryFilter] = useState("all");
 
   const filtered = useMemo(() => {
-    const all = (globalSearch || search || "").toLowerCase();
-    return products.filter((p) => {
+    const list = Array.isArray(products) ? products : [];
+    const rawSearch = (globalSearch || search || "").toLowerCase().trim();
+    const cleanSearch = rawSearch.replace(/\s*[xX×\*]\s*/g, "*");
+    const tokens = cleanSearch.split(/\s+/).filter(Boolean);
+
+    return list.filter((p) => {
       if (statusFilter !== "all" && p.stock_status !== statusFilter) return false;
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false;
-      if (all && !(p.name.toLowerCase().includes(all) || (p.size || "").toLowerCase().includes(all) || (p.category || "").toLowerCase().includes(all))) return false;
+      if (tokens.length > 0) {
+        const name = (p.name || "").toLowerCase();
+        const rawSize = (p.size || "").toLowerCase();
+        const size = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
+        const brand = (p.brand || "").toLowerCase();
+        const category = (p.category || "").toLowerCase();
+        const challan = (p.challan_number || p.challan || p.reference_number || "").toLowerCase();
+        const sku = (p.sku || p.code || p.product_code || "").toLowerCase();
+
+        const fullText = `${name} ${size} ${rawSize} ${brand} ${category} ${challan} ${sku}`;
+        const match = tokens.every((token) => fullText.includes(token));
+
+        if (!match) return false;
+      }
       return true;
     });
   }, [products, search, statusFilter, categoryFilter, globalSearch]);
+
+  const handleDownloadCSV = () => {
+    if (!filtered || filtered.length === 0) {
+      toast.error("No balance data to export");
+      return;
+    }
+    const headers = ["Product Name", "Size", "Category", "Total Inward", "Total Outward", "Balance", "Unit", "Min Stock", "Status"];
+    const rows = filtered.map(p => [
+      `"${(p.name || "").replace(/"/g, '""')}"`,
+      `"${(p.size || "").replace(/"/g, '""')}"`,
+      `"${(p.category || "Solar").replace(/"/g, '""')}"`,
+      p.total_in || 0,
+      p.total_out || 0,
+      p.balance || 0,
+      `"${(p.unit || "Nos").replace(/"/g, '""')}"`,
+      p.min_stock || 0,
+      `"${(p.stock_status || "Normal").replace(/"/g, '""')}"`
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "Inventory_Balance_Report.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const totals = useMemo(() => filtered.reduce((acc, p) => {
     acc.in += p.total_in || 0;
@@ -75,8 +121,11 @@ export default function BalanceTab({ products, globalSearch }) {
           <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
             <div>
               <div className="text-base font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>Balance Report</div>
-              <div className="text-xs text-slate-500">{filtered.length} products · {totals.low} low · {totals.out_stock} out of stock</div>
+              <div className="text-xs text-slate-500">{(filtered?.length ?? 0)} products · {totals.low} low · {totals.out_stock} out of stock</div>
             </div>
+            <Button variant="outline" size="sm" className="border-slate-300 text-slate-700 hover:bg-slate-50 h-8" onClick={handleDownloadCSV} data-testid="balance-download-btn">
+              <Download className="w-4 h-4 mr-1.5 text-emerald-600" /> Download
+            </Button>
           </div>
           <div className="overflow-x-auto max-h-[65vh]">
             <table className="w-full text-sm" data-testid="balance-table">
@@ -93,7 +142,7 @@ export default function BalanceTab({ products, globalSearch }) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {(filtered?.length ?? 0) === 0 ? (
                   <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-400">
                     <Activity className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                     No products match filters

@@ -2,6 +2,8 @@ import React, { useMemo, useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import api, { formatApiError } from "@/lib/api";
 import { useClientDataList, useClientDataStats } from "@/hooks/useClientDataHooks";
+import { useDeleteClient } from "@/hooks/useClients";
+import { usePermission } from "@/lib/permissions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import {
   Users2, Activity, AlertCircle, Ticket as TicketIcon, CheckCircle2, Zap, Search, Filter,
-  Download, ChevronRight, Phone, MessageCircle, Wifi, WifiOff, Wrench, Settings,
+  Download, ChevronRight, Phone, MessageCircle, Wifi, WifiOff, Wrench, Settings, Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
@@ -68,6 +70,14 @@ export default function ClientData() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 25;
 
+  const canDelete = usePermission("clients", "delete");
+  const deleteClientMutation = useDeleteClient();
+
+  const handleDeleteClient = (id) => {
+    if (!window.confirm("Are you sure you want to delete this client?")) return;
+    deleteClientMutation.mutate(id);
+  };
+
   useEffect(() => {
     const t = setTimeout(() => {
       setDebouncedFilters(filters);
@@ -75,13 +85,7 @@ export default function ClientData() {
     return () => clearTimeout(t);
   }, [filters]);
 
-  const { data: clientsData = { items: [], total: 0 }, isLoading: clientsLoading } = useClientDataList({
-    ...debouncedFilters,
-    page: currentPage,
-    page_size: itemsPerPage,
-  });
-  const clients = clientsData.items || [];
-  const total = clientsData.total || 0;
+  const { data: clients = [], isLoading: clientsLoading } = useClientDataList(debouncedFilters);
   const { data: stats = { total_meters: 0, online: 0, offline: 0, error: 0 }, isLoading: statsLoading } = useClientDataStats();
   const loading = clientsLoading || statsLoading;
 
@@ -89,8 +93,10 @@ export default function ClientData() {
     setCurrentPage(1);
   }, [filters]);
 
-  const totalPages = Math.ceil(total / itemsPerPage);
-  const paginated = clients;
+  const totalPages = Math.ceil(clients.length / itemsPerPage);
+  const paginated = useMemo(() => {
+    return clients.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  }, [clients, currentPage]);
 
   const exportCsv = async () => {
     try {
@@ -266,6 +272,9 @@ export default function ClientData() {
                     <div className="flex items-center justify-center gap-1">
                       <QuickAction icon={Phone} label="Call" color="text-blue-600" onClick={() => callClient(c.mobile)} testid={`call-${c.id}`} />
                       <QuickAction icon={MessageCircle} label="WhatsApp" color="text-emerald-600" onClick={() => whatsApp(c.mobile, c.full_name)} testid={`wa-${c.id}`} />
+                      {canDelete && (
+                        <QuickAction icon={Trash2} label="Delete Client" color="text-red-600" onClick={() => handleDeleteClient(c.id)} testid={`delete-client-${c.id}`} />
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-3">

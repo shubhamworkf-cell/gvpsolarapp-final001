@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { FileSpreadsheet, Upload, Clipboard, CheckCircle2, ArrowLeft, X } from "lucide-react";
-import { toast } from "sonner";
+import { fetchProductsDeduplicated, getCachedProducts } from "@/lib/productCache";
 
 const MODE_CONFIG = {
   inward: {
@@ -150,7 +150,7 @@ const parseArraysToRows = (arrays, mode = "inward", clients = []) => {
       _selected: true,
       product: get("product").toUpperCase(),
       size: get("size"),
-      quantity: Number(get("quantity").replace(/,/g, "")) || 0,
+      quantity: get("quantity") !== "" ? (Number(get("quantity").replace(/,/g, "")) || 0) : "",
       unit: get("unit") || "Nos",
       source_type: "",
       source_name: "",
@@ -278,7 +278,11 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
 
     api.get("/clients").then((r) => setClients(r.data || [])).catch(() => {});
     if (!products || products.length === 0) {
-      api.get("/inventory/products").then((r) => setProductsList(r.data || [])).catch(() => {});
+      const cached = getCachedProducts();
+      if (cached && cached.length > 0) {
+        setProductsList(cached);
+      }
+      fetchProductsDeduplicated().then((list) => setProductsList(list || [])).catch(() => {});
     } else {
       setProductsList(products);
     }
@@ -428,6 +432,8 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
           source_name,
           remarks: globalDefaults.remarks || "",
           status: globalDefaults.status || "Dispatched",
+          high_value_goods: globalDefaults.high_value_goods || false,
+          high_value_asset: globalDefaults.high_value_goods || false,
         };
       });
     });
@@ -461,7 +467,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
 
   const isRowValid = (row) => {
     if (!row.product?.trim()) return false;
-    if (Number(row.quantity) <= 0) return false;
+    if (mode !== "inward" && Number(row.quantity) <= 0) return false;
     if (mode === "outward" && !row.client_name?.trim() && !row.client_id) return false;
     return true;
   };
@@ -480,7 +486,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
     setCancelImport(false);
     cancelImportRef.current = false;
 
-    const CHUNK_SIZE = 500;
+    const CHUNK_SIZE = 25;
     const totalRows = validRows.length;
     let importedCount = 0;
 
@@ -491,11 +497,15 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
           break;
         }
         const chunk = validRows.slice(i, i + CHUNK_SIZE);
-        await api.post(cfg.bulkEndpoint, {
-          rows: chunk,
-          global_defaults: globalDefaults,
-          source: "manual-bulk-import",
-        });
+        await api.post(
+          cfg.bulkEndpoint,
+          {
+            rows: chunk,
+            global_defaults: globalDefaults,
+            source: "manual-bulk-import",
+          },
+          { timeout: 120000 }
+        );
         importedCount += chunk.length;
         setImportProgress(Math.round((importedCount / totalRows) * 100));
         // Yield to the browser main thread to keep UI responsive
@@ -714,6 +724,19 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
                     </div>
                   )}
                   <datalist id="manual-client-list">{clientOptions.map((name) => <option key={name} value={name} />)}</datalist>
+                  {mode === "inward" && (
+                    <div className="col-span-1 lg:col-span-2 space-y-1.5 flex items-center pt-2">
+                      <Label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={globalDefaults.high_value_goods || false}
+                          onChange={(e) => setGlobalDefaults({ ...globalDefaults, high_value_goods: e.target.checked })}
+                          className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                        />
+                        High Value Goods Tracking (Apply to all rows)
+                      </Label>
+                    </div>
+                  )}
                   <div className="col-span-1 lg:col-span-2 space-y-1.5"><Label>Remarks</Label><Textarea value={globalDefaults.remarks} onChange={(e) => setGlobalDefaults({ ...globalDefaults, remarks: e.target.value })} rows={3} /></div>
                 </div>
               </div>
@@ -765,7 +788,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
                           const status = matchProduct(row.product);
                           const rowErrors = [];
                           if (!row.product?.trim()) rowErrors.push("Product required");
-                          if (!row.quantity || Number(row.quantity) <= 0) rowErrors.push("Qty > 0 required");
+                          if (mode !== "inward" && (!row.quantity || Number(row.quantity) <= 0)) rowErrors.push("Qty > 0 required");
                           if (mode === "outward" && !row.client_name?.trim() && !row.client_id) rowErrors.push("Client required");
                           
                           return (
@@ -784,7 +807,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
                                 </div>
                               </td>
                               <td className="px-3 py-2.5 align-top"><Input value={row.size || ""} onChange={(e) => updateCell(originalIndex, "size", e.target.value)} className="text-xs h-8 bg-white border-slate-200" /></td>
-                              <td className="px-3 py-2.5 align-top"><Input type="number" value={row.quantity || ""} onChange={(e) => updateCell(originalIndex, "quantity", Number(e.target.value) || 0)} className="text-xs h-8 bg-white border-slate-200 w-20" /></td>
+                              <td className="px-3 py-2.5 align-top"><Input type="number" value={row.quantity ?? ""} onChange={(e) => updateCell(originalIndex, "quantity", e.target.value === "" ? "" : (Number(e.target.value) || 0))} className="text-xs h-8 bg-white border-slate-200 w-20" /></td>
                               <td className="px-3 py-2.5 align-top">
                                 <Select value={row.unit || "Nos"} onValueChange={(value) => updateCell(originalIndex, "unit", value)}>
                                   <SelectTrigger className="h-8 text-xs bg-white border-slate-200"><SelectValue /></SelectTrigger>

@@ -56,15 +56,6 @@ export default function DeliveryBill() {
   const { data: history = [], isLoading: loadingHistory, refetch: fetchHistory } = useSalesDocuments("delivery_bill");
   const deleteDocMutation = useDeleteSalesDocument("delivery_bill");
 
-  const [historyPage, setHistoryPage] = useState(1);
-  const historyPageSize = 15;
-  const totalHistoryPages = Math.ceil(history.length / historyPageSize);
-  const paginatedHistory = useMemo(() => {
-    return history.slice((historyPage - 1) * historyPageSize, historyPage * historyPageSize);
-  }, [history, historyPage]);
-
-  useEffect(() => { setHistoryPage(1); }, [history.length]);
-
   const handleDeleteHistory = async (fileId) => {
     if (!window.confirm("Delete Document?\n\nThis action will permanently delete the document and its PDF.\n\nThis action cannot be undone.")) {
       return;
@@ -667,7 +658,7 @@ export default function DeliveryBill() {
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedHistory.map((doc) => (
+                  {history.map((doc) => (
                     <tr key={doc.id} className="border-t border-slate-100 hover:bg-slate-50">
                       <td className="px-4 py-3 text-slate-700 font-medium">{doc.doc_type === "quotation" ? "Quotation" : doc.doc_type === "tax_invoice" ? "Tax Invoice" : doc.doc_type === "delivery_bill" ? "Delivery Bill" : doc.doc_type}</td>
                       <td className="px-4 py-3 text-slate-700 font-mono text-xs">{doc.document_number}</td>
@@ -690,17 +681,6 @@ export default function DeliveryBill() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-          {totalHistoryPages > 1 && (
-            <div className="p-4 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs">
-              <div className="text-slate-500">
-                Showing {(historyPage - 1) * historyPageSize + 1}–{Math.min(historyPage * historyPageSize, history.length)} of {history.length} documents
-              </div>
-              <div className="flex gap-1">
-                <Button variant="outline" size="sm" onClick={() => setHistoryPage(p => Math.max(1, p - 1))} disabled={historyPage === 1}>Previous</Button>
-                <Button variant="outline" size="sm" onClick={() => setHistoryPage(p => Math.min(totalHistoryPages, p + 1))} disabled={historyPage === totalHistoryPages}>Next</Button>
-              </div>
             </div>
           )}
         </CardContent>

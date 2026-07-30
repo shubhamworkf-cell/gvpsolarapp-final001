@@ -7,6 +7,7 @@ import { useTaskList, useInvalidateTasks } from "@/hooks/useTasks";
 import { useMaterialRequestList, useInvalidateMaterialRequests } from "@/hooks/useMaterialRequests";
 import { useComplaintList, useInvalidateComplaints } from "@/hooks/useComplaints";
 import { useClientDetail } from "@/hooks/useClients";
+import { useProjectList } from "@/hooks/useProjects";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import {
@@ -24,6 +25,7 @@ import {
 } from "lucide-react";
 import dayjs from "dayjs";
 import { ProductAutocompleteInput } from "@/components/Inventory/_shared";
+import { useDebounce } from "@/hooks/useDebounce";
 
 const VERIF_PHOTOS = ["Site Photo", "Client With Solar", "Panel Photo", "Inverter Photo", "ACDB Photo", "DCDB Photo", "Net Meter Photo", "Serial Number Photo"];
 const SURVEY_PHOTOS = ["Client Photo", "Roof Photo", "Panel Layout", "Meter Location", "Site Access"];
@@ -70,6 +72,11 @@ export default function TaskPortal() {
   const [taskPortalTab, setTaskPortalTab] = useState("tasks");
   const [visitedTaskPortalTabs, setVisitedTaskPortalTabs] = useState(new Set(["tasks"]));
 
+  const [mrOpen, setMrOpen] = useState(false);
+  const [mrSearch, setMrSearch] = useState("");
+  const debouncedMrSearch = useDebounce(mrSearch, 300);
+  const [mrSelectedProject, setMrSelectedProject] = useState(null);
+
   useEffect(() => {
     setVisitedTaskPortalTabs((prev) => {
       if (prev.has(taskPortalTab)) return prev;
@@ -89,6 +96,7 @@ export default function TaskPortal() {
   const { data: tasks = [], isLoading: tasksLoading } = useTaskList(taskFilters);
   const { data: matReqs = [], isLoading: matReqsLoading } = useMaterialRequestList({});
   const { data: complaints = [], isLoading: complaintsLoading } = useComplaintList({ mine: true });
+  const { data: projects = [] } = useProjectList();
 
   const loading = tasksLoading || matReqsLoading || complaintsLoading;
 
@@ -113,14 +121,14 @@ export default function TaskPortal() {
   // Call this inside any mutation handler to flag that cache needs refresh
   const markMutated = useCallback(() => { didMutate.current = true; }, []);
 
-  const today = useMemo(() => dayjs().format("YYYY-MM-DD"), []);
+  const today = dayjs().format("YYYY-MM-DD");
 
-  const personalCards = useMemo(() => [
+  const personalCards = [
     { label: "Pending Tasks", v: tasks.filter(t => t.status === "pending").length, icon: ClipboardList, color: "amber" },
     { label: "Today's Tasks", v: tasks.filter(t => t.deadline === today).length, icon: CalendarClock, color: "blue" },
     { label: "Completed Sites", v: tasks.filter(t => t.status === "completed").length, icon: CheckCircle2, color: "emerald" },
     { label: "Material Requests", v: matReqs.length, icon: PackagePlus, color: "indigo" },
-  ], [tasks, matReqs, today]);
+  ];
 
   const team = useMemo(() => {
     const byEmp = new Map();
@@ -159,11 +167,6 @@ export default function TaskPortal() {
     ];
   }, [tasks, today]);
 
-  const [myPage, setMyPage] = useState(1);
-  const myPageSize = 25;
-  const [teamPage, setTeamPage] = useState(1);
-  const teamPageSize = 25;
-
   const filteredTeamTasks = useMemo(() => {
     return tasks.filter((t) => {
       if (filterEmployee !== "all" && t.assigned_to !== filterEmployee) return false;
@@ -171,20 +174,6 @@ export default function TaskPortal() {
       return true;
     });
   }, [tasks, filterEmployee, filterStatus]);
-
-  useEffect(() => { setMyPage(1); }, [tasks.length]);
-  useEffect(() => { setTeamPage(1); }, [filterEmployee, filterStatus]);
-
-  const totalMyPages = Math.ceil(tasks.length / myPageSize);
-  const paginatedMyTasks = useMemo(() => {
-    return tasks.slice((myPage - 1) * myPageSize, myPage * myPageSize);
-  }, [tasks, myPage]);
-
-  const totalTeamPages = Math.ceil(filteredTeamTasks.length / teamPageSize);
-  const paginatedTeamTasks = useMemo(() => {
-    return filteredTeamTasks.slice((teamPage - 1) * teamPageSize, teamPage * teamPageSize);
-  }, [filteredTeamTasks, teamPage]);
-
   if (loading) {
     return (
       <div className="space-y-4 lg:space-y-6">
@@ -232,24 +221,29 @@ export default function TaskPortal() {
             {isAdmin ? "Personal tasks and team-wide visibility." : "Your assigned work, in order."}
           </p>
         </div>
-        {isAdmin && (
-          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm" data-testid="scope-toggle">
-            <button
-              onClick={() => setScope("mine")}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${scope === "mine" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-              data-testid="scope-mine"
-            >
-              <ClipboardList className="w-3.5 h-3.5 inline mr-1.5" /> My Tasks
-            </button>
-            <button
-              onClick={() => setScope("team")}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${scope === "team" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-              data-testid="scope-team"
-            >
-              <Users2 className="w-3.5 h-3.5 inline mr-1.5" /> All Team Tasks
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button onClick={() => setMrOpen(true)} className="bg-blue-600 hover:bg-blue-700 w-fit" data-testid="new-material-request-btn">
+            <Plus className="w-4 h-4 mr-1" /> New Material Request
+          </Button>
+          {isAdmin && (
+            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm" data-testid="scope-toggle">
+              <button
+                onClick={() => setScope("mine")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${scope === "mine" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+                data-testid="scope-mine"
+              >
+                <ClipboardList className="w-3.5 h-3.5 inline mr-1.5" /> My Tasks
+              </button>
+              <button
+                onClick={() => setScope("team")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${scope === "team" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+                data-testid="scope-team"
+              >
+                <Users2 className="w-3.5 h-3.5 inline mr-1.5" /> All Team Tasks
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Stat cards */}
@@ -339,19 +333,8 @@ export default function TaskPortal() {
             </div>
             <div className="divide-y divide-slate-100">
               {filteredTeamTasks.length === 0 && <div className="p-8 text-center text-sm text-slate-500">No tasks match the current filters.</div>}
-              {paginatedTeamTasks.map((t) => <TaskRow key={t.id} t={t} showAssignee onSelect={() => setSelected(t)} />)}
+              {filteredTeamTasks.map((t) => <TaskRow key={t.id} t={t} showAssignee onSelect={setSelected} />)}
             </div>
-            {totalTeamPages > 1 && (
-              <div className="p-4 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs">
-                <div className="text-slate-500">
-                  Showing {(teamPage - 1) * teamPageSize + 1}–{Math.min(teamPage * teamPageSize, filteredTeamTasks.length)} of {filteredTeamTasks.length} tasks
-                </div>
-                <div className="flex gap-1">
-                  <Button variant="outline" size="sm" onClick={() => setTeamPage(p => Math.max(1, p - 1))} disabled={teamPage === 1}>Previous</Button>
-                  <Button variant="outline" size="sm" onClick={() => setTeamPage(p => Math.min(totalTeamPages, p + 1))} disabled={teamPage === totalTeamPages}>Next</Button>
-                </div>
-              </div>
-            )}
           </Card>
         </>
       ) : (
@@ -385,19 +368,8 @@ export default function TaskPortal() {
                   <div className="p-4 border-b border-slate-200 font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>My Tasks</div>
                   <div className="divide-y divide-slate-100">
                     {tasks.length === 0 && <div className="p-8 text-center text-slate-500">No tasks assigned yet. Your admin will assign work soon.</div>}
-                    {paginatedMyTasks.map((t) => <TaskRow key={t.id} t={t} onSelect={() => setSelected(t)} />)}
+                    {tasks.map((t) => <TaskRow key={t.id} t={t} onSelect={setSelected} />)}
                   </div>
-                  {totalMyPages > 1 && (
-                    <div className="p-4 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs">
-                      <div className="text-slate-500">
-                        Showing {(myPage - 1) * myPageSize + 1}–{Math.min(myPage * myPageSize, tasks.length)} of {tasks.length} tasks
-                      </div>
-                      <div className="flex gap-1">
-                        <Button variant="outline" size="sm" onClick={() => setMyPage(p => Math.max(1, p - 1))} disabled={myPage === 1}>Previous</Button>
-                        <Button variant="outline" size="sm" onClick={() => setMyPage(p => Math.min(totalMyPages, p + 1))} disabled={myPage === totalMyPages}>Next</Button>
-                      </div>
-                    </div>
-                  )}
                 </Card>
               )}
             </div>
@@ -430,9 +402,134 @@ export default function TaskPortal() {
           }}
         />
       )}
+      <Dialog open={mrOpen} onOpenChange={(o) => { setMrOpen(o); if (!o) { setMrSelectedProject(null); setMrSearch(""); } }}>
+        <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto" data-testid="new-mr-dialog">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "Outfit" }}>New Material Request</DialogTitle>
+            <DialogDescription className="text-xs">Create an independent material request for a project.</DialogDescription>
+          </DialogHeader>
+
+          {!mrSelectedProject ? (
+            <div className="space-y-4 py-2">
+              <FF label="Step 1: Select Client">
+                <Input
+                  placeholder="Search by client name, SOL ID, or mobile..."
+                  value={mrSearch}
+                  onChange={(e) => setMrSearch(e.target.value)}
+                  className="w-full"
+                  data-testid="mr-client-search"
+                />
+              </FF>
+              <div className="border border-slate-200 rounded-md max-h-[300px] overflow-y-auto divide-y divide-slate-100">
+                {projects
+                  .filter((p) => {
+                    const q = debouncedMrSearch.toLowerCase();
+                    return !q ||
+                      p.full_name?.toLowerCase().includes(q) ||
+                      p.sol_id?.toLowerCase().includes(q) ||
+                      p.mobile?.toLowerCase().includes(q);
+                  })
+                  .map((p) => (
+                    <div
+                      key={p.id}
+                      onClick={() => setMrSelectedProject(p)}
+                      className="p-3 hover:bg-slate-50 cursor-pointer flex items-center justify-between transition"
+                      data-testid={`mr-search-item-${p.id}`}
+                    >
+                      <div>
+                        <div className="font-semibold text-sm text-slate-900">{p.full_name}</div>
+                        <div className="text-xs text-slate-500">SOL ID: {p.sol_id} · Mobile: {p.mobile}</div>
+                      </div>
+                      <Plus className="w-4 h-4 text-slate-400" />
+                    </div>
+                  ))}
+                {projects.filter((p) => {
+                  const q = debouncedMrSearch.toLowerCase();
+                  return !q ||
+                    p.full_name?.toLowerCase().includes(q) ||
+                    p.sol_id?.toLowerCase().includes(q) ||
+                    p.mobile?.toLowerCase().includes(q);
+                }).length === 0 && (
+                    <div className="p-4 text-center text-xs text-slate-500">No matching clients found.</div>
+                  )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              {/* Step 2: Client Info Display */}
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 relative">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="absolute top-2 right-2 text-xs h-7 px-2"
+                  onClick={() => setMrSelectedProject(null)}
+                  data-testid="mr-change-client-btn"
+                >
+                  Change Client
+                </Button>
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Selected Project Info</div>
+                <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm">
+                  <div>
+                    <span className="text-xs text-slate-500 block">Client Name</span>
+                    <span className="font-semibold text-slate-900">{mrSelectedProject.full_name}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-500 block">Project Number</span>
+                    <span className="font-semibold text-slate-900">{mrSelectedProject.sol_id}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-500 block">Consumer Number</span>
+                    <span className="font-semibold text-slate-900">{mrSelectedProject.consumer_number || "—"}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-500 block">Current Stage</span>
+                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 mt-0.5">
+                      {(() => {
+                        const stages = mrSelectedProject.stages || {};
+                        const order = [
+                          "Handover", "Verification", "MSEDCL Upload", "PM Surya Ghar Upload",
+                          "Meter Testing Completed", "Meter Testing Request", "Document Signed",
+                          "Document Making", "Installation", "Material Delivery", "Quotation",
+                          "Survey", "Onboarding"
+                        ];
+                        return order.find((s) => stages[s]) || "Onboarding";
+                      })()}
+                    </Badge>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-xs text-slate-500 block">Site Address</span>
+                    <span className="text-slate-900">
+                      {[mrSelectedProject.address, mrSelectedProject.city, mrSelectedProject.state, mrSelectedProject.pincode].filter(Boolean).join(", ") || "—"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 3: Material Request Form */}
+              <div className="border-t border-slate-200 pt-4">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Create Material Request</div>
+                <MaterialRequest
+                  clientId={mrSelectedProject.id}
+                  onDone={() => {
+                    setMrOpen(false);
+                    setMrSelectedProject(null);
+                    setMrSearch("");
+                    invalidateMatReqs();
+                    queryClient.invalidateQueries({ queryKey: ["projects"] });
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
+
+const FF = ({ label, children }) => (
+  <div><Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</Label><div className="mt-1.5">{children}</div></div>
+);
 
 function ComplaintMiniRow({ c }) {
   const status = c.status || "Open";
@@ -469,12 +566,17 @@ function ComplaintMiniRow({ c }) {
   );
 }
 
-function TaskRow({ t, showAssignee = false, onSelect }) {
+const TaskRow = React.memo(function TaskRow({ t, showAssignee = false, onSelect }) {
   const overdue = t.status !== "completed" && t.deadline && t.deadline < dayjs().format("YYYY-MM-DD");
   const workflow = getWorkflow(t.task_type);
   const workflowLabel = t.task_type || "Task";
+  
+  const handleClick = React.useCallback(() => {
+    onSelect(t);
+  }, [t, onSelect]);
+
   return (
-    <div className="p-4 flex items-center gap-3 hover:bg-slate-50 cursor-pointer" onClick={onSelect} data-testid={`task-${t.id}`}>
+    <div className="p-4 flex items-center gap-3 hover:bg-slate-50 cursor-pointer" onClick={handleClick} data-testid={`task-${t.id}`}>
       <div className={`w-2 h-12 rounded-full shrink-0 ${t.priority === "Urgent" ? "bg-red-500" : t.priority === "High" ? "bg-orange-500" : "bg-blue-500"}`} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
@@ -493,7 +595,7 @@ function TaskRow({ t, showAssignee = false, onSelect }) {
       </Badge>
     </div>
   );
-}
+});
 
 // ─── Task Detail – renders correct workflow based on task_type ────────────────
 function TaskDetail({ task, onClose, onMutate, canMutate = true }) {
@@ -2001,14 +2103,19 @@ function ComplaintWorkflow({ task, canMutate, updateStatus }) {
 
 // ─── Shared sub-components ───────────────────────────────────────────────────
 
+import { fetchProductsDeduplicated, getCachedProducts } from "@/lib/productCache";
+
 export function MaterialRequest({ clientId, onDone }) {
   const [items, setItems] = useState([{ product: "", size: "", quantity: 1, remarks: "" }]);
   const [remarks, setRemarks] = useState("");
-  const [products, setProducts] = useState([]);
+  const [products, setProducts] = useState(() => getCachedProducts() || []);
+
+  // Refs for auto-focus: productRefs[i] → product input of row i
+  const productRefs = useRef({});
 
   useEffect(() => {
-    api.get("/inventory/products")
-      .then((res) => setProducts(res.data || []))
+    fetchProductsDeduplicated()
+      .then((list) => setProducts(list || []))
       .catch(() => {});
   }, []);
 
@@ -2027,6 +2134,29 @@ export function MaterialRequest({ clientId, onDone }) {
     }
     setItems(items.map((x, idx) => idx === i ? { ...x, product: pName, size: sizeVal } : x));
   };
+
+  // Add a new empty row and focus its Product field after render
+  const addRow = useCallback((afterIndex) => {
+    const newItems = [...items, { product: "", size: "", quantity: 1, remarks: "" }];
+    setItems(newItems);
+    const newRowIndex = newItems.length - 1;
+    // Focus the product input of the new row after React renders it
+    setTimeout(() => {
+      const ref = productRefs.current[newRowIndex];
+      if (ref) ref.focus();
+    }, 30);
+  }, [items]);
+
+  // Keyboard handler for Qty field: Enter or Tab → auto-add next row
+  const handleQtyKeyDown = useCallback((e, i) => {
+    if (e.key === "Enter" || e.key === "Tab") {
+      // Only add new row if this is the last row (avoid duplicates mid-list)
+      if (i === items.length - 1) {
+        e.preventDefault();
+        addRow(i);
+      }
+    }
+  }, [items, addRow]);
 
   const submit = async () => {
     const normalizedItems = items
@@ -2057,6 +2187,7 @@ export function MaterialRequest({ clientId, onDone }) {
               placeholder="Product"
               className="h-10 uppercase font-medium"
               testid={`mat-product-${i}`}
+              inputRef={(el) => { productRefs.current[i] = el; }}
             />
           </div>
           <Input 
@@ -2075,7 +2206,8 @@ export function MaterialRequest({ clientId, onDone }) {
             onChange={(e) => {
               const val = e.target.value === "" ? "" : Number(e.target.value);
               setItems(items.map((x, idx) => idx === i ? { ...x, quantity: val } : x));
-            }} 
+            }}
+            onKeyDown={(e) => handleQtyKeyDown(e, i)}
           />
           <Input 
             placeholder="Remarks" 

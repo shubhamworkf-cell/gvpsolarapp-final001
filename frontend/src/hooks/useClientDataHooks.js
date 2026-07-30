@@ -9,9 +9,9 @@ export function useClientDataList(filters = {}) {
     queryKey: queryKeys.clientData.list(filters),
     queryFn: async () => {
       const params = {};
-      Object.entries(filters).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== "" && v !== "all") params[k] = v; });
+      Object.entries(filters).forEach(([k, v]) => { if (v && v !== "all") params[k] = v; });
       const { data } = await api.get("/client-data/clients", { params });
-      return data && data.items ? data : { items: data || [], total: (data || []).length };
+      return data || [];
     },
     staleTime: STALE_TIME,
     placeholderData: (prev) => prev,

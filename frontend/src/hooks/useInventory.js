@@ -2,17 +2,27 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError } from "@/lib/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { toast } from "sonner";
+import { getCachedProducts, setCachedProducts, fetchProductsDeduplicated, invalidateFrontendProductCache } from "@/lib/productCache";
 
-const STALE_TIME = 10 * 60 * 1000; // 10 min — inventory changes infrequently
+const STALE_TIME = 15 * 60 * 1000; // 15 min - inventory changes infrequently
 
 export function useProductList(filters = {}) {
   return useQuery({
     queryKey: queryKeys.inventory.products(filters),
     queryFn: async () => {
       const { data } = await api.get("/inventory/products");
-      return data || [];
+      const list = Array.isArray(data) ? data : [];
+      setCachedProducts(list);
+      return list;
     },
-    staleTime: STALE_TIME,
+    initialData: () => {
+      const cached = getCachedProducts();
+      return (Array.isArray(cached) && cached.length > 0) ? cached : undefined;
+    },
+    staleTime: 0,
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: true,
   });
 }
 
@@ -29,7 +39,10 @@ export function useInventoryStats() {
 
 export function useInvalidateInventory() {
   const queryClient = useQueryClient();
-  return () => queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all() });
+  return () => {
+    invalidateFrontendProductCache();
+    queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all() });
+  };
 }
 
 export function useInventoryHistory(params = {}) {

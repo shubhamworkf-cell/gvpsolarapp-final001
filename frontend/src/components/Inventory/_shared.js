@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -6,7 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertTriangle } from "lucide-react";
-
+import { getCachedProducts, fetchProductsDeduplicated } from "@/lib/productCache";
+import { useProductList } from "@/hooks/useInventory";
 export const UNIT_OPTIONS = ["Nos", "Pair", "Mtr", "Set", "Box", "Pcs", "Kg", "Ltr", "Roll"];
 export const CATEGORY_OPTIONS = ["Solar Panel", "Inverter", "Battery", "BoS", "Cable", "Structure", "MC4 / Connector", "Earthing", "Net Meter", "Tools", "Other"];
 export const REF_TYPES = ["Challan Number", "Invoice Number", "Book Number", "GRN Number", "Transport Number"];
@@ -91,11 +92,23 @@ export function applyDefaults(target, defaults, alwaysKeep = []) {
   return out;
 }
 
-export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required }) {
+export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required, inputRef, highValueOnly = false }) {
+  const { data: hookProducts = [] } = useProductList();
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
+  const [inputVal, setInputVal] = useState(value || "");
+  const [debouncedSearch, setDebouncedSearch] = useState(value || "");
   const containerRef = useRef(null);
+  const debounceRef = useRef(null);
 
+  // Sync incoming value to input if controlled from outside
+  useEffect(() => { setInputVal(value || ""); }, [value]);
+
+  // ── Unified Product Source ────────────────────────────────────────────────
+  const sourceList = useMemo(() => {
+    return (products && products.length > 0) ? products : hookProducts;
+  }, [products, hookProducts]);
+
+  // ── Click-outside close ──────────────────────────────────────────────────
   useEffect(() => {
     function handleClickOutside(event) {
       if (containerRef.current && !containerRef.current.contains(event.target)) {
@@ -106,69 +119,95 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // ── Pre-index: builds searchKey once when sourceList changes ───────────
   const { highValueProducts, otherProducts } = useMemo(() => {
-    const hvKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"];
+    const hvKeywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY", "MODULE", "TRANSFORMER"];
     const hv = [];
     const other = [];
-    
-    const sortedProducts = [...(products || [])].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    
-    sortedProducts.forEach(p => {
+
+    for (const p of sourceList) {
       const nameUpper = (p.name || "").toUpperCase();
-      const isHV = p.high_value_goods || hvKeywords.some(kw => nameUpper.includes(kw));
-      if (isHV) {
-        hv.push(p);
-      } else {
-        other.push(p);
-      }
-    });
-    
+      const rawSize = (p.size || "").toUpperCase();
+      const cleanSize = rawSize.replace(/\s*[xX×*]\s*/g, "*");
+      const _searchKey = `${nameUpper} ${cleanSize} ${rawSize}`;
+      const item = { ...p, _searchKey };
+
+      const isHV = Boolean(p.high_value_goods || p.high_value_asset || hvKeywords.some(kw => nameUpper.includes(kw)));
+      if (isHV) hv.push(item);
+      else other.push(item);
+    }
     return { highValueProducts: hv, otherProducts: other };
-  }, [products]);
+  }, [sourceList]);
 
-  const filteredHighValue = useMemo(() => {
-    if (!search) return highValueProducts;
-    return highValueProducts.filter(p => (p.name || "").toUpperCase().includes(search.toUpperCase()));
-  }, [highValueProducts, search]);
+  // ── Debounced search: typing updates inputVal instantly, filter runs 150ms later ──
+  const handleInputChange = useCallback((val) => {
+    setInputVal(val);
+    onChange(val);  // notify parent immediately (value display)
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedSearch(val), 150);
+  }, [onChange]);
 
-  const filteredOther = useMemo(() => {
-    if (!search) return otherProducts;
-    return otherProducts.filter(p => (p.name || "").toUpperCase().includes(search.toUpperCase()));
-  }, [otherProducts, search]);
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
-  const handleInputChange = (val) => {
-    setSearch(val);
-    onChange(val);
-  };
+  // ── Fast token-based filter ──────────────────────────────────────────────
+  const filterList = useCallback((list, query) => {
+    if (!query) return list;
+    const cleanSearch = query.toUpperCase().replace(/\s*[xX×*]\s*/g, "*");
+    const tokens = cleanSearch.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return list;
+    return list.filter(p => tokens.every(token => p._searchKey.includes(token)));
+  }, []);
 
-  const handleSelect = (p) => {
+  const filteredHighValue = useMemo(
+    () => filterList(highValueProducts, debouncedSearch),
+    [highValueProducts, debouncedSearch, filterList]
+  );
+  const filteredOther = useMemo(
+    () => filterList(otherProducts, debouncedSearch),
+    [otherProducts, debouncedSearch, filterList]
+  );
+
+  // DOM slicing: max 50 HV + 100 other to prevent browser freeze
+  const displayedHighValue = useMemo(() => filteredHighValue.slice(0, 50), [filteredHighValue]);
+  const displayedOther = useMemo(() => filteredOther.slice(0, 100), [filteredOther]);
+
+  const handleSelect = useCallback((p) => {
     onChange(p);
-    setSearch("");
+    setInputVal("");
+    setDebouncedSearch("");
     setOpen(false);
-  };
+  }, [onChange]);
 
   return (
     <div ref={containerRef} className="relative w-full">
       <Input
         value={value}
         onChange={(e) => handleInputChange(e.target.value)}
-        onFocus={() => { setOpen(true); setSearch(value || ""); }}
+        onFocus={() => {
+          setOpen(true);
+          const v = value || "";
+          setInputVal(v);
+          // Start filter immediately on focus without waiting for debounce
+          setDebouncedSearch(v);
+        }}
         placeholder={placeholder}
         className={className}
         data-testid={testid}
         required={required}
+        ref={inputRef}
       />
       {open && (
         <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto text-xs py-1.5 text-left">
-          <div className="px-2.5 py-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider bg-slate-50">
-            HIGH VALUE GOODS
+          <div className="px-2.5 py-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
+            <span>HIGH VALUE GOODS</span>
+            {filteredHighValue.length > 50 && <span className="text-[9px] text-slate-400 font-normal">Showing 50 of {filteredHighValue.length}</span>}
           </div>
-          {filteredHighValue.length === 0 ? (
+          {displayedHighValue.length === 0 ? (
             <div className="px-4 py-1.5 text-slate-400 italic">No high value goods found</div>
           ) : (
-            filteredHighValue.map((p) => (
+            displayedHighValue.map((p) => (
               <button
-                key={p.id || p.name}
+                key={p.id || `${p.name}-${p.size}`}
                 type="button"
                 className="w-full text-left px-4 py-1.5 hover:bg-slate-100 font-semibold text-slate-800 transition-colors"
                 onClick={() => handleSelect(p)}
@@ -181,27 +220,32 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
             ))
           )}
 
-          <div className="border-t border-slate-100 my-1"></div>
+          {!highValueOnly && (
+            <>
+              <div className="border-t border-slate-100 my-1"></div>
 
-          <div className="px-2.5 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50">
-            OTHER PRODUCTS (A-Z)
-          </div>
-          {filteredOther.length === 0 ? (
-            <div className="px-4 py-1.5 text-slate-400 italic">No other products found</div>
-          ) : (
-            filteredOther.map((p) => (
-              <button
-                key={p.id || p.name}
-                type="button"
-                className="w-full text-left px-4 py-1.5 hover:bg-slate-100 text-slate-700 transition-colors"
-                onClick={() => handleSelect(p)}
-              >
-                <div className="flex flex-col">
-                  <span>{p.name}</span>
-                  {p.size && <span className="text-[10px] text-slate-400 font-normal mt-0.5">{p.size}</span>}
-                </div>
-              </button>
-            ))
+              <div className="px-2.5 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
+                <span>OTHER PRODUCTS (A-Z)</span>
+                {filteredOther.length > 100 && <span className="text-[9px] text-slate-400 font-normal">Showing 100 of {filteredOther.length}</span>}
+              </div>
+              {displayedOther.length === 0 ? (
+                <div className="px-4 py-1.5 text-slate-400 italic">No other products found</div>
+              ) : (
+                displayedOther.map((p) => (
+                  <button
+                    key={p.id || `${p.name}-${p.size}`}
+                    type="button"
+                    className="w-full text-left px-4 py-1.5 hover:bg-slate-100 text-slate-700 transition-colors"
+                    onClick={() => handleSelect(p)}
+                  >
+                    <div className="flex flex-col">
+                      <span>{p.name}</span>
+                      {p.size && <span className="text-[10px] text-slate-400 font-normal mt-0.5">{p.size}</span>}
+                    </div>
+                  </button>
+                ))
+              )}
+            </>
           )}
         </div>
       )}

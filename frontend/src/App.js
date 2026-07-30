@@ -6,43 +6,42 @@ dayjs.extend(relativeTime);
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "sonner";
+// Eager load Login for instant auth rendering
 import Login from "@/pages/Login";
-import Register from "@/pages/Register";
-import Layout from "@/components/Layout";
-import Dashboard from "@/pages/Dashboard";
-import Clients from "@/pages/Clients";
-import ClientNew from "@/pages/ClientNew";
-import ClientDetail from "@/pages/ClientDetail";
-import Team from "@/pages/Team";
-import Profile from "@/pages/Profile";
-import Notifications from "@/pages/Notifications";
-import ActivityLog from "@/pages/ActivityLog";
-import DocumentTemplates from "@/pages/DocumentTemplates";
-import SalesDocuments from "@/pages/SalesDocuments";
-import ClientData from "@/pages/ClientData";
-import Complaints from "@/pages/Complaints";
-import ComplaintDetail from "@/pages/ComplaintDetail";
-import ForgotPassword from "@/pages/ForgotPassword";
-import Reports from "@/pages/Reports";
 
-// Heavy pages — lazy-loaded for faster initial bundle
+// Lazy load layout & secondary pages for route code-splitting
+const Layout = lazy(() => import("@/components/Layout"));
+const Register = lazy(() => import("@/pages/Register"));
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const Clients = lazy(() => import("@/pages/Clients"));
+const ClientNew = lazy(() => import("@/pages/ClientNew"));
+const ClientDetail = lazy(() => import("@/pages/ClientDetail"));
+const Team = lazy(() => import("@/pages/Team"));
+const Profile = lazy(() => import("@/pages/Profile"));
+const Notifications = lazy(() => import("@/pages/Notifications"));
+const ActivityLog = lazy(() => import("@/pages/ActivityLog"));
 const ProjectExecution = lazy(() => import("@/pages/ProjectExecution"));
 const TaskPortal = lazy(() => import("@/pages/TaskPortal"));
 const Inventory = lazy(() => import("@/pages/Inventory"));
+const DocumentTemplates = lazy(() => import("@/pages/DocumentTemplates"));
 const Quotation = lazy(() => import("@/pages/Quotation"));
 const TaxInvoice = lazy(() => import("@/pages/TaxInvoice"));
 const DeliveryBill = lazy(() => import("@/pages/DeliveryBill"));
+const SalesDocuments = lazy(() => import("@/pages/SalesDocuments"));
+const ClientData = lazy(() => import("@/pages/ClientData"));
 const ClientDataDetail = lazy(() => import("@/pages/ClientDataDetail"));
+const Complaints = lazy(() => import("@/pages/Complaints"));
+const ComplaintDetail = lazy(() => import("@/pages/ComplaintDetail"));
+const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
+const Reports = lazy(() => import("@/pages/Reports"));
 
-// Minimal fallback shown while a lazy chunk is loading
 function PageFallback() {
   return (
-    <div className="min-h-[50vh] flex items-center justify-center">
-      <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+    <div className="flex items-center justify-center min-h-[40vh] p-8 text-slate-400 text-sm font-medium">
+      Loading...
     </div>
   );
 }
-
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -54,7 +53,11 @@ function Protected({ children }) {
     );
   }
   if (!user) return <Navigate to="/login" replace />;
-  return <Layout>{children}</Layout>;
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="text-slate-500">Loading…</div></div>}>
+      <Layout>{children}</Layout>
+    </Suspense>
+  );
 }
 
 function PublicOnly({ children }) {
@@ -81,7 +84,7 @@ function AccessDenied() {
 function PermissionRoute({ page, children }) {
   const { user } = useAuth();
   const isAdmin = user?.role === "Admin";
-  const hasPerm = isAdmin || user?.permissions?.[page]?.view;
+  const hasPerm = isAdmin || (user?.permissions?.[page]?.view === true);
   
   if (!hasPerm) {
     return <AccessDenied />;
@@ -105,7 +108,7 @@ function MainTabShell({ activeTab }) {
   }, [activeTab]);
 
   return (
-    <>
+    <Suspense fallback={<PageFallback />}>
       <div style={{ display: activeTab === "dashboard" ? "block" : "none" }}>
         {visited.dashboard && <Dashboard />}
       </div>
@@ -127,7 +130,7 @@ function MainTabShell({ activeTab }) {
       <div style={{ display: activeTab === "reports" ? "block" : "none" }}>
         {visited.reports && <Reports />}
       </div>
-    </>
+    </Suspense>
   );
 }
 
@@ -157,7 +160,7 @@ function App() {
             <Route path="/tax-invoice" element={<Protected><PermissionRoute page="sales_documents"><TaxInvoice /></PermissionRoute></Protected>} />
             <Route path="/delivery-bill" element={<Protected><PermissionRoute page="sales_documents"><DeliveryBill /></PermissionRoute></Protected>} />
             <Route path="/sales-documents" element={<Protected><PermissionRoute page="sales_documents"><SalesDocuments /></PermissionRoute></Protected>} />
-            <Route path="/reports" element={<Protected><MainTabShell activeTab="reports" /></Protected>} />
+            <Route path="/reports" element={<Protected><PermissionRoute page="reports"><MainTabShell activeTab="reports" /></PermissionRoute></Protected>} />
             <Route path="/client-data" element={<Protected><MainTabShell activeTab="client-data" /></Protected>} />
             <Route path="/client-data/:id" element={<Protected><ClientDataDetail /></Protected>} />
             <Route path="/complaints" element={<Protected><Complaints /></Protected>} />

@@ -106,12 +106,48 @@ export function useDeleteClient() {
   return useMutation({
     mutationFn: (clientId) => api.delete(`/clients/${clientId}`),
     onMutate: async (clientId) => {
-      await queryClient.cancelQueries({ queryKey: queryKeys.clients.all() });
-      const prevData = queryClient.getQueriesData({ queryKey: queryKeys.clients.all() });
-      queryClient.setQueriesData({ queryKey: queryKeys.clients.all() }, (old) => {
-        if (!Array.isArray(old)) return old;
-        return old.filter((c) => c.id !== clientId);
-      });
+      // 1. Cancel outgoing refetches so they don't overwrite optimistic update
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: ["clients"] }),
+        queryClient.cancelQueries({ queryKey: ["client-data"] }),
+        queryClient.cancelQueries({ queryKey: ["dashboard"] }),
+        queryClient.cancelQueries({ queryKey: ["projects"] }),
+        queryClient.cancelQueries({ queryKey: ["tasks"] }),
+      ]);
+
+      const prevData = [
+        ...queryClient.getQueriesData({ queryKey: ["clients"] }),
+        ...queryClient.getQueriesData({ queryKey: ["client-data"] }),
+        ...queryClient.getQueriesData({ queryKey: ["dashboard"] }),
+        ...queryClient.getQueriesData({ queryKey: ["projects"] }),
+        ...queryClient.getQueriesData({ queryKey: ["tasks"] }),
+      ];
+
+      // 2. Helper to filter out deleted client from array or wrapper object
+      const filterOutClient = (old) => {
+        if (!old) return old;
+        if (Array.isArray(old)) {
+          return old.filter((item) => (item.id || item.client_id) !== clientId);
+        }
+        if (typeof old === "object") {
+          if (Array.isArray(old.clients)) {
+            return { ...old, clients: old.clients.filter((c) => c.id !== clientId) };
+          }
+          if (Array.isArray(old.items)) {
+            return { ...old, items: old.items.filter((c) => (c.id || c.client_id) !== clientId) };
+          }
+          if (old.id === clientId) return null;
+        }
+        return old;
+      };
+
+      // 3. Update UI caches INSTANTLY (0ms delay)
+      queryClient.setQueriesData({ queryKey: ["clients"] }, filterOutClient);
+      queryClient.setQueriesData({ queryKey: ["client-data"] }, filterOutClient);
+      queryClient.setQueriesData({ queryKey: ["dashboard"] }, filterOutClient);
+      queryClient.setQueriesData({ queryKey: ["projects"] }, filterOutClient);
+      queryClient.setQueriesData({ queryKey: ["tasks"] }, filterOutClient);
+
       return { prevData };
     },
     onError: (err, _id, ctx) => {
@@ -121,9 +157,12 @@ export function useDeleteClient() {
       toast.error(formatApiError(err));
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.clients.all() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.clients.stats() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.stats() });
+      // 4. Invalidate all related query keys across all pages
+      queryClient.invalidateQueries({ queryKey: ["clients"], refetchType: "all" });
+      queryClient.invalidateQueries({ queryKey: ["client-data"], refetchType: "all" });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"], refetchType: "all" });
+      queryClient.invalidateQueries({ queryKey: ["projects"], refetchType: "all" });
+      queryClient.invalidateQueries({ queryKey: ["tasks"], refetchType: "all" });
     },
     onSuccess: () => toast.success("Client deleted"),
   });

@@ -1,12 +1,10 @@
-import React, { useState, useMemo } from "react";
+import React, { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Sun, LayoutDashboard, Users2, UserCog, Building2, ScrollText, LogOut, Briefcase, ClipboardList, Boxes, FileText, LifeBuoy, Megaphone, Menu, X, Wrench } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 import ProfileMenu from "@/components/ProfileMenu";
 import { Button } from "@/components/ui/button";
-
-const ALWAYS_VISIBLE = new Set(["complaints", "reports"]);
 
 export default function Layout({ children }) {
   const { user, company, logout } = useAuth();
@@ -15,8 +13,10 @@ export default function Layout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const isAdmin = user?.role === "Admin";
+  const allowed = (page) => isAdmin || (user?.permissions?.[page]?.view === true);
+  const ALWAYS_VISIBLE = new Set(["complaints"]);
 
-  const items = useMemo(() => [
+  const items = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, key: "dashboard" },
     { to: "/clients", label: "Clients", icon: Users2, key: "clients" },
     { to: "/projects", label: "Project Execution", icon: Briefcase, key: "project_execution" },
@@ -32,8 +32,8 @@ export default function Layout({ children }) {
     { to: "/activity", label: "Activity Log", icon: ScrollText, key: "settings", adminOnly: true },
   ].filter((i) => {
     if (i.adminOnly) return isAdmin;
-    return ALWAYS_VISIBLE.has(i.key) || isAdmin || user?.permissions?.[i.key]?.view;
-  }), [isAdmin, user?.permissions]);
+    return ALWAYS_VISIBLE.has(i.key) || allowed(i.key);
+  });
 
   const SidebarContent = () => (
     <>

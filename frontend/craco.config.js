@@ -55,6 +55,59 @@ let webpackConfig = {
       if (config.enableHealthCheck && healthPluginInstance) {
         webpackConfig.plugins.push(healthPluginInstance);
       }
+
+      // Optimize production chunk splitting
+      if (webpackConfig.mode === "production") {
+        webpackConfig.optimization = {
+          ...webpackConfig.optimization,
+          splitChunks: {
+            chunks: "all",
+            maxInitialRequests: 25,
+            minSize: 20000,
+            cacheGroups: {
+              default: false,
+              vendors: false,
+              framework: {
+                name: "framework",
+                test: /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/,
+                priority: 40,
+                chunks: "all",
+              },
+              charts: {
+                test: /[\\/]node_modules[\\/](recharts)[\\/]/,
+                name: "charts-vendor",
+                priority: 50,
+                chunks: "async",
+              },
+              xlsx: {
+                test: /[\\/]node_modules[\\/](xlsx)[\\/]/,
+                name: "xlsx-vendor",
+                priority: 50,
+                chunks: "async",
+              },
+              motion: {
+                test: /[\\/]node_modules[\\/](framer-motion)[\\/]/,
+                name: "motion-vendor",
+                priority: 45,
+                chunks: "async",
+              },
+              lib: {
+                test: /[\\/]node_modules[\\/](@tanstack|axios|date-fns|dayjs|lodash)[\\/]/,
+                name: "commons",
+                priority: 30,
+                chunks: "all",
+              },
+              ui: {
+                test: /[\\/]node_modules[\\/](@radix-ui|lucide-react)[\\/]/,
+                name: "ui-vendor",
+                priority: 20,
+                chunks: "all",
+              },
+            },
+          },
+        };
+      }
+
       return webpackConfig;
     },
   },

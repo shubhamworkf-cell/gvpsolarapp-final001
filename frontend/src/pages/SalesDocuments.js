@@ -28,17 +28,19 @@ export default function SalesDocuments() {
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
-        <TabsList className="bg-slate-100 p-1 sticky top-2 z-10 shadow-sm">
-          <TabsTrigger value="quotation" data-testid="tab-quotation">
-            <FileText className="w-3.5 h-3.5 mr-1.5" /> Quotation
-          </TabsTrigger>
-          <TabsTrigger value="tax-invoice" data-testid="tab-tax-invoice">
-            <FileText className="w-3.5 h-3.5 mr-1.5" /> Tax Invoice
-          </TabsTrigger>
-          <TabsTrigger value="delivery-bill" data-testid="tab-delivery-bill">
-            <FileText className="w-3.5 h-3.5 mr-1.5" /> Delivery Bill
-          </TabsTrigger>
-        </TabsList>
+        <div className="sticky top-2 z-10 w-full overflow-x-auto scrollbar-none touch-pan-x bg-slate-100/95 backdrop-blur rounded-lg p-1 shadow-sm border border-slate-200/60">
+          <TabsList className="bg-transparent p-0 h-auto w-max min-w-full flex items-center justify-start flex-nowrap gap-1">
+            <TabsTrigger value="quotation" data-testid="tab-quotation" className="shrink-0 whitespace-nowrap">
+              <FileText className="w-3.5 h-3.5 mr-1.5" /> Quotation
+            </TabsTrigger>
+            <TabsTrigger value="tax-invoice" data-testid="tab-tax-invoice" className="shrink-0 whitespace-nowrap">
+              <FileText className="w-3.5 h-3.5 mr-1.5" /> Tax Invoice
+            </TabsTrigger>
+            <TabsTrigger value="delivery-bill" data-testid="tab-delivery-bill" className="shrink-0 whitespace-nowrap">
+              <FileText className="w-3.5 h-3.5 mr-1.5" /> Delivery Bill
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         <div style={{ display: tab === "quotation" ? "block" : "none" }}>
           {visitedTabs.has("quotation") && <Quotation />}

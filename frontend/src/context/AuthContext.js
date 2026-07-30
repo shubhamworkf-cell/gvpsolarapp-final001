@@ -12,50 +12,59 @@ function _prefetchCommonData(queryClient) {
   const token = localStorage.getItem("solarix_token");
   if (!token) return;
 
-  const prefetchList = [
-    {
-      key: queryKeys.clients.list(),
-      fn: () => api.get("/clients").then((r) => r.data || []),
-      stale: 5 * 60 * 1000,
-    },
-    {
-      key: queryKeys.clients.stats(),
-      fn: () => api.get("/clients/stats").then((r) => r.data),
-      stale: 5 * 60 * 1000,
-    },
-    {
-      key: queryKeys.projects.list(),
-      fn: () => api.get("/projects").then((r) => r.data || []),
-      stale: 5 * 60 * 1000,
-    },
-    {
-      key: queryKeys.team.list(),
-      fn: () => api.get("/employees").then((r) => r.data || []),
-      stale: 10 * 60 * 1000,
-    },
-    {
-      key: queryKeys.company.detail(),
-      fn: () => api.get("/company").then((r) => r.data),
-      stale: 10 * 60 * 1000,
-    },
-    {
-      key: queryKeys.materialRequests.list(),
-      fn: () => api.get("/material-requests").then((r) => r.data || []),
-      stale: 5 * 60 * 1000,
-    },
-  ];
+  const runPrefetch = () => {
+    const prefetchList = [
+      {
+        key: queryKeys.clients.list(),
+        fn: () => api.get("/clients").then((r) => r.data || []),
+        stale: 5 * 60 * 1000,
+      },
+      {
+        key: queryKeys.clients.stats(),
+        fn: () => api.get("/clients/stats").then((r) => r.data),
+        stale: 5 * 60 * 1000,
+      },
+      {
+        key: queryKeys.projects.list(),
+        fn: () => api.get("/projects").then((r) => r.data || []),
+        stale: 5 * 60 * 1000,
+      },
+      {
+        key: queryKeys.team.list(),
+        fn: () => api.get("/employees").then((r) => r.data || []),
+        stale: 10 * 60 * 1000,
+      },
+      {
+        key: queryKeys.company.detail(),
+        fn: () => api.get("/company").then((r) => r.data),
+        stale: 10 * 60 * 1000,
+      },
+      {
+        key: queryKeys.materialRequests.list(),
+        fn: () => api.get("/material-requests").then((r) => r.data || []),
+        stale: 5 * 60 * 1000,
+      },
+    ];
 
-  prefetchList.forEach(({ key, fn, stale }) => {
-    // Skip if already cached and fresh — don't fire unnecessary network requests
-    const existing = queryClient.getQueryData(key);
-    if (existing !== undefined) return;
+    prefetchList.forEach(({ key, fn, stale }) => {
+      // Skip if already cached and fresh — don't fire unnecessary network requests
+      const existing = queryClient.getQueryData(key);
+      if (existing !== undefined) return;
 
-    queryClient.prefetchQuery({
-      queryKey: key,
-      queryFn: fn,
-      staleTime: stale,
-    }).catch(() => { /* Background prefetch failed — non-critical, data will load on demand */ });
-  });
+      queryClient.prefetchQuery({
+        queryKey: key,
+        queryFn: fn,
+        staleTime: stale,
+      }).catch(() => { /* Background prefetch failed — non-critical, data will load on demand */ });
+    });
+  };
+
+  // Schedule prefetch after initial frame paint to avoid blocking First Contentful Paint
+  if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+    window.requestIdleCallback(runPrefetch, { timeout: 1000 });
+  } else {
+    setTimeout(runPrefetch, 300);
+  }
 }
 
 export const AuthProvider = ({ children }) => {

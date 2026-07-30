@@ -11,6 +11,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { toast } from "sonner";
 import dayjs from "dayjs";
 import { usePermission } from "@/lib/permissions";
+import { useDebounce } from "@/hooks/useDebounce";
 
 const STATUSES = ["All", "Lead", "Survey Pending", "Quotation Sent", "Approved", "Installation Pending", "Installation Complete", "Handover Complete"];
 
@@ -20,6 +21,7 @@ export default function Clients() {
   const deleteClientMutation = useDeleteClient();
 
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search, 300);
   const [status, setStatus] = useState("All");
   const [phase, setPhase] = useState("All");
   const [subsidy, setSubsidy] = useState("All");
@@ -32,8 +34,8 @@ export default function Clients() {
 
   const filtered = useMemo(() => {
     return clients.filter((c) => {
-      if (search) {
-        const s = search.toLowerCase();
+      if (debouncedSearch) {
+        const s = debouncedSearch.toLowerCase();
         if (!(c.full_name?.toLowerCase().includes(s) || c.mobile?.includes(s) || c.consumer_number?.includes(s) || c.sol_id?.toLowerCase().includes(s))) return false;
       }
       if (status !== "All" && c.status !== status) return false;
@@ -42,7 +44,7 @@ export default function Clients() {
       if (subsidy === "No" && c.subsidy_eligible) return false;
       return true;
     });
-  }, [clients, search, status, phase, subsidy]);
+  }, [clients, debouncedSearch, status, phase, subsidy]);
 
   useEffect(() => {
     setCurrentPage(1);

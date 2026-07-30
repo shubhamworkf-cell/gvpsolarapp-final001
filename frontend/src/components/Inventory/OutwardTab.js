@@ -84,6 +84,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
   useEffect(() => { localStorage.setItem("inv_auto_continue_outward", JSON.stringify(autoContinue)); }, [autoContinue]);
   useEffect(() => { localStorage.setItem("inv_carry_outward", JSON.stringify(carryFields)); }, [carryFields]);
 
+
   const { data: allAssets = [] } = useAssetList();
   const availableSerials = useMemo(() => {
     if (!form.product) return [];
@@ -158,9 +159,9 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
     if (!form.product?.trim() || !form.quantity || Number(form.quantity) <= 0) {
       toast.error("Product and quantity are required"); return;
     }
-    if (form.high_value_goods) {
+    if (form.high_value_goods && form.serial_number_required) {
       setHvDialogData({
-        serial_number_required: form.serial_number_required || false,
+        serial_number_required: true,
         serial_text: form.serial_text || "",
         serial_numbers: form.serial_numbers || [],
         installation_notes: form.installation_notes || "",
@@ -212,15 +213,13 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
     } catch (e) { toast.error(formatApiError(e)); }
   };
 
-  const selectClient = (id) => {
-    const c = clients.find((x) => x.id === id);
-    if (c) setForm({ ...form, client_id: c.id, client_name: c.full_name, project_id: c.id, project_name: c.full_name });
-  };
+
 
   const filtered = useMemo(() => {
-    if (!globalSearch) return entries;
+    const list = Array.isArray(entries) ? entries : [];
+    if (!globalSearch) return list;
     const s = globalSearch.toLowerCase();
-    return entries.filter((e) =>
+    return list.filter((e) =>
       (e.product || "").toLowerCase().includes(s) ||
       (e.client_name || "").toLowerCase().includes(s) ||
       (e.project_name || "").toLowerCase().includes(s) ||
@@ -229,7 +228,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
     );
   }, [entries, globalSearch]);
 
-  const pendingCount = entries.filter((e) => e.status === "Pending").length;
+  const pendingCount = (Array.isArray(entries) ? entries : []).filter((e) => e.status === "Pending").length;
 
   const saveDefaults = () => { onSaveDefaults?.(defaultsForm); setDefaultsOpen(false); };
 
@@ -333,7 +332,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
             <SelectField label="Status" value={form.status} onChange={(v) => setForm({ ...form, status: v })} options={STATUSES} testid="out-status" />
 
             <div className="md:col-span-2">
-              <SelectField label="Client" value={form.client_id} onChange={selectClient} options={clients.map((c) => ({ value: c.id, label: c.full_name }))} allowEmpty placeholder="Select client" testid="out-client" />
+              <SelectField label="Client" value={form.client_id} onChange={(id) => { const c = (clients || []).find((x) => x.id === id); if (c) setForm({ ...form, client_id: c.id, client_name: c.full_name, project_id: c.id, project_name: c.full_name }); else setForm({ ...form, client_id: "", client_name: "" }); }} options={clients.map((c) => ({ value: c.id, label: c.full_name }))} allowEmpty placeholder="Select client" testid="out-client" />
               {!form.client_id && form.client_name && <div className="text-[10px] text-slate-400 mt-1">Free text: {form.client_name}</div>}
             </div>
             <Field label="Project" value={form.project_name} onChange={(v) => setForm({ ...form, project_name: v })} placeholder="Project label" testid="out-project" />
@@ -347,24 +346,26 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                     let pName = "";
                     let sizeVal = form.size || "";
                     let unitVal = form.unit || "Nos";
-                    let isHighValue = false;
+                    let isHighValue = form.high_value_goods || false;
+                    let isSerialRequired = false;
 
                     if (typeof v === "object" && v !== null) {
                       pName = (v.name || "").toUpperCase();
                       sizeVal = v.size || "";
                       unitVal = v.unit || "Nos";
-                      isHighValue = v.high_value_goods || false;
+                      isHighValue = Boolean(form.high_value_goods || v.high_value_goods || v.high_value_asset);
+                      isSerialRequired = Boolean(v.serial_number_required);
                     } else {
-                      pName = v.toUpperCase();
-                      const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
-                      isHighValue = highValueKeywords.some(keyword => pName.includes(keyword));
-                      const matched = products.find(p => p.name.toUpperCase() === pName);
+                      pName = String(v || "").toUpperCase();
+                      const matched = (Array.isArray(products) ? products : []).find(p => (p.name || "").toUpperCase() === pName);
                       if (matched) {
-                        if (matched.high_value_goods) {
-                          isHighValue = true;
-                        }
+                        isHighValue = Boolean(form.high_value_goods || matched.high_value_goods || matched.high_value_asset);
+                        isSerialRequired = Boolean(matched.serial_number_required);
                         sizeVal = matched.size || "";
                         unitVal = matched.unit || "Nos";
+                      } else if (!form.high_value_goods) {
+                        const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
+                        isHighValue = highValueKeywords.some(keyword => pName.includes(keyword));
                       }
                     }
                     setForm(prev => ({
@@ -374,12 +375,13 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                       unit: unitVal,
                       high_value_goods: isHighValue,
                       high_value_asset: isHighValue,
-                      serial_number_required: prev.product === pName ? prev.serial_number_required : false,
+                      serial_number_required: isSerialRequired,
                       serial_numbers: prev.product === pName ? prev.serial_numbers : [],
                       serial_text: prev.product === pName ? prev.serial_text : ""
                     }));
                   }}
                   products={products}
+                  highValueOnly={form.high_value_goods || false}
                   placeholder="e.g. WAAREE PANEL 540W"
                   testid="out-product"
                   required
@@ -392,23 +394,46 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
               <SelectField label="Unit" value={form.unit} onChange={(v) => setForm({ ...form, unit: v })} options={UNIT_OPTIONS} testid="out-unit" />
             </div>
 
-            {/* High Value Goods Indicator */}
-            {form.high_value_goods && (
-              <div className="md:col-span-3 lg:col-span-4 flex flex-col md:flex-row gap-4 py-2 border-t border-slate-100 mt-2">
-                <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={form.high_value_goods || false}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setForm(prev => ({ ...prev, high_value_goods: checked, high_value_asset: checked }));
-                    }}
-                    className="w-4 h-4 accent-blue-600 rounded border-slate-300"
-                  />
-                  High Value Goods
-                </label>
-              </div>
-            )}
+            {/* High Value Goods Checkbox & Inside Sub-option */}
+            <div className="md:col-span-3 lg:col-span-4 flex flex-col gap-2 py-2 border-t border-slate-100 mt-2">
+              <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={form.high_value_goods || false}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setForm(prev => ({
+                      ...prev,
+                      high_value_goods: checked,
+                      high_value_asset: checked,
+                      serial_number_required: checked ? prev.serial_number_required : false
+                    }));
+                  }}
+                  className="w-4 h-4 accent-blue-600 rounded border-slate-300"
+                  data-testid="out-hv-checkbox"
+                />
+                High Value Goods
+              </label>
+
+              {/* Sub-option inside High Value Goods (Default OFF) */}
+              {form.high_value_goods && (
+                <div className="ml-6 flex items-center gap-2 py-1 bg-slate-50 p-2 rounded-md border border-slate-200 w-fit">
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.serial_number_required || false}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setForm(prev => ({ ...prev, serial_number_required: checked }));
+                      }}
+                      className="w-3.5 h-3.5 accent-blue-600 rounded border-slate-300"
+                      data-testid="out-serial-number-toggle"
+                    />
+                    Serial No. (ON / OFF)
+                  </label>
+                </div>
+              )}
+            </div>
 
             <TextareaField label="Remarks" value={form.remarks} onChange={(v) => setForm({ ...form, remarks: v })} testid="out-remarks" full />
 
@@ -545,7 +570,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                 }}
                 className="w-4 h-4 accent-blue-600 rounded border-slate-300"
               />
-              Serial Number Required
+              Serial No. (ON / OFF)
             </label>
 
             {hvDialogData.serial_number_required && (

@@ -5,11 +5,12 @@ import { useClientList } from "@/hooks/useClients";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Save, RotateCcw, Settings, Pencil, Trash2, Paperclip, ChevronDown, ChevronUp, FileText, FileImage, FileSpreadsheet, Wand2 } from "lucide-react";
+import { Save, RotateCcw, Settings, Pencil, Trash2, Paperclip, ChevronDown, ChevronUp, FileText, FileImage, FileSpreadsheet, Wand2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
 import { Field, SelectField, TextareaField, ConfirmDialog, UNIT_OPTIONS, REF_TYPES, SRC_TYPES, today, applyDefaults, digitsOnly, ProductAutocompleteInput } from "./_shared";
 import ManualBulkImport from "@/components/ManualBulkImport";
+import HighValueBulkImport from "@/components/HighValueBulkImport";
 import { usePermission } from "@/lib/permissions";
 
 const CARRY_FORWARD_FIELDS = [
@@ -32,6 +33,7 @@ const EMPTY = () => ({
   bill_number: "", remarks: "",
   attachment_file_id: "", attachment_filename: "",
   high_value_asset: false,
+  serial_number_required: false,
   serial_numbers: [],
 });
 
@@ -43,6 +45,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
   const [editing, setEditing] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [hvManualOpen, setHvManualOpen] = useState(false);
   const [defaultsOpen, setDefaultsOpen] = useState(false);
   const [defaultsForm, setDefaultsForm] = useState(defaults);
   const [autoContinue, setAutoContinue] = useState(() => {
@@ -96,6 +99,24 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
     if (!form.product?.trim() || !form.quantity || Number(form.quantity) <= 0) {
       toast.error("Product and quantity are required"); return;
     }
+    const isSNReq = Boolean(form.high_value_asset && form.serial_number_required);
+    if (isSNReq) {
+      const qty = Math.floor(Number(form.quantity) || 0);
+      const serials = (form.serial_numbers || []).map(s => (s || "").trim().toUpperCase());
+      if (serials.length !== qty) {
+        toast.error(`Quantity is ${qty}. Exactly ${qty} serial numbers are required.`);
+        return;
+      }
+      if (serials.some(s => !s)) {
+        toast.error("Blank serial numbers are not allowed when Serial Number Required is ON.");
+        return;
+      }
+      const uniqueSet = new Set(serials);
+      if (uniqueSet.size !== serials.length) {
+        toast.error("Duplicate serial numbers detected. Each serial number must be unique.");
+        return;
+      }
+    }
     setBusy(true);
     try {
       const payload = { ...form, quantity: Number(form.quantity) };
@@ -148,9 +169,10 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
   };
 
   const filtered = useMemo(() => {
-    if (!globalSearch) return entries;
+    const list = Array.isArray(entries) ? entries : [];
+    if (!globalSearch) return list;
     const s = globalSearch.toLowerCase();
-    return entries.filter((e) =>
+    return list.filter((e) =>
       (e.product || "").toLowerCase().includes(s) ||
       (e.source_name || "").toLowerCase().includes(s) ||
       (e.reference_number || "").toLowerCase().includes(s) ||
@@ -163,6 +185,37 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
 
   return (
     <div className="space-y-4">
+      {/* Quick Action Bar for Bulk Imports */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-slate-900 rounded-2xl text-white shadow-sm border border-slate-800">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400">
+            <ShieldCheck className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-sm font-bold tracking-tight text-white" style={{ fontFamily: "Outfit" }}>Inward Inventory Bulk Imports</div>
+            <div className="text-xs text-slate-300">Import standard materials or bulk High Value Goods directly</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            className="bg-white text-slate-900 hover:bg-slate-100 font-semibold shadow-sm text-xs"
+            onClick={() => setManualOpen(true)}
+            data-testid="bar-manual-import-btn"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-slate-600" /> Manual Bulk Import
+          </Button>
+          <Button
+            size="sm"
+            className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shadow-sm text-xs"
+            onClick={() => setHvManualOpen(true)}
+            data-testid="bar-hv-manual-import-btn"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 mr-1.5 text-slate-950" /> High Value Manual Import
+          </Button>
+        </div>
+      </div>
+
       {/* Quick Entry Form */}
       <Card className="border-slate-200">
         <CardContent className="p-5">
@@ -292,25 +345,27 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                     let unitVal = form.unit || "Nos";
                     let rateVal = form.rate || "";
                     let isHighValue = false;
+                    let isSerialRequired = false;
 
                     if (typeof v === "object" && v !== null) {
                       pName = (v.name || "").toUpperCase();
                       sizeVal = v.size || "";
                       unitVal = v.unit || "Nos";
                       rateVal = (v.rate !== undefined && v.rate !== null) ? String(v.rate) : "";
-                      isHighValue = v.high_value_goods || false;
+                      isHighValue = Boolean(v.high_value_goods || v.high_value_asset);
+                      isSerialRequired = Boolean(v.serial_number_required);
                     } else {
                       pName = v.toUpperCase();
-                      const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
-                      isHighValue = highValueKeywords.some(keyword => pName.includes(keyword));
-                      const matched = products.find(p => p.name.toUpperCase() === pName);
+                      const matched = (Array.isArray(products) ? products : []).find(p => (p.name || "").toUpperCase() === pName);
                       if (matched) {
-                        if (matched.high_value_goods) {
-                          isHighValue = true;
-                        }
+                        isHighValue = Boolean(matched.high_value_goods || matched.high_value_asset);
+                        isSerialRequired = Boolean(matched.serial_number_required);
                         sizeVal = matched.size || "";
                         unitVal = matched.unit || "Nos";
                         rateVal = (matched.rate !== undefined && matched.rate !== null) ? String(matched.rate) : "";
+                      } else {
+                        const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
+                        isHighValue = highValueKeywords.some(keyword => pName.includes(keyword));
                       }
                     }
                     setForm(prev => ({
@@ -320,7 +375,8 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                       unit: unitVal,
                       rate: rateVal,
                       high_value_asset: isHighValue,
-                      high_value_goods: isHighValue
+                      high_value_goods: isHighValue,
+                      serial_number_required: isSerialRequired
                     }));
                   }}
                   products={products}
@@ -350,24 +406,47 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
               <SelectField label="Unit" value={form.unit} onChange={(v) => setForm({ ...form, unit: v })} options={UNIT_OPTIONS} testid="in-unit" />
             </div>
 
-            {/* High Value Asset Checkbox */}
-            <div className="md:col-span-2 lg:col-span-3 flex items-center gap-2 py-2">
+            {/* High Value Asset Checkbox & Inside Sub-option */}
+            <div className="md:col-span-3 lg:col-span-4 flex flex-col gap-2 py-1">
               <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={form.high_value_asset || false}
                   onChange={(e) => {
                     const checked = e.target.checked;
-                    setForm(prev => ({ ...prev, high_value_asset: checked }));
+                    setForm(prev => ({
+                      ...prev,
+                      high_value_asset: checked,
+                      serial_number_required: checked ? prev.serial_number_required : false
+                    }));
                   }}
                   className="w-4 h-4 accent-blue-600 rounded border-slate-300"
                 />
-                High Value Asset (Requires Serial Number Tracking)
+                High Value Asset
               </label>
+
+              {/* Sub-option inside High Value Asset (Default OFF) */}
+              {form.high_value_asset && (
+                <div className="ml-6 flex items-center gap-2 py-1 bg-slate-50 p-2 rounded-md border border-slate-200 w-fit">
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.serial_number_required || false}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setForm(prev => ({ ...prev, serial_number_required: checked }));
+                      }}
+                      className="w-3.5 h-3.5 accent-blue-600 rounded border-slate-300"
+                      data-testid="in-serial-number-toggle"
+                    />
+                    Serial No. (ON / OFF)
+                  </label>
+                </div>
+              )}
             </div>
 
-            {/* Serial Numbers Generation Section */}
-            {form.high_value_asset && (
+            {/* Serial Numbers Generation Section (Only shown when High Value Asset AND Serial No. ON) */}
+            {form.high_value_asset && form.serial_number_required && (
               <div className="md:col-span-3 lg:col-span-4 p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                   <div>
@@ -393,10 +472,10 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-h-60 overflow-y-auto pr-1">
                   {Array.from({ length: Math.floor(Number(form.quantity) || 0) }).map((_, i) => (
                     <div key={i} className="space-y-1">
-                      <label className="text-[10px] font-semibold text-slate-400">Row {i + 1} Serial Number</label>
+                      <label className="text-[10px] font-semibold text-slate-600">Serial No. {i + 1}</label>
                       <input
                         type="text"
-                        placeholder={`Enter serial #${i + 1}...`}
+                        placeholder={`Serial No. ${i + 1}`}
                         value={form.serial_numbers?.[i] || ""}
                         onChange={(e) => {
                           const updated = [...(form.serial_numbers || [])];
@@ -440,12 +519,20 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
             </Button>
             <div className="flex-1" />
             {canCreate && (
-              <Button variant="outline" className="border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                onClick={() => setManualOpen(true)}
-                data-testid="manual-import-inward-btn"
-              >
-                <FileSpreadsheet className="w-4 h-4 mr-1.5" /> Manual Bulk Import
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" className="border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                  onClick={() => setManualOpen(true)}
+                  data-testid="manual-import-inward-btn"
+                >
+                  <FileSpreadsheet className="w-4 h-4 mr-1.5" /> Manual Bulk Import
+                </Button>
+                <Button variant="outline" className="border-amber-300 bg-amber-50/80 text-amber-900 hover:bg-amber-100 font-semibold"
+                  onClick={() => setHvManualOpen(true)}
+                  data-testid="hv-manual-import-inward-btn"
+                >
+                  <ShieldCheck className="w-4 h-4 mr-1.5 text-amber-600" /> High Value Manual Import
+                </Button>
+              </div>
             )}          </div>
         </CardContent>
       </Card>
@@ -512,6 +599,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
       </Card>
 
       <ManualBulkImport open={manualOpen} onOpenChange={setManualOpen} mode="inward" products={products} onImported={() => { load(); onChanged?.(); }} />
+      <HighValueBulkImport open={hvManualOpen} onOpenChange={setHvManualOpen} products={products} onImported={() => { load(); onChanged?.(); }} />
 
       <ConfirmDialog
         open={!!confirmDel}

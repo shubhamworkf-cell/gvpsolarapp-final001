@@ -1,4 +1,3 @@
-/* Google Fonts are loaded via <link> in public/index.html (non-blocking) */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -88,27 +87,8 @@ h1, h2, h3, h4, h5, h6 {
     box-shadow: 0 8px 20px -6px rgba(15, 23, 42, 0.08);
 }
 
-
 @layer base {
     [data-debug-wrapper="true"] {
         display: contents !important;
     }
-}
-
-/* ── Performance utilities ── */
-/* Promote heavy animated elements to their own compositor layer */
-.gpu-layer {
-    transform: translateZ(0);
-    will-change: transform;
-}
-
-/* Smooth hardware-accelerated scroll containers */
-.smooth-scroll {
-    -webkit-overflow-scrolling: touch;
-    scroll-behavior: smooth;
-}
-
-/* Prevent layout-shift on image loads */
-img {
-    image-rendering: auto;
 }

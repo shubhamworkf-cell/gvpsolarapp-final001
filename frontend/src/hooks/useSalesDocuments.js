@@ -11,7 +11,7 @@ export function useSalesDocuments(docType) {
       });
       return data || [];
     },
-    staleTime: 0, // Trigger background updates on mount/visit
+    staleTime: 3 * 60 * 1000, // 3 minutes - avoid duplicate fetches on nav, keep in-memory cache fresh
     gcTime: Infinity,
   });
 }
