@@ -13,6 +13,8 @@ import ManualBulkImport from "@/components/ManualBulkImport";
 import HighValueBulkImport from "@/components/HighValueBulkImport";
 import { usePermission } from "@/lib/permissions";
 
+const ENABLE_HIGH_VALUE_MANUAL_IMPORT = false;
+
 const CARRY_FORWARD_FIELDS = [
   { key: "date", label: "Date" },
   { key: "reference_type", label: "Reference Type" },
@@ -205,14 +207,16 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
           >
             <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-slate-600" /> Manual Bulk Import
           </Button>
-          <Button
-            size="sm"
-            className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shadow-sm text-xs"
-            onClick={() => setHvManualOpen(true)}
-            data-testid="bar-hv-manual-import-btn"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 mr-1.5 text-slate-950" /> High Value Manual Import
-          </Button>
+          {ENABLE_HIGH_VALUE_MANUAL_IMPORT && (
+            <Button
+              size="sm"
+              className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shadow-sm text-xs"
+              onClick={() => setHvManualOpen(true)}
+              data-testid="bar-hv-manual-import-btn"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 mr-1.5 text-slate-950" /> High Value Manual Import
+            </Button>
+          )}
         </div>
       </div>
 
@@ -303,7 +307,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
             <SelectField label="Source Type" value={form.source_type} onChange={(v) => setForm({ ...form, source_type: v, client_id: "", client_name: "", source_name: "" })} options={SRC_TYPES} testid="in-src-type" />
             {form.source_type === "Return From Client" ? (
               <div className="md:col-span-2">
-                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Searchable Client <span className="text-red-500 ml-0.5">*</span></label>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Searchable Client</label>
                 <input
                   type="text"
                   value={form.client_name || ""}
@@ -316,7 +320,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                       setForm({ ...form, client_name: val, client_id: "", source_name: val });
                     }
                   }}
-                  placeholder="Type to search onboarding clients…"
+                  placeholder="Type to search onboarding clients or enter custom name…"
                   className="flex-1 mt-1.5 h-10 px-3 py-2 w-full text-sm rounded-md border border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   list="inward-client-list"
                   data-testid="in-client-search"
@@ -324,9 +328,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                 <datalist id="inward-client-list">
                   {clients.map((c) => <option key={c.id} value={c.full_name} />)}
                 </datalist>
-                {!form.client_id && form.client_name && (
-                  <div className="text-[10px] text-red-500 mt-1">Please select an existing onboarding client from the list</div>
-                )}
+                <div className="text-[10px] text-blue-600 mt-1">Select an onboarding client for linked project details, or enter a client name manually.</div>
               </div>
             ) : (
               <div className="md:col-span-2">
@@ -526,12 +528,14 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                 >
                   <FileSpreadsheet className="w-4 h-4 mr-1.5" /> Manual Bulk Import
                 </Button>
-                <Button variant="outline" className="border-amber-300 bg-amber-50/80 text-amber-900 hover:bg-amber-100 font-semibold"
-                  onClick={() => setHvManualOpen(true)}
-                  data-testid="hv-manual-import-inward-btn"
-                >
-                  <ShieldCheck className="w-4 h-4 mr-1.5 text-amber-600" /> High Value Manual Import
-                </Button>
+                {ENABLE_HIGH_VALUE_MANUAL_IMPORT && (
+                  <Button variant="outline" className="border-amber-300 bg-amber-50/80 text-amber-900 hover:bg-amber-100 font-semibold"
+                    onClick={() => setHvManualOpen(true)}
+                    data-testid="hv-manual-import-inward-btn"
+                  >
+                    <ShieldCheck className="w-4 h-4 mr-1.5 text-amber-600" /> High Value Manual Import
+                  </Button>
+                )}
               </div>
             )}          </div>
         </CardContent>

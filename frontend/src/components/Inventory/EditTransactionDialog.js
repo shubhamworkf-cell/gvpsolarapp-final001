@@ -46,9 +46,6 @@ export default function EditTransactionDialog({ transaction, onClose, onSaved, p
     if (!form.product?.trim() || !form.quantity || Number(form.quantity) <= 0) {
       toast.error("Product and quantity are required"); return;
     }
-    if (isInward && form.source_type === "Return From Client" && !form.client_id) {
-      toast.error("Please select a valid onboarding client"); return;
-    }
     setBusy(true);
     const url = isInward ? `/inventory/inward/${form.id}` : `/inventory/outward/${form.id}`;
     const payload = { ...form, quantity: Number(form.quantity) };
@@ -87,7 +84,7 @@ export default function EditTransactionDialog({ transaction, onClose, onSaved, p
               <SelectField label="Source Type" value={form.source_type} onChange={(v) => upd({ source_type: v, client_id: "", client_name: "", source_name: "" })} options={SRC_TYPES} testid="et-src-type" />
               {form.source_type === "Return From Client" ? (
                 <div className="md:col-span-2">
-                  <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Searchable Client <span className="text-red-500 ml-0.5">*</span></label>
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Searchable Client</label>
                   <input
                     type="text"
                     value={form.client_name || ""}
@@ -100,16 +97,14 @@ export default function EditTransactionDialog({ transaction, onClose, onSaved, p
                         upd({ client_name: val, client_id: "", source_name: val });
                       }
                     }}
-                    placeholder="Type to search onboarding clients…"
+                    placeholder="Type to search onboarding clients or enter custom name…"
                     className="flex-1 mt-1.5 h-10 px-3 py-2 w-full text-sm rounded-md border border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                     list="et-client-list"
                   />
                   <datalist id="et-client-list">
                     {clients.map((c) => <option key={c.id} value={c.full_name} />)}
                   </datalist>
-                  {!form.client_id && form.client_name && (
-                    <div className="text-[10px] text-red-500 mt-1">Please select an existing onboarding client from the list</div>
-                  )}
+                  <div className="text-[10px] text-blue-600 mt-1">Select an onboarding client for linked project details, or enter a client name manually.</div>
                 </div>
               ) : (
                 <Field label="Vendor / Source Name" value={form.source_name} onChange={(v) => upd({ source_name: v })} testid="et-source" />
@@ -119,7 +114,10 @@ export default function EditTransactionDialog({ transaction, onClose, onSaved, p
             <>
               <Field label="Outward Challan No." value={form.outward_challan_no} onChange={(v) => upd({ outward_challan_no: digitsOnly(v) })} testid="et-out-challan" inputMode="numeric" pattern="[0-9]*" />
               <SelectField label="Status" value={form.status} onChange={(v) => upd({ status: v })} options={OUTWARD_STATUSES} testid="et-status" />
-              <Field label="Client Name" value={form.client_name} onChange={(v) => upd({ client_name: v })} testid="et-client" />
+              <div className="md:col-span-2">
+                <Field label="Client Name" value={form.client_name} onChange={(v) => upd({ client_name: v })} testid="et-client" placeholder="Client or party name" />
+                <div className="text-[10px] text-blue-600 mt-1">Select an onboarding client for linked project details, or enter a client name manually.</div>
+              </div>
               <Field label="Project" value={form.project_name} onChange={(v) => upd({ project_name: v })} testid="et-project" />
             </>
           )}
@@ -175,7 +173,7 @@ export default function EditTransactionDialog({ transaction, onClose, onSaved, p
               <div className="mt-1.5 flex items-center gap-2 px-3 py-2 rounded-md border border-slate-200 bg-slate-50 text-xs">
                 <Paperclip className="w-3.5 h-3.5 text-slate-500" />
                 <a href={fileUrl(form.attachment_file_id)} target="_blank" rel="noreferrer" className="flex-1 truncate hover:underline">{form.attachment_filename}</a>
-                <button onClick={() => upd({ attachment_file_id: "", attachment_filename: "" })} className="text-slate-400 hover:text-red-600">×</button>
+                <button type="button" onClick={() => upd({ attachment_file_id: "", attachment_filename: "" })} className="text-slate-400 hover:text-red-600 font-bold px-1" title="Clear attachment">×</button>
               </div>
             ) : (
               <Button variant="outline" size="sm" className="mt-1.5" onClick={() => fileRef.current?.click()} disabled={uploading} data-testid="et-attach">

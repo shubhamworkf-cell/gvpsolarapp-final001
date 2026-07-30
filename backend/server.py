@@ -5907,8 +5907,8 @@ async def update_inward(entry_id: str, data: InwardIn, user=Depends(get_current_
         "bill_number": numeric_only(data.bill_number),
         "source_type": source_type_val, "source_name": data.source_name or existing.get("source_name") or "",
         "date": data.date or existing.get("date") or now_iso(), "remarks": remarks_val,
-        "attachment_file_id": data.attachment_file_id or existing.get("attachment_file_id", ""),
-        "attachment_filename": data.attachment_filename or existing.get("attachment_filename", ""),
+        "attachment_file_id": data.attachment_file_id if data.attachment_file_id is not None else existing.get("attachment_file_id", ""),
+        "attachment_filename": data.attachment_filename if data.attachment_filename is not None else existing.get("attachment_filename", ""),
         "updated_at": now_iso(),
     }
     await db.inward_entries.update_one({"id": entry_id, "company_id": cid}, {"$set": patch})
@@ -6041,8 +6041,8 @@ async def update_outward(entry_id: str, data: OutwardIn, user=Depends(get_curren
         "date": data.date or existing.get("date") or now_iso(),
         "remarks": data.remarks or "",
         "status": data.status or existing.get("status") or "Dispatched",
-        "attachment_file_id": data.attachment_file_id or existing.get("attachment_file_id", ""),
-        "attachment_filename": data.attachment_filename or existing.get("attachment_filename", ""),
+        "attachment_file_id": data.attachment_file_id if data.attachment_file_id is not None else existing.get("attachment_file_id", ""),
+        "attachment_filename": data.attachment_filename if data.attachment_filename is not None else existing.get("attachment_filename", ""),
         "updated_at": now_iso(),
     }
     await db.outward_entries.update_one({"id": entry_id, "company_id": cid}, {"$set": patch})
@@ -7250,7 +7250,7 @@ async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
 
     await log_activity(cid, user["id"], user["name"], "Bulk Outward Import", f"{len(inserted)} entries")
     await push_notification(cid, "admin", "Bulk Outward Import", f"{user['name']} imported {len(inserted)} outward entries via AI")
-    await sync_inventory_master(cid)
+    asyncio.create_task(sync_inventory_master(cid))
     return {"inserted": len(inserted), "ids": inserted}
 
 

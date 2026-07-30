@@ -43,32 +43,34 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
   const [confirmBulk, setConfirmBulk] = useState(false);
   const [editing, setEditing] = useState(null);
 
-  // Debounced filters to avoid continuous requests
-  const [debouncedParams, setDebouncedParams] = useState({ page, page_size: pageSize });
-
-  const activeParams = useMemo(() => {
-    const p = { page, page_size: pageSize };
-    Object.entries(filters).forEach(([k, v]) => { if (v && v !== "all") p[k] = v; });
-    if (globalSearch) p.search = globalSearch;
-    return p;
-  }, [filters, globalSearch, page, pageSize]);
+  // Debounced filters for search/input fields
+  const [debouncedFilters, setDebouncedFilters] = useState(filters);
+  const [debouncedSearch, setDebouncedSearch] = useState(globalSearch);
 
   useEffect(() => {
     const t = setTimeout(() => {
-      setDebouncedParams(activeParams);
+      setDebouncedFilters(filters);
+      setDebouncedSearch(globalSearch);
     }, 250);
     return () => clearTimeout(t);
-  }, [activeParams]);
+  }, [filters, globalSearch]);
 
-  const { data = { rows: [], total: 0, page: 1, pages: 1, page_size: 50 }, isLoading: historyLoading } = useInventoryHistory(debouncedParams);
+  const activeParams = useMemo(() => {
+    const p = { page, page_size: pageSize };
+    Object.entries(debouncedFilters).forEach(([k, v]) => { if (v && v !== "all") p[k] = v; });
+    if (debouncedSearch) p.search = debouncedSearch;
+    return p;
+  }, [debouncedFilters, debouncedSearch, page, pageSize]);
+
+  const { data = { rows: [], total: 0, page: 1, pages: 1, page_size: 50 }, isLoading: historyLoading, isFetching: historyFetching } = useInventoryHistory(activeParams);
   const { data: employees = [], isLoading: employeesLoading } = useEmployeeList();
 
-  const loading = historyLoading || employeesLoading;
+  const loading = historyLoading || historyFetching || employeesLoading;
   const invalidateHistory = useInvalidateInventoryHistory();
 
   useEffect(() => {
     setSelected(new Set());
-  }, [debouncedParams]);
+  }, [activeParams]);
 
   useEffect(() => { setPage(1); }, [filters, globalSearch]);
 

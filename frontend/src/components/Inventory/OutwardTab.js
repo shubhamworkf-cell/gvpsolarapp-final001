@@ -332,8 +332,28 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
             <SelectField label="Status" value={form.status} onChange={(v) => setForm({ ...form, status: v })} options={STATUSES} testid="out-status" />
 
             <div className="md:col-span-2">
-              <SelectField label="Client" value={form.client_id} onChange={(id) => { const c = (clients || []).find((x) => x.id === id); if (c) setForm({ ...form, client_id: c.id, client_name: c.full_name, project_id: c.id, project_name: c.full_name }); else setForm({ ...form, client_id: "", client_name: "" }); }} options={clients.map((c) => ({ value: c.id, label: c.full_name }))} allowEmpty placeholder="Select client" testid="out-client" />
-              {!form.client_id && form.client_name && <div className="text-[10px] text-slate-400 mt-1">Free text: {form.client_name}</div>}
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Client / Party Name</label>
+              <input
+                type="text"
+                value={form.client_name || ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const c = (clients || []).find((x) => x.full_name.toUpperCase() === val.toUpperCase());
+                  if (c) {
+                    setForm({ ...form, client_id: c.id, client_name: c.full_name, project_id: c.id, project_name: c.full_name });
+                  } else {
+                    setForm({ ...form, client_name: val, client_id: "" });
+                  }
+                }}
+                placeholder="Type to search onboarding clients or enter custom name…"
+                className="flex-1 mt-1.5 h-10 px-3 py-2 w-full text-sm rounded-md border border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                list="outward-client-list"
+                data-testid="out-client-search"
+              />
+              <datalist id="outward-client-list">
+                {(clients || []).map((c) => <option key={c.id} value={c.full_name} />)}
+              </datalist>
+              <div className="text-[10px] text-blue-600 mt-1">Select an onboarding client for linked project details, or enter a client name manually.</div>
             </div>
             <Field label="Project" value={form.project_name} onChange={(v) => setForm({ ...form, project_name: v })} placeholder="Project label" testid="out-project" />
 
