@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Download, History, FileImage, FileText, ArrowDownToLine, ArrowUpFromLine,
-  Trash2, Pencil, ChevronLeft, ChevronRight, Filter, X,
+  Trash2, Pencil, ChevronLeft, ChevronRight, Filter, X, RotateCcw,
 } from "lucide-react";
 import dayjs from "dayjs";
 import { toast } from "sonner";
@@ -226,11 +226,15 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
             <Button variant="outline" size="sm" onClick={() => setShowFilters((s) => !s)} data-testid="hist-more-filters">
               <Filter className="w-3.5 h-3.5 mr-1" /> {showFilters ? "Less" : "More"}
             </Button>
-            {hasFilters && (
-              <Button variant="ghost" size="sm" className="text-slate-500" onClick={clearFilters} data-testid="hist-clear-filters">
-                <X className="w-3.5 h-3.5 mr-1" /> Clear
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-medium"
+              onClick={clearFilters}
+              data-testid="hist-clear-filters"
+            >
+              <RotateCcw className="w-3.5 h-3.5 mr-1 text-slate-500" /> Clear Filters
+            </Button>
           </div>
           {showFilters && (
             <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 pt-3 border-t border-slate-100">
