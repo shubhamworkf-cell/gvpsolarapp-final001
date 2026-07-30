@@ -6,6 +6,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import json
+import math
 import io
 import re
 import uuid
