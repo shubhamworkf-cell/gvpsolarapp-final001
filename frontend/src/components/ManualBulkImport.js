@@ -529,11 +529,17 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
         toast.success("Manual bulk import completed.");
         console.log("[IMPORT] success state set: setStep('done')");
         setStep("done");
-        // Yield to browser main thread so React flushes setStep('done') to the DOM immediately
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        console.log("[IMPORT] starting post-import refresh (calling onImported)");
-        onImported?.();
-        console.log("[IMPORT] post-import refresh complete");
+        
+        // Defer non-critical post-import refresh so it doesn't block the UI transition or trigger the import catch block
+        setTimeout(() => {
+          console.log("[IMPORT] starting post-import refresh (calling onImported) safely");
+          try {
+            onImported?.();
+            console.log("[IMPORT] post-import refresh complete");
+          } catch (refreshErr) {
+            console.error("[IMPORT] Safe post-import refresh failed:", refreshErr);
+          }
+        }, 100);
       } else {
         setStep("review");
       }

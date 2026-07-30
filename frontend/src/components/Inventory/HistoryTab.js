@@ -207,9 +207,9 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
             <Input placeholder="Vendor" value={filters.vendor} onChange={(e) => setFilters({ ...filters, vendor: e.target.value })} className="w-32" data-testid="hist-vendor" />
             <Input placeholder="Client" value={filters.client} onChange={(e) => setFilters({ ...filters, client: e.target.value })} className="w-32" data-testid="hist-client" />
             <div className="flex items-center gap-1">
-              <Input type="date" value={filters.from_date} onChange={(e) => setFilters({ ...filters, from_date: e.target.value })} className="w-36" data-testid="hist-from" />
+              <Input type="date" value={filters.from_date || ""} onChange={(e) => setFilters({ ...filters, from_date: e.target.value })} className="w-36" data-testid="hist-from" />
               <span className="text-slate-400 text-xs">–</span>
-              <Input type="date" value={filters.to_date} onChange={(e) => setFilters({ ...filters, to_date: e.target.value })} className="w-36" data-testid="hist-to" />
+              <Input type="date" value={filters.to_date || ""} onChange={(e) => setFilters({ ...filters, to_date: e.target.value })} className="w-36" data-testid="hist-to" />
               {(filters.from_date || filters.to_date) && (
                 <Button
                   variant="ghost"
