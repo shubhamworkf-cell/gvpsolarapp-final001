@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError } from "@/lib/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { toast } from "sonner";
-import { getCachedProducts, fetchProductsDeduplicated, invalidateFrontendProductCache } from "@/lib/productCache";
+import { getCachedProducts, setCachedProducts, fetchProductsDeduplicated, invalidateFrontendProductCache } from "@/lib/productCache";
 
 const STALE_TIME = 15 * 60 * 1000; // 15 min - inventory changes infrequently
 
