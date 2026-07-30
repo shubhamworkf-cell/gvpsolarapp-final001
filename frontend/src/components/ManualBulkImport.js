@@ -488,6 +488,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
     setImportProgress(0);
     setCancelImport(false);
     cancelImportRef.current = false;
+    setProcessing(true);
 
     const CHUNK_SIZE = 25;
     const totalRows = validRows.length;
@@ -526,9 +527,10 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
 
       if (!cancelImportRef.current) {
         console.log("[IMPORT] entering success handler");
-        toast.success("Manual bulk import completed.");
+        toast.success(`Successfully imported ${validRows.length} ${mode} entries.`);
         console.log("[IMPORT] success state set: setStep('done')");
         setStep("done");
+        onOpenChange(false);
         
         // Defer non-critical post-import refresh so it doesn't block the UI transition or trigger the import catch block
         setTimeout(() => {
@@ -539,7 +541,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
           } catch (refreshErr) {
             console.error("[IMPORT] Safe post-import refresh failed:", refreshErr);
           }
-        }, 100);
+        }, 50);
       } else {
         setStep("review");
       }
