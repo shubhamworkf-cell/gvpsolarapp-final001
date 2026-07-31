@@ -8751,19 +8751,24 @@ async def calculate_client_ledger(company_id: str, client_id: str):
     ledger = {}
     
     for out in outwards:
-        prod_name = (out.get("product") or "").strip().upper()
-        if not prod_name:
+        raw_prod = (out.get("product") or "").strip()
+        norm_name = raw_prod.upper()
+        if not norm_name:
             continue
-        size = (out.get("size") or "").strip()
+        raw_size = (out.get("size") or "").strip()
+        norm_size = raw_size.upper()
         unit = (out.get("unit") or "Nos").strip()
-        key = (prod_name, size, unit)
+        
+        # Report identity key: normalized Product Name + normalized Size/Spec
+        # Unit MUST NOT be part of the identity key.
+        key = (norm_name, norm_size)
         qty = float(out.get("quantity") or 0)
         date_str = out.get("date") or out.get("created_at") or ""
         
         if key not in ledger:
             ledger[key] = {
-                "product": prod_name,
-                "size": size,
+                "product": raw_prod.upper(),
+                "size": raw_size,
                 "unit": unit,
                 "total_outward": 0.0,
                 "total_returned": 0.0,
@@ -8777,19 +8782,23 @@ async def calculate_client_ledger(company_id: str, client_id: str):
                 ledger[key]["last_movement_date"] = date_str
 
     for inv in inwards:
-        prod_name = (inv.get("product") or "").strip().upper()
-        if not prod_name:
+        raw_prod = (inv.get("product") or "").strip()
+        norm_name = raw_prod.upper()
+        if not norm_name:
             continue
-        size = (inv.get("size") or "").strip()
+        raw_size = (inv.get("size") or "").strip()
+        norm_size = raw_size.upper()
         unit = (inv.get("unit") or "Nos").strip()
-        key = (prod_name, size, unit)
+        
+        # Report identity key: normalized Product Name + normalized Size/Spec
+        key = (norm_name, norm_size)
         qty = float(inv.get("quantity") or 0)
         date_str = inv.get("date") or inv.get("created_at") or ""
         
         if key not in ledger:
             ledger[key] = {
-                "product": prod_name,
-                "size": size,
+                "product": raw_prod.upper(),
+                "size": raw_size,
                 "unit": unit,
                 "total_outward": 0.0,
                 "total_returned": 0.0,
