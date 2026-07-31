@@ -56,6 +56,8 @@ const TASK_TYPE_WORKFLOWS = {
   "Complaint": "complaint",
 };
 
+const TASK_TYPES = Object.keys(TASK_TYPE_WORKFLOWS);
+
 function getWorkflow(taskType) {
   return TASK_TYPE_WORKFLOWS[taskType] || "installation";
 }
