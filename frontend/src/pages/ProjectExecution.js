@@ -262,7 +262,7 @@ export default function ProjectExecution() {
                         const current = order.find((s) => stages[s]) || "Onboarding";
                         return (
                           <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50">
-                            <td className="px-4 py-3"><Link to={`/client-data/${p.id}`} className="font-medium text-slate-900 hover:text-blue-600 hover:underline">{p.full_name}</Link><div className="text-xs text-slate-500">{p.sol_id}</div></td>
+                            <td className="px-4 py-3 whitespace-nowrap"><Link to={`/client-data/${p.id}`} className="font-medium text-slate-900 hover:text-blue-600 hover:underline block">{p.full_name}</Link><div className="text-xs text-slate-500 block whitespace-nowrap">{p.sol_id}</div></td>
                             <td className="px-4 py-3 text-slate-700">{p.mobile}</td>
                             <td className="px-4 py-3 text-slate-700">{p.system_kw || 0}</td>
                             <td className="px-4 py-3"><Link to={`/client-data/${p.id}`}><Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer">{current}</Badge></Link></td>

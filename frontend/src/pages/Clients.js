@@ -141,8 +141,8 @@ export default function Clients() {
               ) : (
                 paginated.map((c) => (
                   <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`client-row-${c.id}`}>
-                    <td className="px-4 py-3">
-                      <Link to={`/clients/${c.id}`} className="font-medium text-slate-900 hover:text-blue-600">{c.full_name}</Link>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <Link to={`/clients/${c.id}`} className="font-medium text-slate-900 hover:text-blue-600 block">{c.full_name}</Link>
                       <div className="text-xs text-slate-500">{c.sol_id}</div>
                     </td>
                     <td className="px-4 py-3 text-slate-700">{c.mobile}</td>

@@ -170,7 +170,7 @@ export default function Dashboard() {
               )}
               {filtered.map((c) => (
                 <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => nav(`/clients/${c.id}`)} data-testid={`client-row-${c.id}`}>
-                  <td className="px-5 py-3">
+                  <td className="px-5 py-3 whitespace-nowrap">
                     <div className="font-medium text-slate-900">{c.full_name}</div>
                     <div className="text-xs text-slate-500">{c.sol_id}</div>
                   </td>
