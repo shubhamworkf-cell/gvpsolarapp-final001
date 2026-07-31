@@ -349,9 +349,9 @@ export default function ClientDetail() {
                       {client.high_value_assets.map((a) => (
                         <tr key={a.id} className="hover:bg-slate-50/50">
                           <td className="p-3 font-semibold text-slate-800">
-                             <div>{a.product_name}</div>
-                             {a.size_model && <div className="text-[10px] text-slate-400 font-normal mt-0.5">{a.size_model}</div>}
-                           </td>
+                            <div>{a.product_name}</div>
+                            {a.size_model && <div className="text-[10px] text-slate-400 font-normal mt-0.5">{a.size_model}</div>}
+                          </td>
                           <td className="p-3 font-medium text-slate-800">{a.quantity !== undefined && a.quantity !== null ? a.quantity : 1}</td>
                           <td className="p-3 font-mono font-medium text-slate-600">{a.serial_number || "—"}</td>
                           <td className="p-3 text-slate-700">{a.installation_date || "—"}</td>

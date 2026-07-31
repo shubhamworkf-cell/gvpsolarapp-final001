@@ -1107,7 +1107,7 @@ function SurveyDetailsSection({ surveys, onZoom }) {
   const s = surveys[selectedIdx] || {};
   const details = s.details || s.submission || {};
   const checklist = details.checklist || s.submission?.checklist || [];
-  
+
   // Combine all possible photo sources so no survey photo is ever missed
   const rawPhotos = {
     ...(s.submission?.photos || {}),
@@ -1117,7 +1117,7 @@ function SurveyDetailsSection({ surveys, onZoom }) {
     ...(s.attachments || {}),
     ...(s.photos || {}),
   };
-  
+
   const photoEntries = Object.entries(rawPhotos).filter(([_, val]) => {
     if (!val) return false;
     if (typeof val === "string") return val.trim().length > 0;
@@ -1279,11 +1279,11 @@ function WorkflowDetailsSection({ title, icon: Icon, records = [], onZoom }) {
   const s = records[selectedIdx];
   const details = s.details || {};
   const checklist = details.checklist || [];
-  
+
   // Extract attachments from the records
   // Attachments can be in details.attachments (object) or derived from details.checklist
   const attachments = [];
-  
+
   // 1. Direct attachments dict
   if (details.attachments) {
     Object.entries(details.attachments).forEach(([label, val]) => {
@@ -1293,7 +1293,7 @@ function WorkflowDetailsSection({ title, icon: Icon, records = [], onZoom }) {
       }
     });
   }
-  
+
   // 2. Checklist-based uploads
   checklist.forEach((item) => {
     if (item.file_id) {
@@ -1460,9 +1460,9 @@ function MaterialHistorySection({ requests, inward = [], outward = [] }) {
                           <span className="font-mono text-xs bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded font-semibold">{m.request_no || "—"}</span>
                           <Badge variant="outline" className={
                             m.status === "approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                            m.status === "partial_approved" ? "bg-amber-50 text-amber-700 border-amber-200" :
-                            m.status === "rejected" ? "bg-red-50 text-red-700 border-red-200" :
-                            "bg-slate-100 text-slate-700 border-slate-200"
+                              m.status === "partial_approved" ? "bg-amber-50 text-amber-700 border-amber-200" :
+                                m.status === "rejected" ? "bg-red-50 text-red-700 border-red-200" :
+                                  "bg-slate-100 text-slate-700 border-slate-200"
                           }>{(m.status || "pending").replace("_", " ").toUpperCase()}</Badge>
                         </div>
                         <div className="text-xs text-slate-500 mt-1">Requested by {m.requested_by_name} · {dayjs(m.created_at).format("MMM D, YYYY h:mm A")}</div>
@@ -1708,8 +1708,8 @@ function TasksSection({ tasks, loading }) {
                   <td className="p-3">
                     <Badge variant="outline" className={
                       t.status === "completed" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                      t.status === "in_progress" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                      "bg-amber-50 text-amber-700 border-amber-200"
+                        t.status === "in_progress" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                          "bg-amber-50 text-amber-700 border-amber-200"
                     }>
                       {t.status === "in_progress" ? "IN PROGRESS" : t.status.toUpperCase()}
                     </Badge>

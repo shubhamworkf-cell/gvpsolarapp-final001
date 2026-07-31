@@ -536,10 +536,10 @@ function ComplaintMiniRow({ c }) {
   const statusCls = status === "Resolved" || status === "Closed"
     ? "bg-emerald-50 text-emerald-700 border-emerald-200"
     : status === "In Progress"
-    ? "bg-blue-50 text-blue-700 border-blue-200"
-    : status === "Waiting"
-    ? "bg-amber-50 text-amber-700 border-amber-200"
-    : "bg-slate-100 text-slate-700 border-slate-200";
+      ? "bg-blue-50 text-blue-700 border-blue-200"
+      : status === "Waiting"
+        ? "bg-amber-50 text-amber-700 border-amber-200"
+        : "bg-slate-100 text-slate-700 border-slate-200";
   const priorityBar = c.priority === "Urgent" ? "bg-red-500" : c.priority === "High" ? "bg-orange-500" : c.priority === "Low" ? "bg-slate-400" : "bg-blue-500";
   const esc = c.escalation === "red" ? { cls: "bg-red-100 text-red-800 border-red-300", label: "Overdue" } : c.escalation === "yellow" ? { cls: "bg-amber-100 text-amber-800 border-amber-300", label: "Aging" } : null;
   return (
@@ -570,7 +570,7 @@ const TaskRow = React.memo(function TaskRow({ t, showAssignee = false, onSelect 
   const overdue = t.status !== "completed" && t.deadline && t.deadline < dayjs().format("YYYY-MM-DD");
   const workflow = getWorkflow(t.task_type);
   const workflowLabel = t.task_type || "Task";
-  
+
   const handleClick = React.useCallback(() => {
     onSelect(t);
   }, [t, onSelect]);
@@ -1058,7 +1058,7 @@ function MeterTestingWorkflow({ task, canMutate, updateStatus, onDone }) {
     "Meter Approved",
     "Final Notes Added"
   ];
-  
+
   const ATTACHMENT_FIELDS = [
     "Meter Photo",
     "Meter Serial Number Photo",
@@ -1295,7 +1295,7 @@ function DocumentSignedWorkflow({ task, canMutate, updateStatus, onDone }) {
       const { data } = await api.post("/files/upload", fd, {
         headers: { "Content-Type": "multipart/form-data" }
       });
-      
+
       setChecklist((prev) =>
         prev.map((item, idx) =>
           idx === index
@@ -1345,18 +1345,16 @@ function DocumentSignedWorkflow({ task, canMutate, updateStatus, onDone }) {
               {checklist.map((item, idx) => (
                 <div
                   key={item.label}
-                  className={`flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-lg border ${
-                    item.checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"
-                  }`}
+                  className={`flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-lg border ${item.checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"
+                    }`}
                 >
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
                       onClick={() => toggleChecklist(idx)}
                       disabled={!canMutate}
-                      className={`px-3 py-1 rounded text-xs font-semibold border ${
-                        item.checked ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white text-slate-600"
-                      }`}
+                      className={`px-3 py-1 rounded text-xs font-semibold border ${item.checked ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white text-slate-600"
+                        }`}
                     >
                       {item.checked ? "✓ Checked" : "☐ Pending"}
                     </button>
@@ -1416,6 +1414,19 @@ function DocumentSignedWorkflow({ task, canMutate, updateStatus, onDone }) {
               className="text-sm"
             />
           </div>
+
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Optional Photo Upload (1 Photo Max)</div>
+            <label className={`border border-dashed rounded-lg p-3 flex items-center justify-between cursor-pointer transition-colors ${optionalPhotoId ? "border-emerald-300 bg-emerald-50/50" : "border-slate-200 hover:border-blue-300 bg-white"}`}>
+              <div className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                <Camera className="w-4 h-4 text-slate-400" />
+                <span>{optionalPhotoId ? "Photo Uploaded" : "Upload Optional Signed Document Photo"}</span>
+              </div>
+              <span className="text-[10px] text-slate-500 font-medium">{optionalPhotoId ? "✓ Attached" : "Optional"}</span>
+              <input type="file" accept="image/*" className="hidden" onChange={uploadOptionalPhoto} disabled={uploadingPhoto} />
+            </label>
+            {uploadingPhoto && <div className="text-[10px] text-blue-600 mt-1">Uploading photo…</div>}
+          </div>
         </CardContent>
       </Card>
       <ActionBar>
@@ -1446,14 +1457,14 @@ function MaterialDispatchWorkflow({ task, canMutate, updateStatus }) {
   const [loading, setLoading] = useState(false);
   const [viewRequestOpen, setViewRequestOpen] = useState(false);
   const [approveOpen, setApproveOpen] = useState(false);
-  
+
   // Local state for approval Form
   const [appForm, setAppForm] = useState({ challan_number: "", vehicle_number: "", driver_name: "", delivery_date: "", remarks: "" });
   const [appItems, setAppItems] = useState({});
   const [uploading, setUploading] = useState("");
   const [deliveryPhoto, setDeliveryPhoto] = useState({ id: "", name: "" });
   const [challanPhoto, setChallanPhoto] = useState({ id: "", name: "" });
-  
+
   // Regular employee delivery notes
   const [deliveryNotes, setDeliveryNotes] = useState("");
 
@@ -1476,12 +1487,12 @@ function MaterialDispatchWorkflow({ task, canMutate, updateStatus }) {
       if (data && data.length > 0) {
         const req = data[0];
         setMatReq(req);
-        
+
         // Pre-fill approved quantities
         const itemsQty = {};
         (req.items || []).forEach((it) => {
-          itemsQty[it.product] = it.approved_quantity !== undefined 
-            ? it.approved_quantity 
+          itemsQty[it.product] = it.approved_quantity !== undefined
+            ? it.approved_quantity
             : Math.max(0, Math.min(Number(it.quantity || 0), Number(it.available_stock || 0)));
         });
         setAppItems(itemsQty);
@@ -1502,7 +1513,7 @@ function MaterialDispatchWorkflow({ task, canMutate, updateStatus }) {
           }
         }
       }
-      
+
       const outRes = await api.get("/inventory/outward");
       const filteredOutwards = (outRes.data || []).filter(o => o.client_id === task.client_id);
       setOutwards(filteredOutwards);
@@ -1540,7 +1551,7 @@ function MaterialDispatchWorkflow({ task, canMutate, updateStatus }) {
       toast.error("Challan number is required");
       return;
     }
-    
+
     setLoading(true);
     try {
       const items = (matReq.items || []).map((it) => {
@@ -1549,7 +1560,7 @@ function MaterialDispatchWorkflow({ task, canMutate, updateStatus }) {
       });
       const isPartial = items.some((it) => Number(it.approved_quantity) < Number(it.quantity || 0));
       const status = isPartial ? "partial_approved" : "approved";
-      
+
       await api.patch(`/material-requests/${matReq.id}`, {
         status,
         items,
@@ -1561,7 +1572,7 @@ function MaterialDispatchWorkflow({ task, canMutate, updateStatus }) {
         delivery_photo_file_id: deliveryPhoto.id,
         challan_photo_file_id: challanPhoto.id,
       });
-      
+
       toast.success("Material request approved and outward pending entries created");
       setApproveOpen(false);
       loadData();
@@ -1724,7 +1735,7 @@ function MaterialDispatchWorkflow({ task, canMutate, updateStatus }) {
         <Button variant="outline" size="sm" onClick={() => setViewRequestOpen(true)}>
           <Eye className="w-4 h-4 mr-1.5" /> View Material Request
         </Button>
-        
+
         {isAdmin && matReq && matReq.status === "pending" && (
           <Button variant="outline" size="sm" onClick={() => setApproveOpen(true)}>
             <BarChart2 className="w-4 h-4 mr-1.5" /> Approve Quantity
@@ -1908,7 +1919,7 @@ function MaterialDispatchWorkflow({ task, canMutate, updateStatus }) {
                       return;
                     }
                   }
-                  
+
                   // Save current dialog data to results
                   const updatedResults = {
                     ...hvDialogResults,
@@ -2116,7 +2127,7 @@ export function MaterialRequest({ clientId, onDone }) {
   useEffect(() => {
     fetchProductsDeduplicated()
       .then((list) => setProducts(list || []))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   const handleProductChange = (i, v) => {
@@ -2170,10 +2181,14 @@ export function MaterialRequest({ clientId, onDone }) {
       }));
     if (!normalizedItems.length) { toast.error("Add at least one product"); return; }
     if (normalizedItems.some((it) => it.quantity <= 0)) { toast.error("Quantity must be greater than zero"); return; }
+    if (submitting) return;
+    setSubmitting(true);
     try {
       await api.post("/material-requests", { client_id: clientId, items: normalizedItems, remarks });
-      toast.success("Material requested"); onDone();
+      toast.success("Material requested");
+      if (onDone) onDone();
     } catch (e) { toast.error(formatApiError(e)); }
+    finally { setSubmitting(false); }
   };
   return (
     <Card className="border-slate-200"><CardContent className="p-4 space-y-3">
@@ -2190,35 +2205,35 @@ export function MaterialRequest({ clientId, onDone }) {
               inputRef={(el) => { productRefs.current[i] = el; }}
             />
           </div>
-          <Input 
-            placeholder="Size" 
-            className="col-span-4 md:col-span-2 h-10" 
-            value={it.size} 
-            onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, size: e.target.value } : x))} 
-            data-testid={`mat-size-${i}`} 
+          <Input
+            placeholder="Size"
+            className="col-span-4 md:col-span-2 h-10"
+            value={it.size}
+            onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, size: e.target.value } : x))}
+            data-testid={`mat-size-${i}`}
           />
-          <Input 
-            type="number" 
-            placeholder="Qty" 
-            className="col-span-4 md:col-span-2 h-10" 
+          <Input
+            type="number"
+            placeholder="Qty"
+            className="col-span-4 md:col-span-2 h-10"
             min="1"
-            value={it.quantity || ""} 
+            value={it.quantity || ""}
             onChange={(e) => {
               const val = e.target.value === "" ? "" : Number(e.target.value);
               setItems(items.map((x, idx) => idx === i ? { ...x, quantity: val } : x));
             }}
             onKeyDown={(e) => handleQtyKeyDown(e, i)}
           />
-          <Input 
-            placeholder="Remarks" 
-            className="col-span-6 md:col-span-3 h-10" 
-            value={it.remarks} 
-            onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, remarks: e.target.value } : x))} 
+          <Input
+            placeholder="Remarks"
+            className="col-span-6 md:col-span-3 h-10"
+            value={it.remarks}
+            onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, remarks: e.target.value } : x))}
           />
-          <Button 
-            size="sm" 
-            variant="ghost" 
-            className="col-span-2 md:col-span-1 h-10 flex items-center justify-center p-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors" 
+          <Button
+            size="sm"
+            variant="ghost"
+            className="col-span-2 md:col-span-1 h-10 flex items-center justify-center p-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
             onClick={() => setItems(items.filter((_, idx) => idx !== i))}
           >
             <Trash2 className="w-4 h-4" />
@@ -2227,7 +2242,9 @@ export function MaterialRequest({ clientId, onDone }) {
       ))}
       <Button size="sm" variant="outline" onClick={() => setItems([...items, { product: "", size: "", quantity: 1, remarks: "" }])}><Plus className="w-4 h-4 mr-1" /> Add Item</Button>
       <Textarea placeholder="Additional remarks" rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
-      <Button onClick={submit} className="w-full bg-blue-600 hover:bg-blue-700" data-testid="submit-material-req">Submit Request</Button>
+      <Button onClick={submit} disabled={submitting} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50" data-testid="submit-material-req">
+        {submitting ? "Submitting…" : "Submit Request"}
+      </Button>
     </CardContent></Card>
   );
 }
