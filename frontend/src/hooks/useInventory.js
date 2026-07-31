@@ -19,10 +19,10 @@ export function useProductList(filters = {}) {
       const cached = getCachedProducts();
       return (Array.isArray(cached) && cached.length > 0) ? cached : undefined;
     },
-    staleTime: 0,
+    staleTime: 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    refetchOnMount: true,
+    refetchOnMount: false,
   });
 }
 
@@ -52,8 +52,8 @@ export function useInventoryHistory(params = {}) {
       const { data } = await api.get("/inventory/history", { params });
       return data || { rows: [], total: 0, page: 1, pages: 1, page_size: 50 };
     },
-    staleTime: 0,
-    refetchOnMount: true,
+    staleTime: 60 * 1000,
+    refetchOnMount: false,
   });
 }
 

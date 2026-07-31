@@ -528,11 +528,25 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
       if (!cancelImportRef.current) {
         console.log("[IMPORT] entering success handler");
         toast.success(`Successfully imported ${validRows.length} ${mode} entries.`);
-        console.log("[IMPORT] success state set: setStep('done')");
-        setStep("done");
+        
+        // Reset state to initial "input" step so UI is immediately ready for next import
+        setStep("input");
+        setInputMode("text");
+        setRawText("");
+        setFile(null);
+        setFileName("");
+        setRows([]);
+        setErrors("");
+        setPreviewPage(1);
+        setImportProgress(0);
+        setCancelImport(false);
+        cancelImportRef.current = false;
+        
+        // Release processing and close modal cleanly
+        setProcessing(false);
         onOpenChange(false);
         
-        // Defer non-critical post-import refresh so it doesn't block the UI transition or trigger the import catch block
+        // Defer non-critical post-import refresh so it doesn't block UI or hold modal hostage
         setTimeout(() => {
           console.log("[IMPORT] starting post-import refresh (calling onImported) safely");
           try {
