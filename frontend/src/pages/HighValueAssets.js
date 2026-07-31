@@ -3,7 +3,9 @@ import { useHighValueLedger } from "@/hooks/useAssets";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, ShieldCheck, ArrowUpRight, ArrowDownLeft, RotateCcw, Package } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { Search, ShieldCheck, ArrowUpRight, ArrowDownLeft, RotateCcw, Package, Download } from "lucide-react";
 
 export default function HighValueAssets() {
   const [search, setSearch] = useState("");
@@ -24,6 +26,97 @@ export default function HighValueAssets() {
   const dispatchedTransactions = ledger.dispatched || [];
   const returnedTransactions = ledger.returned || [];
 
+  const handleExportCSV = () => {
+    let headers = [];
+    let rows = [];
+    let filename = "High_Value_Goods.csv";
+
+    if (tab === "all") {
+      if (!allGoods || allGoods.length === 0) {
+        toast.error("No High Value Goods data to export");
+        return;
+      }
+      filename = "High_Value_Goods_All.csv";
+      headers = ["Product Name", "Size / Spec", "Total Inward", "Total Outward", "Returned", "Available Qty", "Unit", "Last Movement", "Status"];
+      rows = allGoods.map((row) => [
+        `"${(row.product || "").replace(/"/g, '""')}"`,
+        `"${(row.size || "").replace(/"/g, '""')}"`,
+        row.total_in || 0,
+        row.total_out || 0,
+        row.returned || 0,
+        row.available_qty || 0,
+        `"${(row.unit || "Nos").replace(/"/g, '""')}"`,
+        `"${(row.last_movement || "").replace(/"/g, '""')}"`,
+        `"${(row.status || "").replace(/"/g, '""')}"`
+      ]);
+    } else if (tab === "available") {
+      if (!availableGoods || availableGoods.length === 0) {
+        toast.error("No available High Value Goods to export");
+        return;
+      }
+      filename = "High_Value_Goods_Available.csv";
+      headers = ["Product Name", "Size / Spec", "Available Qty", "Unit", "Last Inward", "Challan / Vendor", "Status"];
+      rows = availableGoods.map((row) => [
+        `"${(row.product || "").replace(/"/g, '""')}"`,
+        `"${(row.size || "").replace(/"/g, '""')}"`,
+        row.available_qty || 0,
+        `"${(row.unit || "Nos").replace(/"/g, '""')}"`,
+        `"${(row.last_inward || "").replace(/"/g, '""')}"`,
+        `"${(row.challan_vendor || "").replace(/"/g, '""')}"`,
+        `"${(row.status || "Available").replace(/"/g, '""')}"`
+      ]);
+    } else if (tab === "dispatched") {
+      if (!dispatchedTransactions || dispatchedTransactions.length === 0) {
+        toast.error("No dispatched High Value Goods to export");
+        return;
+      }
+      filename = "High_Value_Goods_Dispatched.csv";
+      headers = ["Date", "Product Name", "Size / Spec", "Quantity", "Unit", "Challan No.", "Client / Project", "Site", "Requested By / Issued To", "Reference", "Status"];
+      rows = dispatchedTransactions.map((row) => [
+        `"${(row.date || "").replace(/"/g, '""')}"`,
+        `"${(row.product || "").replace(/"/g, '""')}"`,
+        `"${(row.size || "").replace(/"/g, '""')}"`,
+        row.quantity || 0,
+        `"${(row.unit || "Nos").replace(/"/g, '""')}"`,
+        `"${(row.challan_number || "").replace(/"/g, '""')}"`,
+        `"${(row.client_name || "").replace(/"/g, '""')}"`,
+        `"${(row.site || "").replace(/"/g, '""')}"`,
+        `"${(row.requested_by || "").replace(/"/g, '""')}"`,
+        `"${(row.reference || "").replace(/"/g, '""')}"`,
+        `"${(row.status || "Dispatched").replace(/"/g, '""')}"`
+      ]);
+    } else if (tab === "returned") {
+      if (!returnedTransactions || returnedTransactions.length === 0) {
+        toast.error("No returned High Value Goods to export");
+        return;
+      }
+      filename = "High_Value_Goods_Returned.csv";
+      headers = ["Return Date", "Product Name", "Size / Spec", "Quantity", "Unit", "Client / Project", "Site", "Original Challan", "Return Reason / Remark", "Status"];
+      rows = returnedTransactions.map((row) => [
+        `"${(row.return_date || "").replace(/"/g, '""')}"`,
+        `"${(row.product || "").replace(/"/g, '""')}"`,
+        `"${(row.size || "").replace(/"/g, '""')}"`,
+        row.quantity || 0,
+        `"${(row.unit || "Nos").replace(/"/g, '""')}"`,
+        `"${(row.client_name || "").replace(/"/g, '""')}"`,
+        `"${(row.site || "").replace(/"/g, '""')}"`,
+        `"${(row.original_challan || "").replace(/"/g, '""')}"`,
+        `"${(row.return_reason || "").replace(/"/g, '""')}"`,
+        `"${(row.status || "Returned").replace(/"/g, '""')}"`
+      ]);
+    }
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success("High Value Goods data exported successfully");
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -35,6 +128,15 @@ export default function HighValueAssets() {
           </div>
           <p className="text-xs text-slate-500 mt-0.5">Real-time inventory tracking for high-value materials synchronized with Balance Sheet & Product Master.</p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="border-slate-300 text-slate-700 hover:bg-slate-50 h-9 shrink-0"
+          onClick={handleExportCSV}
+          data-testid="hv-download-btn"
+        >
+          <Download className="w-4 h-4 mr-1.5 text-blue-600" /> Export CSV
+        </Button>
       </div>
 
       {/* Tabs + Search Bar */}
