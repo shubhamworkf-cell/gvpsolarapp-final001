@@ -7401,14 +7401,16 @@ async def _attach_assets(client_id: str, company_id: str) -> List[Dict[str, str]
         db.meter_testings.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
         db.installations.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
         db.complaints.find(q, {"_id": 0}).sort("created_at", -1).to_list(100),
-        db.clients.find_one({"id": client_id, "company_id": company_id}, {"_id": 0, "documents": 1}),
+        db.clients.find_one({"id": client_id, "company_id": company_id}, {"_id": 0, "documents": 1, "cleared_assets": 1}),
     )
 
     assets: List[Dict[str, str]] = []
     seen: set = set()
+    c_doc = client_doc if isinstance(client_doc, dict) else {}
+    cleared_ids: set = set(c_doc.get("cleared_assets") or [])
 
     def add_asset(fid, label, source, created_at):
-        if fid and fid not in seen:
+        if fid and fid not in seen and fid not in cleared_ids:
             assets.append({"label": label, "file_id": fid, "source": source, "created_at": created_at or ""})
             seen.add(fid)
 
@@ -7469,14 +7471,48 @@ async def _attach_assets(client_id: str, company_id: str) -> List[Dict[str, str]
                     fid = attachment.get("file_id") if isinstance(attachment, dict) else (attachment if isinstance(attachment, str) else None)
                     add_asset(fid, "Complaint Comment Attachment", "Complaint Center", comm.get("created_at"))
     # 8. client.documents (only image content types)
-    c_doc = client_doc if isinstance(client_doc, dict) else {}
     for d in c_doc.get("documents") or []:
         if isinstance(d, dict):
+            fid = d.get("file_id") or d.get("id")
             ct = (d.get("content_type") or "").lower()
-            if ct.startswith("image/") and d.get("id"):
-                add_asset(d["id"], d.get("label") or d.get("filename", "Photo"), "Client Documents", d.get("created_at"))
+            if (ct.startswith("image/") or not ct) and fid:
+                add_asset(fid, d.get("label") or d.get("filename", "Photo"), "Client Documents", d.get("created_at"))
 
     return assets
+
+
+class ClearImageIn(BaseModel):
+    file_id: str
+
+
+@api_router.post("/clients/{client_id}/clear-image")
+async def clear_client_image(client_id: str, data: ClearImageIn, user=Depends(get_current_user)):
+    client = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    
+    fid = (data.file_id or "").strip()
+    if not fid:
+        raise HTTPException(status_code=400, detail="file_id is required")
+
+    await db.clients.update_one(
+        {"id": client_id, "company_id": user["company_id"]},
+        {
+            "$pull": {
+                "documents": {
+                    "$or": [{"file_id": fid}, {"id": fid}]
+                }
+            },
+            "$addToSet": {
+                "cleared_assets": fid
+            },
+            "$set": {
+                "updated_at": now_iso()
+            }
+        }
+    )
+    await log_activity(user["company_id"], user["id"], user["name"], "Cleared Client Image", client.get("full_name", ""))
+    return {"status": "success", "message": "Image cleared from client record", "file_id": fid}
 
 
 def _summarize_inverter_status(monitoring: Optional[dict]) -> str:

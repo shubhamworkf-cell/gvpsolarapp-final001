@@ -137,15 +137,89 @@ export default function ProjectExecution() {
     { label: "KW Under Execution", v: `${(stats.kw_in_execution || 0).toFixed(1)} kW`, icon: Zap, color: "teal" },
   ];
 
-  const totalPages = Math.ceil(projects.length / itemsPerPage);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedStage, setSelectedStage] = useState("All");
+  const [selectedStatus, setSelectedStatus] = useState("All");
+  const [selectedEmployee, setSelectedEmployee] = useState("All");
+  const [selectedDateRange, setSelectedDateRange] = useState("all");
+
+  const isFiltered = Boolean(searchQuery || selectedStage !== "All" || selectedStatus !== "All" || selectedEmployee !== "All" || selectedDateRange !== "all");
+
+  const resetFilters = () => {
+    setSearchQuery("");
+    setSelectedStage("All");
+    setSelectedStatus("All");
+    setSelectedEmployee("All");
+    setSelectedDateRange("all");
+  };
+
+  const matchesDateRange = (dateStr, range) => {
+    if (!range || range === "all" || !dateStr) return true;
+    const d = dayjs(dateStr);
+    if (!d.isValid()) return true;
+    const now = dayjs();
+    if (range === "today") return d.isSame(now, "day");
+    if (range === "7days") return d.isAfter(now.subtract(7, "day"));
+    if (range === "30days") return d.isAfter(now.subtract(30, "day"));
+    return true;
+  };
+
+  const filteredProjects = useMemo(() => {
+    return projects.filter((p) => {
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        const nameMatch = (p.full_name || "").toLowerCase().includes(q);
+        const solMatch = (p.sol_id || p.id || "").toLowerCase().includes(q);
+        const consMatch = (p.consumer_number || "").toLowerCase().includes(q);
+        if (!nameMatch && !solMatch && !consMatch) return false;
+      }
+      if (selectedStage !== "All" && p.current_stage !== selectedStage) return false;
+      if (selectedStatus !== "All" && p.status !== selectedStatus) return false;
+      if (selectedEmployee !== "All" && p.assigned_to !== selectedEmployee && !(p.assigned_team || []).includes(selectedEmployee)) return false;
+      if (!matchesDateRange(p.created_at || p.updated_at, selectedDateRange)) return false;
+      return true;
+    });
+  }, [projects, searchQuery, selectedStage, selectedStatus, selectedEmployee, selectedDateRange]);
+
+  const filteredVerifs = useMemo(() => {
+    return verifs.filter((v) => {
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        const nameMatch = (v.client_name || "").toLowerCase().includes(q);
+        const idMatch = (v.client_id || "").toLowerCase().includes(q);
+        if (!nameMatch && !idMatch) return false;
+      }
+      if (selectedStatus !== "All" && v.status !== selectedStatus) return false;
+      if (selectedEmployee !== "All" && v.submitted_by !== selectedEmployee) return false;
+      if (!matchesDateRange(v.created_at || v.updated_at, selectedDateRange)) return false;
+      return true;
+    });
+  }, [verifs, searchQuery, selectedStatus, selectedEmployee, selectedDateRange]);
+
+  const filteredMatReqs = useMemo(() => {
+    return matReqs.filter((m) => {
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        const nameMatch = (m.client_name || "").toLowerCase().includes(q);
+        const idMatch = (m.client_id || "").toLowerCase().includes(q);
+        if (!nameMatch && !idMatch) return false;
+      }
+      if (selectedStatus !== "All" && m.status !== selectedStatus) return false;
+      if (selectedEmployee !== "All" && m.user_id !== selectedEmployee) return false;
+      if (!matchesDateRange(m.created_at || m.updated_at, selectedDateRange)) return false;
+      return true;
+    });
+  }, [matReqs, searchQuery, selectedStatus, selectedEmployee, selectedDateRange]);
+
+  const totalPages = Math.ceil(filteredProjects.length / itemsPerPage);
   const paginated = useMemo(() => {
     const safePage = Math.min(projectPage, Math.max(1, totalPages || 1));
-    return projects.slice((safePage - 1) * itemsPerPage, safePage * itemsPerPage);
-  }, [projects, projectPage, itemsPerPage, totalPages]);
+    return filteredProjects.slice((safePage - 1) * itemsPerPage, safePage * itemsPerPage);
+  }, [filteredProjects, projectPage, itemsPerPage, totalPages]);
 
   useEffect(() => {
     setProjectPage(1);
-  }, [projects.length]);
+  }, [filteredProjects.length]);
 
   const allTabs = useMemo(() => [
     { id: "projects", label: "Project Assignment", perm: canProjectAssignment, testId: "tab-projects" },
@@ -207,6 +281,65 @@ export default function ProjectExecution() {
           );
         })}
       </div>
+
+      {/* Inline Filter Bar */}
+      <Card className="p-3 border-slate-200 bg-slate-50/50">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 items-center">
+          <Input
+            placeholder="Search Client / Sol ID / Consumer..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="h-9 text-xs bg-white"
+            data-testid="filter-search"
+          />
+          <Select value={selectedStage} onValueChange={setSelectedStage}>
+            <SelectTrigger className="h-9 text-xs bg-white"><SelectValue placeholder="Stage: All" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="All">All Stages</SelectItem>
+              {TASK_TYPES.map((st) => (
+                <SelectItem key={st} value={st}>{st}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+            <SelectTrigger className="h-9 text-xs bg-white"><SelectValue placeholder="Status: All" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="All">All Statuses</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="in_progress">In Progress</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+              <SelectItem value="rework">Rework / Retry</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
+            <SelectTrigger className="h-9 text-xs bg-white"><SelectValue placeholder="Assigned User: All" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="All">All Assigned Users</SelectItem>
+              {employees.map((emp) => (
+                <SelectItem key={emp.id} value={emp.id}>{emp.name || emp.full_name || emp.email}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex items-center gap-2">
+            <Select value={selectedDateRange} onValueChange={setSelectedDateRange}>
+              <SelectTrigger className="h-9 text-xs bg-white flex-1"><SelectValue placeholder="Date Range" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Time</SelectItem>
+                <SelectItem value="today">Today</SelectItem>
+                <SelectItem value="7days">Last 7 Days</SelectItem>
+                <SelectItem value="30days">Last 30 Days</SelectItem>
+              </SelectContent>
+            </Select>
+            {isFiltered && (
+              <Button size="sm" variant="ghost" onClick={resetFilters} className="h-9 px-2 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50" data-testid="clear-filters-btn">
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+      </Card>
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="bg-white border border-slate-200">

@@ -86,6 +86,8 @@ export default function ClientDataDetail() {
   const [visitedTabs, setVisitedTabs] = useState(new Set(["info"]));
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState(null);
+  const [clearTarget, setClearTarget] = useState(null);
+  const [clearingImage, setClearingImage] = useState(false);
 
   useEffect(() => {
     setVisitedTabs((prev) => {
@@ -125,6 +127,25 @@ export default function ClientDataDetail() {
 
   const canDelete = usePermission("clients", "delete");
   const deleteClientMutation = useDeleteClient();
+
+  const handleConfirmClearImage = async () => {
+    if (!clearTarget) return;
+    const fileId = clearTarget.file_id || clearTarget.id;
+    setClearingImage(true);
+    try {
+      await api.post(`/clients/${id}/clear-image`, { file_id: fileId });
+      toast.success("Image cleared");
+      setClearTarget(null);
+      if (zoom && (zoom.file_id === fileId || zoom.id === fileId)) {
+        setZoom(null);
+      }
+      queryClient.invalidateQueries({ queryKey: ["client-data", id] });
+    } catch (err) {
+      toast.error(formatApiError(err));
+    } finally {
+      setClearingImage(false);
+    }
+  };
 
   const handleOpenEdit = () => {
     setEditForm({
@@ -359,12 +380,41 @@ export default function ClientDataDetail() {
               <img src={fileUrl(zoom.file_id)} alt={zoom.label} className="w-full h-auto max-h-[85vh] object-contain" />
               <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
                 <Badge className="bg-black/60 text-white border-none">{zoom.label}</Badge>
-                <a href={fileUrl(zoom.file_id)} download target="_blank" rel="noreferrer">
-                  <Button size="sm" className="bg-white/95 text-slate-900 hover:bg-white" data-testid="download-asset-btn"><Download className="w-3.5 h-3.5 mr-1.5" /> Download</Button>
-                </a>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="destructive" className="bg-rose-600 hover:bg-rose-700 text-white" onClick={() => setClearTarget(zoom)}>
+                    <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Clear Image
+                  </Button>
+                  <a href={fileUrl(zoom.file_id)} download target="_blank" rel="noreferrer">
+                    <Button size="sm" className="bg-white/95 text-slate-900 hover:bg-white" data-testid="download-asset-btn"><Download className="w-3.5 h-3.5 mr-1.5" /> Download</Button>
+                  </a>
+                </div>
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Clear Image Confirmation Dialog */}
+      <Dialog open={!!clearTarget} onOpenChange={(open) => { if (!open) setClearTarget(null); }}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "Outfit" }}>Clear this image?</DialogTitle>
+            <DialogDescription className="text-sm text-slate-600 mt-2">
+              This will remove this image from this client record.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button variant="outline" onClick={() => setClearTarget(null)} autoFocus>
+              Cancel
+            </Button>
+            <Button
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={handleConfirmClearImage}
+              disabled={clearingImage}
+            >
+              {clearingImage ? "Clearing…" : "Clear Image"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -635,33 +685,99 @@ function BasicInfoSection({ client: c }) {
 }
 
 // ---------- Section 2: Installation Assets ----------
-function AssetsSection({ assets, onZoom }) {
-  if (assets.length === 0) {
+function AssetsSection({ assets, onZoom, onClearImage }) {
+  if (!assets || assets.length === 0) {
     return (
       <Card className="border-dashed border-slate-300 bg-slate-50/50">
         <CardContent className="p-12 text-center text-sm text-slate-500">
           <ImageIcon className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-          No installation photos uploaded yet. Photos from the field verification (8-photo mandatory set) will appear here automatically.
+          No installation photos uploaded yet. Photos from field verification and site handover will appear here automatically.
         </CardContent>
       </Card>
     );
   }
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3" data-testid="assets-grid">
-      {assets.map((a, i) => (
-        <button
-          key={`${a.file_id}-${i}`}
-          onClick={() => onZoom(a)}
+
+  const verifAssets = assets.filter(
+    (a) => a.source === "auto-verification" || a.source === "verification" || (a.label && a.label.toLowerCase().includes("verification"))
+  );
+  const handoverAssets = assets.filter(
+    (a) => a.source === "handover" || (a.label && a.label.toLowerCase().includes("handover"))
+  );
+  const verifAndHandoverIds = new Set([...verifAssets, ...handoverAssets].map((a) => a.file_id || a.id));
+  const otherAssets = assets.filter((a) => !verifAndHandoverIds.has(a.file_id || a.id));
+
+  const renderGrid = (items) => (
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+      {items.map((a, i) => (
+        <div
+          key={`${a.file_id || a.id}-${i}`}
           className="group relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50 hover:border-blue-400 hover:shadow-md transition"
-          data-testid={`asset-${a.file_id}`}
+          data-testid={`asset-${a.file_id || a.id}`}
         >
-          <img src={fileUrl(a.file_id)} alt={a.label} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
-          <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/70 via-black/30 to-transparent text-white">
+          <img
+            src={fileUrl(a.file_id || a.id)}
+            alt={a.label}
+            loading="lazy"
+            onClick={() => onZoom(a)}
+            className="w-full h-full object-cover group-hover:scale-105 transition duration-500 cursor-pointer"
+          />
+          {onClearImage && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClearImage(a);
+              }}
+              title="Clear Image"
+              className="absolute top-2 right-2 p-1.5 rounded-full bg-black/60 text-white hover:bg-rose-600 transition shadow-sm opacity-90 hover:opacity-100"
+              data-testid={`clear-asset-${a.file_id || a.id}`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <div
+            onClick={() => onZoom(a)}
+            className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/70 via-black/30 to-transparent text-white text-left cursor-pointer"
+          >
             <div className="text-[11px] font-semibold leading-tight truncate">{a.label}</div>
-            <div className="text-[9px] opacity-80">{a.source}</div>
+            <div className="text-[9px] opacity-80">{a.source || "Asset"}</div>
           </div>
-        </button>
+        </div>
       ))}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6" data-testid="assets-grid">
+      {verifAssets.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+            <span>Verification Photos</span>
+            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-[10px]">{verifAssets.length}</span>
+          </div>
+          {renderGrid(verifAssets)}
+        </div>
+      )}
+
+      {handoverAssets.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+            <span>Handover Photos & Proof</span>
+            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-full text-[10px]">{handoverAssets.length}</span>
+          </div>
+          {renderGrid(handoverAssets)}
+        </div>
+      )}
+
+      {otherAssets.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+            <span>Other Installation Assets</span>
+            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[10px]">{otherAssets.length}</span>
+          </div>
+          {renderGrid(otherAssets)}
+        </div>
+      )}
     </div>
   );
 }

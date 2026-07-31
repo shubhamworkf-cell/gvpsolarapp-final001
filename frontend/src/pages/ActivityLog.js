@@ -23,10 +23,43 @@ function useActivityLogs(page = 1, pageSize = 30) {
 
 export default function ActivityLog() {
   const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [dateRange, setDateRange] = useState("all");
   const pageSize = 30;
+
   const { data = { items: [], total: 0 }, isLoading: loading, error } = useActivityLogs(page, pageSize);
-  const items = data.items;
+  const rawItems = data.items;
+
+  const matchesDateRange = (dateStr, range) => {
+    if (!range || range === "all" || !dateStr) return true;
+    const d = dayjs(dateStr);
+    if (!d.isValid()) return true;
+    const now = dayjs();
+    if (range === "today") return d.isSame(now, "day");
+    if (range === "7days") return d.isAfter(now.subtract(7, "day"));
+    if (range === "30days") return d.isAfter(now.subtract(30, "day"));
+    return true;
+  };
+
+  const filteredItems = React.useMemo(() => {
+    return rawItems.filter((l) => {
+      if (search) {
+        const q = search.toLowerCase();
+        const uMatch = (l.user_name || "").toLowerCase().includes(q);
+        const aMatch = (l.action || "").toLowerCase().includes(q);
+        const tMatch = (l.target || "").toLowerCase().includes(q);
+        if (!uMatch && !aMatch && !tMatch) return false;
+      }
+      if (!matchesDateRange(l.created_at, dateRange)) return false;
+      return true;
+    });
+  }, [rawItems, search, dateRange]);
+
+  const items = filteredItems;
   const totalPages = Math.ceil((data.total || items.length) / pageSize);
+
+  const isFiltered = Boolean(search || dateRange !== "all");
+  const resetFilters = () => { setSearch(""); setDateRange("all"); };
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -36,6 +69,33 @@ export default function ActivityLog() {
           <p className="text-sm text-slate-500 mt-1">Every action by every team member, tracked.</p>
         </div>
       </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          type="text"
+          placeholder="Filter user, action, target..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-9 px-3 text-xs bg-white border border-slate-200 rounded-lg w-64 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          data-testid="activity-filter-search"
+        />
+        <select
+          value={dateRange}
+          onChange={(e) => setDateRange(e.target.value)}
+          className="h-9 px-3 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="all">All Time</option>
+          <option value="today">Today</option>
+          <option value="7days">Last 7 Days</option>
+          <option value="30days">Last 30 Days</option>
+        </select>
+        {isFiltered && (
+          <Button size="sm" variant="ghost" onClick={resetFilters} className="h-9 px-2 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50">
+            Clear Filters
+          </Button>
+        )}
+      </div>
+
       <Card className="border-slate-200">
         {loading && <div className="px-5 py-8 text-center text-slate-500">Loading activity log…</div>}
         {error && <div className="px-5 py-8 text-center text-sm text-rose-700">Unable to load activity log. {formatApiError(error)}</div>}

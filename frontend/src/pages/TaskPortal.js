@@ -167,13 +167,57 @@ export default function TaskPortal() {
     ];
   }, [tasks, today]);
 
-  const filteredTeamTasks = useMemo(() => {
+  const [taskSearchQuery, setTaskSearchQuery] = useState("");
+  const [filterTaskType, setFilterTaskType] = useState("all");
+  const [filterTaskStatus, setFilterTaskStatus] = useState("all");
+  const [filterTaskEmployee, setFilterTaskEmployee] = useState("all");
+  const [filterTaskDateRange, setFilterTaskDateRange] = useState("all");
+
+  const isTaskFiltered = Boolean(taskSearchQuery || filterTaskType !== "all" || filterTaskStatus !== "all" || filterTaskEmployee !== "all" || filterTaskDateRange !== "all");
+
+  const resetTaskFilters = () => {
+    setTaskSearchQuery("");
+    setFilterTaskType("all");
+    setFilterTaskStatus("all");
+    setFilterTaskEmployee("all");
+    setFilterTaskDateRange("all");
+  };
+
+  const matchesTaskDateRange = (dateStr, range) => {
+    if (!range || range === "all" || !dateStr) return true;
+    const d = dayjs(dateStr);
+    if (!d.isValid()) return true;
+    const now = dayjs();
+    if (range === "today") return d.isSame(now, "day");
+    if (range === "7days") return d.isAfter(now.subtract(7, "day"));
+    if (range === "30days") return d.isAfter(now.subtract(30, "day"));
+    return true;
+  };
+
+  const filteredTasksList = useMemo(() => {
     return tasks.filter((t) => {
+      if (taskSearchQuery) {
+        const q = taskSearchQuery.toLowerCase();
+        const clientMatch = (t.client_name || "").toLowerCase().includes(q);
+        const solMatch = (t.client_id || "").toLowerCase().includes(q);
+        const titleMatch = (t.title || t.task_type || "").toLowerCase().includes(q);
+        if (!clientMatch && !solMatch && !titleMatch) return false;
+      }
+      if (filterTaskType !== "all" && t.task_type !== filterTaskType) return false;
+      if (filterTaskStatus !== "all" && t.status !== filterTaskStatus) return false;
+      if (filterTaskEmployee !== "all" && t.assigned_to !== filterTaskEmployee) return false;
+      if (!matchesTaskDateRange(t.created_at || t.deadline || t.updated_at, filterTaskDateRange)) return false;
+      return true;
+    });
+  }, [tasks, taskSearchQuery, filterTaskType, filterTaskStatus, filterTaskEmployee, filterTaskDateRange]);
+
+  const filteredTeamTasks = useMemo(() => {
+    return filteredTasksList.filter((t) => {
       if (filterEmployee !== "all" && t.assigned_to !== filterEmployee) return false;
       if (filterStatus !== "all" && t.status !== filterStatus) return false;
       return true;
     });
-  }, [tasks, filterEmployee, filterStatus]);
+  }, [filteredTasksList, filterEmployee, filterStatus]);
   if (loading) {
     return (
       <div className="space-y-4 lg:space-y-6">
@@ -275,6 +319,68 @@ export default function TaskPortal() {
         </div>
       )}
 
+      {/* Inline Task Filter Bar */}
+      <Card className="p-3 border-slate-200 bg-slate-50/50">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 items-center">
+          <Input
+            placeholder="Search Task / Client / Sol ID..."
+            value={taskSearchQuery}
+            onChange={(e) => setTaskSearchQuery(e.target.value)}
+            className="h-9 text-xs bg-white"
+            data-testid="task-filter-search"
+          />
+          <Select value={filterTaskType} onValueChange={setFilterTaskType}>
+            <SelectTrigger className="h-9 text-xs bg-white"><SelectValue placeholder="Task Type: All" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Task Types</SelectItem>
+              {TASK_TYPES.map((tt) => (
+                <SelectItem key={tt} value={tt}>{tt}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={filterTaskStatus} onValueChange={setFilterTaskStatus}>
+            <SelectTrigger className="h-9 text-xs bg-white"><SelectValue placeholder="Status: All" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="in_progress">In Progress</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+            </SelectContent>
+          </Select>
+          {isAdmin ? (
+            <Select value={filterTaskEmployee} onValueChange={setFilterTaskEmployee}>
+              <SelectTrigger className="h-9 text-xs bg-white"><SelectValue placeholder="Employee: All" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Employees</SelectItem>
+                {employees.map((emp) => (
+                  <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <div className="h-9 px-3 flex items-center bg-white border rounded text-xs text-slate-500">
+              Assigned to me
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <Select value={filterTaskDateRange} onValueChange={setFilterTaskDateRange}>
+              <SelectTrigger className="h-9 text-xs bg-white flex-1"><SelectValue placeholder="Date Range" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Time</SelectItem>
+                <SelectItem value="today">Today</SelectItem>
+                <SelectItem value="7days">Last 7 Days</SelectItem>
+                <SelectItem value="30days">Last 30 Days</SelectItem>
+              </SelectContent>
+            </Select>
+            {isTaskFiltered && (
+              <Button size="sm" variant="ghost" onClick={resetTaskFilters} className="h-9 px-2 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50" data-testid="clear-task-filters-btn">
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+      </Card>
+
       {/* Team view */}
       {scope === "team" && isAdmin ? (
         <>
@@ -359,7 +465,7 @@ export default function TaskPortal() {
 
           <Tabs value={taskPortalTab} onValueChange={setTaskPortalTab}>
             <TabsList className="bg-slate-100">
-              <TabsTrigger value="tasks" data-testid="tab-my-tasks"><ClipboardList className="w-3.5 h-3.5 mr-1.5" /> My Tasks ({tasks.length})</TabsTrigger>
+              <TabsTrigger value="tasks" data-testid="tab-my-tasks"><ClipboardList className="w-3.5 h-3.5 mr-1.5" /> My Tasks ({filteredTasksList.length})</TabsTrigger>
               <TabsTrigger value="complaints" data-testid="tab-my-complaints"><Megaphone className="w-3.5 h-3.5 mr-1.5" /> Complaints ({complaints.length})</TabsTrigger>
             </TabsList>
             <div style={{ display: taskPortalTab === "tasks" ? "block" : "none" }} className="mt-3">
@@ -367,8 +473,8 @@ export default function TaskPortal() {
                 <Card className="border-slate-200">
                   <div className="p-4 border-b border-slate-200 font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>My Tasks</div>
                   <div className="divide-y divide-slate-100">
-                    {tasks.length === 0 && <div className="p-8 text-center text-slate-500">No tasks assigned yet. Your admin will assign work soon.</div>}
-                    {tasks.map((t) => <TaskRow key={t.id} t={t} onSelect={setSelected} />)}
+                    {filteredTasksList.length === 0 && <div className="p-8 text-center text-slate-500">No tasks match the current filters.</div>}
+                    {filteredTasksList.map((t) => <TaskRow key={t.id} t={t} onSelect={setSelected} />)}
                   </div>
                 </Card>
               )}
