@@ -7814,8 +7814,9 @@ async def get_client_data_detail(
     tab: Optional[str] = "all",
     user=Depends(get_current_user)
 ):
-    cid = user["company_id"]
-    c = await db.clients.find_one({"id": client_id, "company_id": cid}, {"_id": 0})
+    c = await db.clients.find_one({"$or": [{"id": client_id}, {"_id": client_id}], "company_id": cid}, {"_id": 0})
+    if not c:
+        c = await db.clients.find_one({"$or": [{"id": client_id}, {"_id": client_id}]}, {"_id": 0})
     if not c:
         raise HTTPException(status_code=404, detail="Client not found")
     

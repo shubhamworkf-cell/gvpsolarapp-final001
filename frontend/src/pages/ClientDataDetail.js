@@ -238,7 +238,23 @@ export default function ClientDataDetail() {
     );
   }
 
-  if (!data) return null;
+  if (!data) {
+    return (
+      <div className="space-y-4 p-8 text-center">
+        <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900 mx-auto">
+          <ArrowLeft className="w-4 h-4" /> Back to Client Data
+        </button>
+        <Card className="border-slate-200 p-8 max-w-md mx-auto">
+          <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto mb-2" />
+          <div className="text-base font-semibold text-slate-900">Client Details Not Found</div>
+          <div className="text-xs text-slate-500 mt-1">The requested client record could not be loaded. Please return to Client Data and try again.</div>
+          <Button className="mt-4 bg-blue-600 hover:bg-blue-700 text-xs" onClick={() => navigate("/client-data")}>
+            Return to Client Data
+          </Button>
+        </Card>
+      </div>
+    );
+  }
 
   const phone = cleanPhone(c.mobile);
 
