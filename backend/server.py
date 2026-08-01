@@ -4199,10 +4199,10 @@ async def update_material_request(req_id: str, data: MaterialRequestUpdateIn, us
         {"$set": update_fields}
     )
     updated = await db.material_requests.find_one({"id": req_id}, {"_id": 0})
-    await log_activity(user["company_id"], user["id"], user["name"], "Updated Material Request", req.get("client_name", ""))
-    return await _enrich_request_with_stock(updated)
-
-
+    await log_activity(user["company_id"], user["id"], user["name"], "Updated Material Request", req.get("client_name") or "")
+    return await _enrich_request_with_stock(updated or {})
+ 
+ 
 @api_router.post("/material-requests/{req_id}/cancel")
 async def cancel_material_request(req_id: str, user=Depends(get_current_user)):
     req = await db.material_requests.find_one({"id": req_id, "company_id": user["company_id"]})
@@ -4217,7 +4217,7 @@ async def cancel_material_request(req_id: str, user=Depends(get_current_user)):
         {"id": req_id, "company_id": user["company_id"]},
         {"$set": {"status": "Cancelled", "updated_at": now_iso()}}
     )
-    await log_activity(user["company_id"], user["id"], user["name"], "Cancelled Material Request", req.get("client_name", ""))
+    await log_activity(user["company_id"], user["id"], user["name"], "Cancelled Material Request", req.get("client_name") or "")
     return {"status": "success", "message": "Material request cancelled"}
 
 
@@ -4262,7 +4262,7 @@ async def create_retry_material_request(req_id: str, user=Depends(get_current_us
     await db.material_requests.insert_one(retry_doc)
     retry_doc.pop("_id", None)
     await push_notification(user["company_id"], "admin", "Retry Material Request Created", f"{retry_doc.get('client_name')} · {request_no}")
-    await log_activity(user["company_id"], user["id"], user["name"], "Created Retry Material Request", retry_doc.get("client_name", ""))
+    await log_activity(user["company_id"], user["id"], user["name"], "Created Retry Material Request", retry_doc.get("client_name") or "")
     return await _enrich_request_with_stock(retry_doc)
 
 
@@ -7814,6 +7814,7 @@ async def get_client_data_detail(
     tab: Optional[str] = "all",
     user=Depends(get_current_user)
 ):
+    cid = user["company_id"]
     c = await db.clients.find_one({"$or": [{"id": client_id}, {"_id": client_id}], "company_id": cid}, {"_id": 0})
     if not c:
         c = await db.clients.find_one({"$or": [{"id": client_id}, {"_id": client_id}]}, {"_id": 0})
