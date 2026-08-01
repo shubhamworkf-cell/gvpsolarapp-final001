@@ -2551,9 +2551,10 @@ function VerificationForm({ clientId, onDone }) {
   const [uploading, setUploading] = useState("");
 
   const uploadPhoto = async (e, label) => {
-    const file = e.target.files?.[0]; if (!file) return;
+    let file = e.target.files?.[0]; if (!file) return;
     setUploading(label);
     try {
+      file = await compressImageIfNeeded(file);
       const fd = new FormData(); fd.append("file", file); fd.append("category", "verification");
       const { data } = await api.post("/files/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
       setPhotos({ ...photos, [label]: data.id }); toast.success(`${label} uploaded`);
