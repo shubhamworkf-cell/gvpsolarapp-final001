@@ -2246,6 +2246,7 @@ export function MaterialRequest({ clientId, onDone }) {
   const [items, setItems] = useState([{ product: "", size: "", quantity: 1, remarks: "" }]);
   const [remarks, setRemarks] = useState("");
   const [products, setProducts] = useState(() => getCachedProducts() || []);
+  const [submitting, setSubmitting] = useState(false);
 
   // Refs for auto-focus: productRefs[i] → product input of row i
   const productRefs = useRef({});
