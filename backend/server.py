@@ -4110,8 +4110,9 @@ async def _enrich_request_with_stock(req: Dict[str, Any]) -> Dict[str, Any]:
 @api_router.get("/material-requests")
 async def list_material_requests(user=Depends(get_current_user), client_id: Optional[str] = None):
     q = {"company_id": user["company_id"]}
-    if client_id: q["client_id"] = client_id
-    if user["role"] not in ("Admin", "Supervisor"):
+    if client_id:
+        q["client_id"] = client_id
+    elif user["role"] not in ("Admin", "Supervisor"):
         q["requested_by"] = user["id"]
 
     rows = await db.material_requests.find(q, {"_id": 0}).sort("updated_at", -1).to_list(500)
@@ -4153,8 +4154,6 @@ async def get_material_request(req_id: str, user=Depends(get_current_user)):
     )
     if not req:
         raise HTTPException(status_code=404, detail="Material request not found")
-    if user["role"] not in ("Admin", "Supervisor") and req.get("requested_by") != user["id"]:
-        raise HTTPException(status_code=403, detail="Not your request")
     return await _enrich_request_with_stock(req)
 
 

@@ -1049,6 +1049,7 @@ function SurveyWorkflow({ task, canMutate, updateStatus }) {
 }
 
 function InstallationWorkflow({ task, canMutate, updateStatus, clientId, onDone }) {
+  const effectiveClientId = clientId || task?.client_id;
   return (
     <Tabs defaultValue="actions">
       <div className="text-xs font-semibold uppercase tracking-wider text-indigo-600 bg-indigo-50 rounded-lg px-3 py-2 mb-3">Installation Workflow</div>
@@ -1067,8 +1068,8 @@ function InstallationWorkflow({ task, canMutate, updateStatus, clientId, onDone 
           )}
         </ActionBar>
       </TabsContent>
-      <TabsContent value="material"><MaterialRequest clientId={clientId} onDone={onDone} /></TabsContent>
-      <TabsContent value="verify"><VerificationForm clientId={clientId} onDone={onDone} /></TabsContent>
+      <TabsContent value="material"><MaterialRequest clientId={effectiveClientId} onDone={onDone} /></TabsContent>
+      <TabsContent value="verify"><VerificationForm clientId={effectiveClientId} onDone={onDone} /></TabsContent>
     </Tabs>
   );
 }
