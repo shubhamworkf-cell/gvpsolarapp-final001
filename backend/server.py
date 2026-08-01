@@ -3891,26 +3891,47 @@ async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = 
         q["assigned_to"] = user["id"]
     limit = min(limit, 500)
     skip = max(0, skip)
-    projection = {
-        "_id": 0,
-        "id": 1,
-        "client_id": 1,
-        "client_name": 1,
-        "sol_id": 1,
-        "task_type": 1,
-        "assigned_to": 1,
-        "assigned_to_name": 1,
-        "assigned_by": 1,
-        "assigned_by_name": 1,
-        "deadline": 1,
-        "priority": 1,
-        "remarks": 1,
-        "status": 1,
-        "submission": 1,
-        "created_at": 1,
-        "updated_at": 1,
-    }
-    return await db.tasks.find(q, projection).sort("updated_at", -1).skip(skip).to_list(limit)
+
+    tasks = await db.tasks.find(q, {"_id": 0}).sort("updated_at", -1).skip(skip).to_list(limit)
+    if not tasks:
+        return []
+
+    # Batch enrich tasks with linked client details (single DB round-trip for 0 performance overhead)
+    client_ids = list({t["client_id"] for t in tasks if t.get("client_id")})
+    if client_ids:
+        clients_docs = await db.clients.find(
+            {"id": {"$in": client_ids}, "company_id": user["company_id"]},
+            {
+                "_id": 0, "id": 1, "full_name": 1, "sol_id": 1, "mobile": 1, "alt_mobile": 1,
+                "consumer_number": 1, "address": 1, "city": 1, "state": 1, "pincode": 1,
+                "system_kw": 1, "phase_type": 1, "panel_make": 1, "panel_wattage": 1,
+                "num_panels": 1, "inverter_make": 1, "inverter_capacity": 1, "stages": 1
+            }
+        ).to_list(len(client_ids))
+        c_map = {c["id"]: c for c in clients_docs}
+        
+        for t in tasks:
+            cid = t.get("client_id")
+            c = c_map.get(cid)
+            if c:
+                t["client_name"] = t.get("client_name") or c.get("full_name") or "—"
+                t["sol_id"] = t.get("sol_id") or c.get("sol_id") or "—"
+                t["address"] = c.get("address") or ""
+                t["city"] = c.get("city") or ""
+                t["state"] = c.get("state") or ""
+                t["pincode"] = c.get("pincode") or ""
+                t["system_kw"] = c.get("system_kw") or 0
+                t["phase_type"] = c.get("phase_type") or ""
+                t["panel_make"] = c.get("panel_make") or ""
+                t["panel_wattage"] = c.get("panel_wattage") or ""
+                t["num_panels"] = c.get("num_panels") or ""
+                t["inverter_make"] = c.get("inverter_make") or ""
+                t["inverter_capacity"] = c.get("inverter_capacity") or ""
+                t["mobile"] = c.get("mobile") or ""
+                t["consumer_number"] = c.get("consumer_number") or ""
+                t["client_stages"] = c.get("stages") or {}
+
+    return tasks
 
 @api_router.patch("/tasks/{task_id}")
 async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_user)):
@@ -4092,24 +4113,36 @@ async def list_material_requests(user=Depends(get_current_user), client_id: Opti
     if client_id: q["client_id"] = client_id
     if user["role"] not in ("Admin", "Supervisor"):
         q["requested_by"] = user["id"]
-    projection = {
-        "_id": 0,
-        "id": 1,
-        "client_id": 1,
-        "client_name": 1,
-        "sol_id": 1,
-        "requested_by": 1,
-        "requested_by_name": 1,
-        "request_no": 1,
-        "items": 1,
-        "remarks": 1,
-        "status": 1,
-        "approval": 1,
-        "delivery": 1,
-        "created_at": 1,
-        "updated_at": 1,
-    }
-    rows = await db.material_requests.find(q, projection).sort("updated_at", -1).to_list(500)
+
+    rows = await db.material_requests.find(q, {"_id": 0}).sort("updated_at", -1).to_list(500)
+    if not rows:
+        return []
+
+    # Batch enrich with linked client details (single DB round-trip for 0 performance overhead)
+    client_ids = list({r["client_id"] for r in rows if r.get("client_id")})
+    if client_ids:
+        clients_docs = await db.clients.find(
+            {"id": {"$in": client_ids}, "company_id": user["company_id"]},
+            {
+                "_id": 0, "id": 1, "full_name": 1, "sol_id": 1, "mobile": 1, "consumer_number": 1,
+                "address": 1, "city": 1, "state": 1, "pincode": 1, "system_kw": 1, "stages": 1
+            }
+        ).to_list(len(client_ids))
+        c_map = {c["id"]: c for c in clients_docs}
+        for r in rows:
+            cid = r.get("client_id")
+            c = c_map.get(cid)
+            if c:
+                r["client_name"] = r.get("client_name") or c.get("full_name") or "—"
+                r["sol_id"] = r.get("sol_id") or c.get("sol_id") or "—"
+                r["address"] = c.get("address") or ""
+                r["city"] = c.get("city") or ""
+                r["state"] = c.get("state") or ""
+                r["pincode"] = c.get("pincode") or ""
+                r["system_kw"] = c.get("system_kw") or 0
+                r["consumer_number"] = c.get("consumer_number") or ""
+                r["mobile"] = c.get("mobile") or ""
+
     return await _enrich_requests_with_stock_batch(rows, user["company_id"])
 
 

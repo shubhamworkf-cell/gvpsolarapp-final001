@@ -707,7 +707,24 @@ const TaskRow = React.memo(function TaskRow({ t, showAssignee = false, onSelect 
 
 // ─── Task Detail – renders correct workflow based on task_type ────────────────
 function TaskDetail({ task, onClose, onMutate, canMutate = true }) {
-  const { data: client } = useClientDetail(task.client_id);
+  const { data: fetchedClient } = useClientDetail(task.client_id);
+  const client = fetchedClient || {
+    full_name: task.client_name || task.full_name || "—",
+    sol_id: task.sol_id || "—",
+    mobile: task.mobile || "—",
+    address: task.address || "",
+    city: task.city || "",
+    state: task.state || "",
+    pincode: task.pincode || "",
+    system_kw: task.system_kw || 0,
+    phase_type: task.phase_type || "Single Phase",
+    panel_make: task.panel_make || "—",
+    panel_wattage: task.panel_wattage || "",
+    num_panels: task.num_panels || "",
+    inverter_make: task.inverter_make || "—",
+    inverter_capacity: task.inverter_capacity || "",
+    consumer_number: task.consumer_number || "—",
+  };
   const workflow = getWorkflow(task.task_type);
 
   const updateStatus = async (status, payload = {}) => {
