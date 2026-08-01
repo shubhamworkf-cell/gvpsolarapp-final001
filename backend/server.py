@@ -7726,8 +7726,12 @@ async def list_client_data(
     q: Dict[str, Any] = {
         "company_id": cid,
     }
+    INVERTER_STATUSES = {"Online", "Offline", "Error", "Maintenance", "Not Configured"}
     if status and status != "all":
-        q["status"] = status
+        if status in INVERTER_STATUSES:
+            pass # Filtered in memory below based on inv_status
+        else:
+            q["status"] = status
     if search: q["full_name"] = {"$regex": re.escape(search), "$options": "i"}
     if consumer: q["consumer_number"] = {"$regex": re.escape(consumer), "$options": "i"}
     if mobile: q["mobile"] = {"$regex": re.escape(mobile)}
@@ -7776,8 +7780,9 @@ async def list_client_data(
     for c in clients:
         m = monitorings.get(c["id"])
         inv_status = _summarize_inverter_status(m)
-        if status and status != inv_status:
-            continue
+        if status and status != "all" and status in INVERTER_STATUSES:
+            if inv_status != status:
+                continue
         out.append({
             "id": c["id"],
             "client_code": c.get("sol_id"),
