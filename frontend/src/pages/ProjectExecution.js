@@ -774,7 +774,19 @@ function MaterialApprovalForm({ request, onSubmit, canApproval = true, canReject
     finally { setUploading(""); }
   };
 
-  const approve = () => {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleAction = async (actionFn) => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await actionFn();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const approve = async () => {
     if (!d.challan_number.trim()) { toast.error("Challan number is required"); return; }
     if (items.length === 0) { toast.error("At least one material item is required"); return; }
     for (let i = 0; i < items.length; i++) {
@@ -790,24 +802,31 @@ function MaterialApprovalForm({ request, onSubmit, canApproval = true, canReject
 
     const isPartial = formattedItems.some((it) => Number(it.approved_quantity) < Number(it.quantity || 0));
     const status = isPartial ? "partial_approved" : "approved";
-    onSubmit({
-      status,
-      items: formattedItems,
-      challan_number: d.challan_number,
-      vehicle_number: d.vehicle_number,
-      driver_name: d.driver_name,
-      delivery_date: d.delivery_date,
-      remarks: d.remarks,
-      delivery_photo_file_id: deliveryPhoto.id,
-      challan_photo_file_id: challanPhoto.id,
-    });
-    setOpen(false);
+
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        status,
+        items: formattedItems,
+        challan_number: d.challan_number,
+        vehicle_number: d.vehicle_number,
+        driver_name: d.driver_name,
+        delivery_date: d.delivery_date,
+        remarks: d.remarks,
+        delivery_photo_file_id: deliveryPhoto.id,
+        challan_photo_file_id: challanPhoto.id,
+      });
+      setOpen(false);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <div className="flex gap-2">
-      {canReject && <Button size="sm" variant="outline" className="text-red-600" onClick={() => onSubmit({ status: "rejected" })} data-testid={`mr-reject-${request?.id || "x"}`}>Reject</Button>}
-      {canApproval && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setOpen(true)} data-testid={`mr-approve-${request?.id || "x"}`}>Approve</Button>}
+      {canReject && <Button size="sm" variant="outline" className="text-red-600" disabled={submitting} onClick={() => handleAction(() => onSubmit({ status: "rejected" }))} data-testid={`mr-reject-${request?.id || "x"}`}>Reject</Button>}
+      {canApproval && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={submitting} onClick={() => setOpen(true)} data-testid={`mr-approve-${request?.id || "x"}`}>Approve</Button>}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto" data-testid="mr-approve-dialog">
           <DialogHeader>
@@ -1009,8 +1028,8 @@ function MaterialApprovalForm({ request, onSubmit, canApproval = true, canReject
 
           <DialogFooter className="mt-3">
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={approve} data-testid="mr-approve-submit">
-              <ClipboardCheck className="w-4 h-4 mr-1" /> Approve &amp; Auto-Outward
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={approve} disabled={submitting} data-testid="mr-approve-submit">
+              <ClipboardCheck className="w-4 h-4 mr-1" /> {submitting ? "Approving…" : "Approve & Auto-Outward"}
             </Button>
           </DialogFooter>
         </DialogContent>
