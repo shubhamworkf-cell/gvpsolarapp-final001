@@ -27,7 +27,7 @@ import dayjs from "dayjs";
 import { ProductAutocompleteInput } from "@/components/Inventory/_shared";
 import { useDebounce } from "@/hooks/useDebounce";
 
-const VERIF_PHOTOS = ["Site Photo", "Client With Solar", "Panel Photo", "Inverter Photo", "ACDB Photo", "DCDB Photo", "Net Meter Photo", "Serial Number Photo"];
+const VERIF_PHOTOS = ["Site Photo", "Client With Solar", "Inverter Photo"];
 const SURVEY_PHOTOS = ["Client Photo", "Roof Photo", "Panel Layout", "Meter Location", "Site Access"];
 const SURVEY_CHECKLIST = [
   "Site access is safe",
@@ -45,7 +45,7 @@ const TASK_TYPE_WORKFLOWS = {
   "Material Delivery": "material_dispatch",
   "Document Making": "document_making",
   "Document Signed": "document_signed",
-  "PM Surya Ghar Upload": "document_making",
+  "PM Surya Ghar Upload": "pm_surya_ghar",
   "MSEDCL Upload": "document_making",
   "Meter Testing Request": "meter_testing",
   "Meter Testing Completed": "meter_testing",
@@ -922,6 +922,7 @@ function TaskDetail({ task, onClose, onMutate, canMutate = true }) {
                   {workflow === "survey" && <SurveyWorkflow task={task} canMutate={activeCanMutate} updateStatus={updateStatus} />}
                   {workflow === "installation" && <InstallationWorkflow task={task} canMutate={activeCanMutate} updateStatus={updateStatus} clientId={task.client_id} onDone={onClose} />}
                   {workflow === "document_making" && <DocumentMakingWorkflow task={task} canMutate={activeCanMutate} updateStatus={updateStatus} />}
+                  {workflow === "pm_surya_ghar" && <PMSuryaGharWorkflow task={task} canMutate={activeCanMutate} updateStatus={updateStatus} />}
                   {workflow === "document_signed" && <DocumentSignedWorkflow task={task} canMutate={activeCanMutate} updateStatus={updateStatus} onDone={onClose} />}
                   {workflow === "meter_testing" && <MeterTestingWorkflow task={task} canMutate={activeCanMutate} updateStatus={updateStatus} onDone={onClose} />}
                   {workflow === "material_dispatch" && <MaterialDispatchWorkflow task={task} canMutate={activeCanMutate} updateStatus={updateStatus} />}
@@ -1283,9 +1284,6 @@ function DocumentMakingWorkflow({ task, canMutate, updateStatus }) {
         <Button variant="outline" size="sm" onClick={() => pmRef.current?.click()} disabled={uploading === "pm_surya_ghar"} data-testid="upload-pm-surya-ghar">
           PM Surya Ghar Upload
         </Button>
-        <Button variant="outline" size="sm" onClick={() => msedclRef.current?.click()} disabled={uploading === "msedcl"} data-testid="upload-msedcl">
-          MSEDCL Upload
-        </Button>
         {canMutate && task.status !== "in_progress" && task.status !== "completed" && (
           <Button onClick={() => updateStatus("in_progress")} className="bg-blue-600 hover:bg-blue-700" data-testid="start-task">Start Documents</Button>
         )}
@@ -1295,7 +1293,6 @@ function DocumentMakingWorkflow({ task, canMutate, updateStatus }) {
       </ActionBar>
       <input ref={signedRef} type="file" className="hidden" onChange={(e) => uploadFile(e.target.files?.[0], "signed_copy")} />
       <input ref={pmRef} type="file" className="hidden" onChange={(e) => uploadFile(e.target.files?.[0], "pm_surya_ghar")} />
-      <input ref={msedclRef} type="file" className="hidden" onChange={(e) => uploadFile(e.target.files?.[0], "msedcl")} />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs text-slate-500">
         {Object.entries(uploadedFiles).map(([key, name]) => (
           <div key={key} className="truncate"><span className="font-medium capitalize">{key.replace(/_/g, " ")}:</span> {name}</div>
@@ -1305,37 +1302,87 @@ function DocumentMakingWorkflow({ task, canMutate, updateStatus }) {
   );
 }
 
+function PMSuryaGharWorkflow({ task, canMutate, updateStatus }) {
+  const [fileId, setFileId] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("category", "pm-surya-ghar");
+      const { data } = await api.post("/files/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setFileId(data.id);
+      setFileName(data.original_filename || file.name);
+      await api.patch(`/clients/${task.client_id}/stages`, {
+        stages: { "PM Surya Ghar Upload": true }
+      });
+      toast.success("PM Surya Ghar document uploaded & saved to Client Data");
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setUploading(false); }
+  };
+
+  const submit = async () => {
+    if (!fileId) { toast.error("Please upload PM Surya Ghar document first"); return; }
+    await updateStatus("completed", {
+      submission: { file_id: fileId, filename: fileName, submitted_at: dayjs().toISOString() }
+    });
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="text-xs font-semibold uppercase tracking-wider text-blue-600 bg-blue-50 rounded-lg px-3 py-2">
+        PM Surya Ghar Upload Workflow
+      </div>
+      <Card className="border-slate-200">
+        <CardContent className="p-4 space-y-3">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Upload PM Surya Ghar Document</div>
+            {fileId ? (
+              <div className="flex items-center justify-between p-2 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg">
+                <span className="truncate">{fileName}</span>
+                <span className="font-semibold text-emerald-600">✓ Uploaded &amp; Linked</span>
+              </div>
+            ) : (
+              <label className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center block cursor-pointer hover:border-blue-400 bg-white">
+                <Upload className="w-5 h-5 mx-auto text-slate-400 mb-1" />
+                <div className="text-xs font-medium text-slate-700">Click to upload PM Surya Ghar Document</div>
+                <input type="file" accept="image/*,.pdf" className="hidden" onChange={handleUpload} disabled={uploading} />
+              </label>
+            )}
+            {uploading && <div className="text-xs text-blue-600 mt-1">Uploading document…</div>}
+          </div>
+        </CardContent>
+      </Card>
+      <ActionBar>
+        {canMutate && (
+          <Button onClick={submit} className="bg-emerald-600 hover:bg-emerald-700" data-testid="complete-task">Complete PM Surya Ghar Task</Button>
+        )}
+      </ActionBar>
+    </div>
+  );
+}
+
 function MeterTestingWorkflow({ task, canMutate, updateStatus, onDone }) {
   const CHECKLIST_ITEMS = [
-    "Meter Testing Request Received",
-    "Meter Installed",
-    "Meter Reading Verified",
-    "Meter Testing Completed",
-    "MSEDCL Meter Testing Submitted",
-    "Meter Approved",
-    "Final Notes Added"
-  ];
-
-  const ATTACHMENT_FIELDS = [
-    "Meter Photo",
-    "Meter Serial Number Photo",
-    "Meter Testing Report",
-    "Other Files"
+    "Meter Tested Successfully",
+    "Ready for Installation"
   ];
 
   const [checklist, setChecklist] = useState(
     CHECKLIST_ITEMS.map((label) => ({ label, checked: false }))
   );
   const [notes, setNotes] = useState("");
-  const [attachments, setAttachments] = useState({});
-  const [uploading, setUploading] = useState("");
 
   useEffect(() => {
     if (task && task.submission) {
       const sub = task.submission;
       if (sub.checklist) setChecklist(sub.checklist);
       if (sub.notes) setNotes(sub.notes);
-      if (sub.attachments) setAttachments(sub.attachments);
     }
   }, [task]);
 
@@ -1346,48 +1393,11 @@ function MeterTestingWorkflow({ task, canMutate, updateStatus, onDone }) {
     );
   };
 
-  const uploadAttachment = async (e, label) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(label);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("category", "project-images");
-      const { data } = await api.post("/files/upload", fd, {
-        headers: { "Content-Type": "multipart/form-data" }
-      });
-      setAttachments((prev) => ({
-        ...prev,
-        [label]: data.id
-      }));
-      toast.success(`${label} uploaded`);
-    } catch (err) {
-      toast.error(formatApiError(err));
-    } finally {
-      setUploading("");
-      e.target.value = "";
-    }
-  };
-
-  const deleteAttachment = (label) => {
-    setAttachments((prev) => {
-      const copy = { ...prev };
-      delete copy[label];
-      return copy;
-    });
-  };
-
   const submitReport = async () => {
-    if (!notes.trim()) {
-      toast.error("Notes are required for submission");
-      return;
-    }
     await updateStatus("completed", {
       submission: {
         checklist,
         notes,
-        attachments,
         submitted_at: dayjs().toISOString()
       }
     });
@@ -1400,100 +1410,44 @@ function MeterTestingWorkflow({ task, canMutate, updateStatus, onDone }) {
       </div>
       <Card className="border-slate-200">
         <CardContent className="p-4 space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Checklist</div>
-              <div className="space-y-2">
-                {checklist.map((item, idx) => (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() => toggleChecklist(idx)}
-                    disabled={!canMutate}
-                    className={`w-full text-left rounded-lg border px-3 py-2 ${item.checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"}`}
-                  >
-                    <div className="flex items-center justify-between text-sm">
-                      <span>{item.label}</span>
-                      <span className={`text-xs font-semibold ${item.checked ? "text-emerald-700" : "text-slate-400"}`}>
-                        {item.checked ? "Done" : "Pending"}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
-                  Notes <span className="text-red-500">*</span>
-                </div>
-                <Textarea
-                  placeholder="Enter detailed notes (required)..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Checklist</div>
+            <div className="space-y-2">
+              {checklist.map((item, idx) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => toggleChecklist(idx)}
                   disabled={!canMutate}
-                  rows={4}
-                  className="text-sm"
-                />
-              </div>
-
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Attachments</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {ATTACHMENT_FIELDS.map((label) => {
-                    const fileId = attachments[label];
-                    return (
-                      <div key={label} className="border border-slate-200 rounded-lg p-2 bg-white flex flex-col justify-between space-y-2 text-xs">
-                        <div className="font-semibold text-slate-700">{label}</div>
-                        {fileId ? (
-                          <div className="flex items-center justify-between bg-slate-50 border rounded px-2 py-1">
-                            <span className="text-[10px] text-slate-500 truncate">Uploaded</span>
-                            {canMutate && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="w-5 h-5 text-red-500 hover:text-red-700"
-                                onClick={() => deleteAttachment(label)}
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </Button>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="relative">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="w-full text-[10px] py-1 h-7 bg-white"
-                              disabled={!canMutate || uploading === label}
-                              onClick={() => document.getElementById(`upload-meter-${label}`).click()}
-                            >
-                              <Upload className="w-3 h-3 mr-1" /> {uploading === label ? "Uploading..." : "Upload"}
-                            </Button>
-                            <input
-                              id={`upload-meter-${label}`}
-                              type="file"
-                              className="hidden"
-                              onChange={(e) => uploadAttachment(e, label)}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                  className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${item.checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"}`}
+                >
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium text-slate-800">{item.label}</span>
+                    <span className={`text-xs font-semibold ${item.checked ? "text-emerald-700" : "text-slate-400"}`}>
+                      {item.checked ? "✓ Done" : "☐ Pending"}
+                    </span>
+                  </div>
+                </button>
+              ))}
             </div>
+          </div>
+
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
+              Notes <span className="text-slate-400 font-normal">(optional)</span>
+            </div>
+            <Textarea
+              placeholder="Enter optional notes..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              disabled={!canMutate}
+              rows={3}
+              className="text-xs"
+            />
           </div>
         </CardContent>
       </Card>
       <ActionBar>
-        <Button variant="outline" size="sm">
-          <Eye className="w-4 h-4 mr-1.5" /> View Client
-        </Button>
         {canMutate && task.status !== "in_progress" && task.status !== "completed" && (
           <Button onClick={() => updateStatus("in_progress")} className="bg-blue-600 hover:bg-blue-700" data-testid="start-task">
             Start Meter Testing
@@ -1510,79 +1464,41 @@ function MeterTestingWorkflow({ task, canMutate, updateStatus, onDone }) {
 }
 
 function DocumentSignedWorkflow({ task, canMutate, updateStatus, onDone }) {
-  const CHECKLIST_ITEMS = [
-    "WCR Signed",
-    "Annexure Signed",
-    "SLDR Signed",
-    "Net Meter Agreement Signed",
-    "Meter Testing Request Signed",
-    "Vendor Agreement Signed",
-    "Other Documents Signed",
-  ];
-
-  const [checklist, setChecklist] = useState(
-    CHECKLIST_ITEMS.map((label) => ({ label, checked: false, file_id: "", filename: "" }))
-  );
+  const [photoId, setPhotoId] = useState("");
+  const [photoName, setPhotoName] = useState("");
   const [notes, setNotes] = useState("");
-  const [uploadingIndex, setUploadingIndex] = useState(null);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     if (task && task.submission) {
       const sub = task.submission;
-      if (sub.checklist) setChecklist(sub.checklist);
+      if (sub.photo_id) setPhotoId(sub.photo_id);
+      if (sub.photo_name) setPhotoName(sub.photo_name);
       if (sub.notes) setNotes(sub.notes);
     }
   }, [task]);
 
-  const toggleChecklist = (index) => {
-    if (!canMutate) return;
-    setChecklist((prev) =>
-      prev.map((item, idx) => (idx === index ? { ...item, checked: !item.checked } : item))
-    );
-  };
-
-  const uploadDoc = async (e, index) => {
+  const uploadPhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploadingIndex(index);
+    setUploading(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("category", "customer-documents");
-      const { data } = await api.post("/files/upload", fd, {
-        headers: { "Content-Type": "multipart/form-data" }
-      });
-
-      setChecklist((prev) =>
-        prev.map((item, idx) =>
-          idx === index
-            ? { ...item, file_id: data.id, filename: data.original_filename || file.name }
-            : item
-        )
-      );
-      toast.success(`${checklist[index].label} uploaded`);
-    } catch (err) {
-      toast.error(formatApiError(err));
-    } finally {
-      setUploadingIndex(null);
-      e.target.value = "";
-    }
-  };
-
-  const deleteDoc = (index) => {
-    setChecklist((prev) =>
-      prev.map((item, idx) =>
-        idx === index
-          ? { ...item, file_id: "", filename: "" }
-          : item
-      )
-    );
+      fd.append("category", "signed-documents");
+      const { data } = await api.post("/files/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setPhotoId(data.id);
+      setPhotoName(data.original_filename || file.name);
+      toast.success("Signed document photo uploaded");
+    } catch (err) { toast.error(formatApiError(err)); }
+    finally { setUploading(false); e.target.value = ""; }
   };
 
   const submitDocumentSigned = async () => {
     await updateStatus("completed", {
       submission: {
-        checklist,
+        photo_id: photoId,
+        photo_name: photoName,
         notes,
         submitted_at: dayjs().toISOString()
       }
@@ -1597,107 +1513,39 @@ function DocumentSignedWorkflow({ task, canMutate, updateStatus, onDone }) {
       <Card className="border-slate-200">
         <CardContent className="p-4 space-y-4">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Checklist & Document Uploads</div>
-            <div className="space-y-3">
-              {checklist.map((item, idx) => (
-                <div
-                  key={item.label}
-                  className={`flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-lg border ${item.checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"
-                    }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => toggleChecklist(idx)}
-                      disabled={!canMutate}
-                      className={`px-3 py-1 rounded text-xs font-semibold border ${item.checked ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white text-slate-600"
-                        }`}
-                    >
-                      {item.checked ? "✓ Checked" : "☐ Pending"}
-                    </button>
-                    <span className="text-sm font-medium">{item.label}</span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {item.file_id ? (
-                      <div className="flex items-center gap-2 bg-white border border-slate-200 rounded px-2 py-1 text-xs">
-                        <span className="text-[10px] text-slate-500 max-w-[150px] truncate">{item.filename}</span>
-                        {canMutate && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="w-4 h-4 text-red-500 hover:text-red-700"
-                            onClick={() => deleteDoc(idx)}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="relative">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="text-[10px] py-1 h-7 bg-white"
-                          disabled={!canMutate || uploadingIndex === idx}
-                          onClick={() => document.getElementById(`upload-signed-doc-${idx}`).click()}
-                        >
-                          <Upload className="w-3 h-3 mr-1" /> {uploadingIndex === idx ? "Uploading..." : "Upload File"}
-                        </Button>
-                        <input
-                          id={`upload-signed-doc-${idx}`}
-                          type="file"
-                          className="hidden"
-                          onChange={(e) => uploadDoc(e, idx)}
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Optional Signed Photo Upload (1 Photo Max)</div>
+            {photoId ? (
+              <div className="flex items-center justify-between p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg">
+                <span className="truncate font-medium">{photoName}</span>
+                <Button type="button" variant="ghost" size="sm" onClick={() => { setPhotoId(""); setPhotoName(""); }} className="h-6 text-red-600">Remove</Button>
+              </div>
+            ) : (
+              <label className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center block cursor-pointer hover:border-blue-400 bg-white">
+                <Camera className="w-5 h-5 mx-auto text-slate-400 mb-1" />
+                <div className="text-xs font-medium text-slate-700">Upload Optional Signed Document Photo</div>
+                <input type="file" accept="image/*,.pdf" className="hidden" onChange={uploadPhoto} disabled={uploading} />
+              </label>
+            )}
+            {uploading && <div className="text-xs text-blue-600 mt-1">Uploading photo…</div>}
           </div>
 
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Remarks / Notes</div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Remarks / Notes</div>
             <Textarea
               placeholder="Add optional notes..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               disabled={!canMutate}
               rows={3}
-              className="text-sm"
+              className="text-xs"
             />
-          </div>
-
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Optional Photo Upload (1 Photo Max)</div>
-            <label className={`border border-dashed rounded-lg p-3 flex items-center justify-between cursor-pointer transition-colors ${optionalPhotoId ? "border-emerald-300 bg-emerald-50/50" : "border-slate-200 hover:border-blue-300 bg-white"}`}>
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-700">
-                <Camera className="w-4 h-4 text-slate-400" />
-                <span>{optionalPhotoId ? "Photo Uploaded" : "Upload Optional Signed Document Photo"}</span>
-              </div>
-              <span className="text-[10px] text-slate-500 font-medium">{optionalPhotoId ? "✓ Attached" : "Optional"}</span>
-              <input type="file" accept="image/*" className="hidden" onChange={uploadOptionalPhoto} disabled={uploadingPhoto} />
-            </label>
-            {uploadingPhoto && <div className="text-[10px] text-blue-600 mt-1">Uploading photo…</div>}
           </div>
         </CardContent>
       </Card>
       <ActionBar>
-        <Button variant="outline" size="sm">
-          <Eye className="w-4 h-4 mr-1.5" /> Open Client
-        </Button>
-        {canMutate && task.status !== "in_progress" && task.status !== "completed" && (
-          <Button onClick={() => updateStatus("in_progress")} className="bg-blue-600 hover:bg-blue-700" data-testid="start-task">
-            Start Task
-          </Button>
-        )}
-        {canMutate && task.status === "in_progress" && (
+        {canMutate && (
           <Button onClick={submitDocumentSigned} className="bg-emerald-600 hover:bg-emerald-700" data-testid="complete-task">
-            Upload Signed Documents
+            Submit Signed Document
           </Button>
         )}
       </ActionBar>
@@ -2340,14 +2188,127 @@ function VerificationWorkflow({ task, canMutate, updateStatus, clientId, onDone 
 }
 
 function HandoverWorkflow({ task, canMutate, updateStatus }) {
+  const [photoId, setPhotoId] = useState("");
+  const [photoName, setPhotoName] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const [installerConfirmed, setInstallerConfirmed] = useState(false);
+  const [ownerName, setOwnerName] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const handleUpload = async (e) => {
+    let file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      file = await compressImageIfNeeded(file);
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("category", "handover");
+      const { data } = await api.post("/files/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setPhotoId(data.id);
+      setPhotoName(data.original_filename || file.name);
+      toast.success("Handover photo uploaded");
+    } catch (err) { toast.error(formatApiError(err)); }
+    finally { setUploading(false); }
+  };
+
+  const completeHandover = async () => {
+    if (!confirmed) {
+      toast.error("Owner declaration confirmation is required");
+      return;
+    }
+    if (!installerConfirmed) {
+      toast.error("Installer confirmation is required");
+      return;
+    }
+    await updateStatus("completed", {
+      submission: {
+        handover_photo_id: photoId,
+        declaration_confirmed: true,
+        installer_confirmed: true,
+        owner_name: ownerName,
+        handover_date: dayjs().toISOString(),
+        notes,
+      }
+    });
+    try {
+      await api.patch(`/clients/${task.client_id}/stages`, {
+        stages: { Handover: true },
+        handover_data: {
+          handover_photo_id: photoId,
+          declaration: "I confirm that I have received the complete solar system and verified the installation. After successful handover, future operation and maintenance responsibilities are as per the agreed terms.",
+          handover_date: dayjs().format("YYYY-MM-DD"),
+          owner_name: ownerName,
+        }
+      });
+      toast.success("Handover record saved to Client Data");
+    } catch (e) { console.error("Error auto-saving handover to Client Data:", e); }
+  };
+
   return (
     <div className="space-y-3">
-      <div className="text-xs font-semibold uppercase tracking-wider text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2">Handover Workflow</div>
+      <div className="text-xs font-semibold uppercase tracking-wider text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2">
+        Handover Workflow
+      </div>
+      <Card className="border-slate-200">
+        <CardContent className="p-4 space-y-4">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
+              Handover Photo <span className="text-slate-400 font-normal">(Optional Owner + Installer Photo)</span>
+            </div>
+            <div className="mt-1">
+              {photoId ? (
+                <div className="flex items-center justify-between p-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs">
+                  <span className="truncate">{photoName}</span>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => { setPhotoId(""); setPhotoName(""); }} className="h-6 text-red-600">Remove</Button>
+                </div>
+              ) : (
+                <label className="border border-dashed rounded-lg p-3 flex items-center justify-between cursor-pointer hover:border-blue-400 bg-white">
+                  <div className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                    <Camera className="w-4 h-4 text-slate-400" />
+                    <span>Upload Handover Photo</span>
+                  </div>
+                  <input type="file" accept="image/*" className="hidden" onChange={handleUpload} disabled={uploading} />
+                </label>
+              )}
+              {uploading && <div className="text-xs text-blue-600 mt-1">Uploading photo…</div>}
+            </div>
+          </div>
+
+          <div className="space-y-3 border-t border-slate-100 pt-3">
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Confirmations &amp; Declaration</div>
+            <div className="p-3 bg-amber-50/50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-2">
+              <p className="font-medium">
+                "I confirm that I have received the complete solar system and verified the installation. After successful handover, future operation and maintenance responsibilities are as per the agreed terms."
+              </p>
+              <label className="flex items-start gap-2 cursor-pointer font-semibold text-slate-900 pt-1">
+                <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="mt-0.5 rounded text-emerald-600" />
+                <span>Owner Confirmation Checkbox *</span>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-medium text-slate-600">Solar System Owner Name</Label>
+                <Input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} placeholder="Full name of owner" className="h-8 text-xs mt-1" />
+              </div>
+              <div className="flex items-center pt-5">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-900">
+                  <input type="checkbox" checked={installerConfirmed} onChange={(e) => setInstallerConfirmed(e.target.checked)} className="rounded text-emerald-600" />
+                  <span>Installer Confirmation Checkbox *</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <Textarea placeholder="Additional handover notes (optional)" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className="text-xs" />
+        </CardContent>
+      </Card>
       <ActionBar>
         <Button variant="outline" size="sm"><FileText className="w-4 h-4 mr-1.5" /> Review Documents</Button>
-        <Button variant="outline" size="sm"><Eye className="w-4 h-4 mr-1.5" /> Review Assets</Button>
         {canMutate && (
-          <Button onClick={() => updateStatus("completed")} className="bg-emerald-600 hover:bg-emerald-700" data-testid="complete-task">Mark Handover Complete</Button>
+          <Button onClick={completeHandover} className="bg-emerald-600 hover:bg-emerald-700" data-testid="complete-task">Complete Handover</Button>
         )}
       </ActionBar>
     </div>
