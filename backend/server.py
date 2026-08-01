@@ -31,6 +31,7 @@ import httpx
 from supabase import create_client as supabase_create_client, Client, ClientOptions
 
 import contextvars
+from bson import ObjectId
 
 # ─── In-process auth token cache ─────────────────────────────────────────────
 # Caches (user_id → user_profile) keyed by bearer token.
@@ -7743,7 +7744,7 @@ async def list_client_data(
 
     # Lean projection — only fields needed for the client data list view
     list_projection = {
-        "_id": 0, "id": 1, "sol_id": 1, "full_name": 1, "consumer_number": 1,
+        "_id": 1, "id": 1, "sol_id": 1, "full_name": 1, "consumer_number": 1,
         "mobile": 1, "alt_mobile": 1, "city": 1, "state": 1,
         "updated_at": 1, "system_kw": 1, "panel_make": 1, "inverter_make": 1,
         "inverter_capacity": 1, "stages": 1, "status": 1,
@@ -7751,6 +7752,11 @@ async def list_client_data(
     logger.info(f"[DIAG] list_client_data: company_id={cid!r}, query={q!r}")
     clients = await db.clients.find(q, list_projection).sort("updated_at", -1).to_list(500)
     logger.info(f"[DIAG] list_client_data: raw DB returned {len(clients)} clients")
+
+    # Standardize string ID for every client document (prefers id, falls back to _id)
+    for c in clients:
+        c["id"] = str(c.get("id") or c.get("_id") or "")
+
     if stage and stage != "all":
         clients = [c for c in clients if _client_current_stage(c) == stage]
 
@@ -7758,7 +7764,7 @@ async def list_client_data(
         return []
 
     # Fire monitoring, tickets aggregation, and tasks lookup in parallel
-    ids = [c["id"] for c in clients]
+    ids = [c["id"] for c in clients if c.get("id")]
     tickets_pipeline = [
         {"$match": {"company_id": cid, "client_id": {"$in": ids}, "status": {"$nin": ["Closed", "Resolved"]}}},
         {"$group": {"_id": "$client_id", "n": {"$sum": 1}}}
@@ -7815,13 +7821,19 @@ async def get_client_data_detail(
     user=Depends(get_current_user)
 ):
     cid = user["company_id"]
-    c = await db.clients.find_one({"$or": [{"id": client_id}, {"_id": client_id}], "company_id": cid}, {"_id": 0})
+    or_conds = [{"id": client_id}, {"_id": client_id}]
+    if ObjectId.is_valid(client_id):
+        or_conds.append({"_id": ObjectId(client_id)})
+
+    c = await db.clients.find_one({"$or": or_conds, "company_id": cid})
     if not c:
-        c = await db.clients.find_one({"$or": [{"id": client_id}, {"_id": client_id}]}, {"_id": 0})
+        c = await db.clients.find_one({"$or": or_conds})
     if not c:
         raise HTTPException(status_code=404, detail="Client not found")
-    
-    # Enrich client record with client_code matching sol_id
+
+    # Standardize string ID and client_code for frontend
+    c["id"] = str(c.get("id") or c.get("_id") or client_id)
+    c.pop("_id", None)
     c["client_code"] = c.get("sol_id")
         
     q = {"company_id": cid, "client_id": client_id}
