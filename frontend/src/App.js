@@ -82,12 +82,25 @@ function AccessDenied() {
 }
 
 function PermissionRoute({ page, children }) {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+  if (loading) return null;
   const isAdmin = user?.role === "Admin";
-  const hasPerm = isAdmin || (user?.permissions?.[page]?.view === true);
-  
+  const hasPerm = isAdmin || page === "complaints" || (user?.permissions?.[page]?.view === true);
+
   if (!hasPerm) {
-    return <AccessDenied />;
+    const pages = [
+      { key: "dashboard", path: "/dashboard" },
+      { key: "clients", path: "/clients" },
+      { key: "project_execution", path: "/projects" },
+      { key: "task_portal", path: "/tasks" },
+      { key: "data_management", path: "/inventory" },
+      { key: "client_data", path: "/client-data" },
+      { key: "reports", path: "/reports" },
+      { key: "sales_documents", path: "/sales-documents" },
+      { key: "complaints", path: "/complaints" },
+    ];
+    const allowed = pages.find((p) => p.key === "complaints" || isAdmin || (user?.permissions?.[p.key]?.view === true));
+    return <Navigate to={allowed ? allowed.path : "/login"} replace />;
   }
   return children;
 }
@@ -144,27 +157,27 @@ function App() {
             <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
             <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
             <Route path="/forgot-password" element={<PublicOnly><ForgotPassword /></PublicOnly>} />
-            <Route path="/dashboard" element={<Protected><MainTabShell activeTab="dashboard" /></Protected>} />
-            <Route path="/clients" element={<Protected><MainTabShell activeTab="clients" /></Protected>} />
-            <Route path="/clients/new" element={<Protected><ClientNew /></Protected>} />
-            <Route path="/clients/:id" element={<Protected><ClientDetail /></Protected>} />
-            <Route path="/team" element={<Protected><Team /></Protected>} />
-            <Route path="/profile" element={<Protected><Profile /></Protected>} />
+            <Route path="/dashboard" element={<Protected><PermissionRoute page="dashboard"><MainTabShell activeTab="dashboard" /></PermissionRoute></Protected>} />
+            <Route path="/clients" element={<Protected><PermissionRoute page="clients"><MainTabShell activeTab="clients" /></PermissionRoute></Protected>} />
+            <Route path="/clients/new" element={<Protected><PermissionRoute page="clients"><ClientNew /></PermissionRoute></Protected>} />
+            <Route path="/clients/:id" element={<Protected><PermissionRoute page="clients"><ClientDetail /></PermissionRoute></Protected>} />
+            <Route path="/team" element={<Protected><PermissionRoute page="team"><Team /></PermissionRoute></Protected>} />
+            <Route path="/profile" element={<Protected><PermissionRoute page="settings"><Profile /></PermissionRoute></Protected>} />
             <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
-            <Route path="/activity" element={<Protected><ActivityLog /></Protected>} />
-            <Route path="/projects" element={<Protected><MainTabShell activeTab="projects" /></Protected>} />
-            <Route path="/tasks" element={<Protected><MainTabShell activeTab="tasks" /></Protected>} />
-            <Route path="/inventory" element={<Protected><MainTabShell activeTab="inventory" /></Protected>} />
-            <Route path="/templates" element={<Protected><DocumentTemplates /></Protected>} />
+            <Route path="/activity" element={<Protected><PermissionRoute page="settings"><ActivityLog /></PermissionRoute></Protected>} />
+            <Route path="/projects" element={<Protected><PermissionRoute page="project_execution"><MainTabShell activeTab="projects" /></PermissionRoute></Protected>} />
+            <Route path="/tasks" element={<Protected><PermissionRoute page="task_portal"><MainTabShell activeTab="tasks" /></PermissionRoute></Protected>} />
+            <Route path="/inventory" element={<Protected><PermissionRoute page="data_management"><MainTabShell activeTab="inventory" /></PermissionRoute></Protected>} />
+            <Route path="/templates" element={<Protected><PermissionRoute page="documents"><DocumentTemplates /></PermissionRoute></Protected>} />
             <Route path="/quotation" element={<Protected><PermissionRoute page="sales_documents"><Quotation /></PermissionRoute></Protected>} />
             <Route path="/tax-invoice" element={<Protected><PermissionRoute page="sales_documents"><TaxInvoice /></PermissionRoute></Protected>} />
             <Route path="/delivery-bill" element={<Protected><PermissionRoute page="sales_documents"><DeliveryBill /></PermissionRoute></Protected>} />
             <Route path="/sales-documents" element={<Protected><PermissionRoute page="sales_documents"><SalesDocuments /></PermissionRoute></Protected>} />
             <Route path="/reports" element={<Protected><PermissionRoute page="reports"><MainTabShell activeTab="reports" /></PermissionRoute></Protected>} />
-            <Route path="/client-data" element={<Protected><MainTabShell activeTab="client-data" /></Protected>} />
-            <Route path="/client-data/:id" element={<Protected><ClientDataDetail /></Protected>} />
-            <Route path="/complaints" element={<Protected><Complaints /></Protected>} />
-            <Route path="/complaints/:id" element={<Protected><ComplaintDetail /></Protected>} />
+            <Route path="/client-data" element={<Protected><PermissionRoute page="client_data"><MainTabShell activeTab="client-data" /></PermissionRoute></Protected>} />
+            <Route path="/client-data/:id" element={<Protected><PermissionRoute page="client_data"><ClientDataDetail /></PermissionRoute></Protected>} />
+            <Route path="/complaints" element={<Protected><PermissionRoute page="complaints"><Complaints /></PermissionRoute></Protected>} />
+            <Route path="/complaints/:id" element={<Protected><PermissionRoute page="complaints"><ComplaintDetail /></PermissionRoute></Protected>} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </Suspense>

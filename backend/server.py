@@ -4157,6 +4157,115 @@ async def get_material_request(req_id: str, user=Depends(get_current_user)):
     return await _enrich_request_with_stock(req)
 
 
+class MaterialRequestUpdateIn(BaseModel):
+    items: Optional[List[Dict[str, Any]]] = None
+    remarks: Optional[str] = None
+
+
+@api_router.put("/material-requests/{req_id}")
+async def update_material_request(req_id: str, data: MaterialRequestUpdateIn, user=Depends(get_current_user)):
+    req = await db.material_requests.find_one({"id": req_id, "company_id": user["company_id"]})
+    if not req:
+        raise HTTPException(status_code=404, detail="Material request not found")
+    if user["role"] not in ("Admin", "Supervisor") and req.get("requested_by") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your request")
+    if (req.get("status") or "").lower() not in ("draft", "pending"):
+        raise HTTPException(status_code=400, detail="Cannot edit request after approval or completion")
+
+    update_fields: Dict[str, Any] = {"updated_at": now_iso()}
+    if data.remarks is not None:
+        update_fields["remarks"] = data.remarks
+
+    if data.items is not None:
+        normalized_items = []
+        for item in data.items:
+            product = (item.get("product") or "").strip().upper()
+            size = (item.get("size") or "").strip()
+            quantity = float(item.get("quantity") or 0)
+            if not product or quantity <= 0:
+                continue
+            normalized_items.append({
+                "product": product,
+                "size": size,
+                "quantity": quantity,
+                "remarks": item.get("remarks") or "",
+            })
+        if not normalized_items:
+            raise HTTPException(status_code=400, detail="At least one valid material item is required")
+        update_fields["items"] = normalized_items
+
+    await db.material_requests.update_one(
+        {"id": req_id, "company_id": user["company_id"]},
+        {"$set": update_fields}
+    )
+    updated = await db.material_requests.find_one({"id": req_id}, {"_id": 0})
+    await log_activity(user["company_id"], user["id"], user["name"], "Updated Material Request", req.get("client_name", ""))
+    return await _enrich_request_with_stock(updated)
+
+
+@api_router.post("/material-requests/{req_id}/cancel")
+async def cancel_material_request(req_id: str, user=Depends(get_current_user)):
+    req = await db.material_requests.find_one({"id": req_id, "company_id": user["company_id"]})
+    if not req:
+        raise HTTPException(status_code=404, detail="Material request not found")
+    if user["role"] not in ("Admin", "Supervisor") and req.get("requested_by") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your request")
+    if (req.get("status") or "").lower() not in ("draft", "pending"):
+        raise HTTPException(status_code=400, detail="Only pending or draft requests can be cancelled")
+
+    await db.material_requests.update_one(
+        {"id": req_id, "company_id": user["company_id"]},
+        {"$set": {"status": "Cancelled", "updated_at": now_iso()}}
+    )
+    await log_activity(user["company_id"], user["id"], user["name"], "Cancelled Material Request", req.get("client_name", ""))
+    return {"status": "success", "message": "Material request cancelled"}
+
+
+@api_router.post("/material-requests/{req_id}/retry")
+async def create_retry_material_request(req_id: str, user=Depends(get_current_user)):
+    orig_req = await db.material_requests.find_one({"id": req_id, "company_id": user["company_id"]})
+    if not orig_req:
+        raise HTTPException(status_code=404, detail="Original request not found")
+    if (orig_req.get("status") or "").lower() != "rejected":
+        raise HTTPException(status_code=400, detail="Only rejected requests can be retried")
+
+    client = await db.clients.find_one({"id": orig_req["client_id"], "company_id": user["company_id"]}, {"_id": 0})
+    
+    year = datetime.now(timezone.utc).year
+    seq_doc = await db.counters.find_one_and_update(
+        {"company_id": user["company_id"], "year": year, "type": "material_request"},
+        {"$inc": {"seq": 1}},
+        upsert=True
+    )
+    seq_val = seq_doc.get("seq") if (seq_doc and isinstance(seq_doc, dict)) else 1
+    request_no = f"MR-{year}-{seq_val:04d}"
+
+    retry_doc = {
+        "id": str(uuid.uuid4()),
+        "company_id": user["company_id"],
+        "client_id": orig_req["client_id"],
+        "client_name": client.get("full_name") if client else orig_req.get("client_name"),
+        "sol_id": client.get("sol_id") if client else orig_req.get("sol_id"),
+        "requested_by": user["id"],
+        "requested_by_name": user["name"],
+        "request_no": request_no,
+        "items": orig_req.get("items") or [],
+        "remarks": f"Retry for {orig_req.get('request_no')}",
+        "status": "pending",
+        "retry_of_id": req_id,
+        "retry_of_request_no": orig_req.get("request_no"),
+        "approval": None,
+        "delivery": None,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.material_requests.insert_one(retry_doc)
+    retry_doc.pop("_id", None)
+    await push_notification(user["company_id"], "admin", "Retry Material Request Created", f"{retry_doc.get('client_name')} · {request_no}")
+    await log_activity(user["company_id"], user["id"], user["name"], "Created Retry Material Request", retry_doc.get("client_name", ""))
+    return await _enrich_request_with_stock(retry_doc)
+
+
 @api_router.patch("/material-requests/{req_id}")
 async def approve_material(req_id: str, data: MaterialApproval, user=Depends(get_current_user)):
     if not has_perm(user, "task_portal", "approve"):

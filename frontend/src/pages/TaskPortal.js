@@ -21,7 +21,7 @@ import { toast } from "sonner";
 import {
   ClipboardList, CalendarClock, CheckCircle2, PackagePlus, MapPin, Phone, Camera, Plus,
   Upload, Trash2, Users2, Activity, AlertTriangle, TrendingUp, Megaphone, ChevronRight,
-  FileText, Eye, Navigation, Send, BarChart2, Clock
+  FileText, Eye, Navigation, Send, BarChart2, Clock, Edit, RotateCcw, XCircle, Lock
 } from "lucide-react";
 import dayjs from "dayjs";
 import { ProductAutocompleteInput } from "@/components/Inventory/_shared";
@@ -78,6 +78,7 @@ export default function TaskPortal() {
   const [mrSearch, setMrSearch] = useState("");
   const debouncedMrSearch = useDebounce(mrSearch, 300);
   const [mrSelectedProject, setMrSelectedProject] = useState(null);
+  const [editingMr, setEditingMr] = useState(null);
 
   useEffect(() => {
     setVisitedTaskPortalTabs((prev) => {
@@ -99,6 +100,10 @@ export default function TaskPortal() {
   const { data: matReqs = [], isLoading: matReqsLoading } = useMaterialRequestList({});
   const { data: complaints = [], isLoading: complaintsLoading } = useComplaintList({ mine: true });
   const { data: projects = [] } = useProjectList();
+
+  const myMatReqs = useMemo(() => {
+    return matReqs.filter((m) => m.requested_by === user?.id || !m.requested_by);
+  }, [matReqs, user]);
 
   const loading = tasksLoading || matReqsLoading || complaintsLoading;
 
@@ -468,6 +473,7 @@ export default function TaskPortal() {
           <Tabs value={taskPortalTab} onValueChange={setTaskPortalTab}>
             <TabsList className="bg-slate-100">
               <TabsTrigger value="tasks" data-testid="tab-my-tasks"><ClipboardList className="w-3.5 h-3.5 mr-1.5" /> My Tasks ({filteredTasksList.length})</TabsTrigger>
+              <TabsTrigger value="materials" data-testid="tab-my-materials"><PackagePlus className="w-3.5 h-3.5 mr-1.5" /> Material Requests ({myMatReqs.length})</TabsTrigger>
               <TabsTrigger value="complaints" data-testid="tab-my-complaints"><Megaphone className="w-3.5 h-3.5 mr-1.5" /> Complaints ({complaints.length})</TabsTrigger>
             </TabsList>
             <div style={{ display: taskPortalTab === "tasks" ? "block" : "none" }} className="mt-3">
@@ -478,6 +484,19 @@ export default function TaskPortal() {
                     {filteredTasksList.length === 0 && <div className="p-8 text-center text-slate-500">No tasks match the current filters.</div>}
                     {filteredTasksList.map((t) => <TaskRow key={t.id} t={t} onSelect={setSelected} />)}
                   </div>
+                </Card>
+              )}
+            </div>
+            <div style={{ display: taskPortalTab === "materials" ? "block" : "none" }} className="mt-3">
+              {visitedTaskPortalTabs.has("materials") && (
+                <Card className="border-slate-200">
+                  <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+                    <div className="font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>My Material Requests</div>
+                    <Button size="sm" onClick={() => setMrOpen(true)} className="bg-blue-600 hover:bg-blue-700 h-8 text-xs" data-testid="new-mr-from-tab">
+                      <Plus className="w-3.5 h-3.5 mr-1" /> New Material Request
+                    </Button>
+                  </div>
+                  <MyMaterialRequestsList requests={myMatReqs} onEdit={(mr) => setEditingMr(mr)} />
                 </Card>
               )}
             </div>
@@ -496,6 +515,31 @@ export default function TaskPortal() {
               )}
             </div>
           </Tabs>
+
+          {editingMr && (
+            <Dialog open onOpenChange={() => setEditingMr(null)}>
+              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="edit-mr-dialog">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <span>Edit Material Request</span>
+                    <span className="text-slate-400">—</span>
+                    <span className="text-blue-600 font-mono text-base">{editingMr.request_no}</span>
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-slate-500">
+                    Client: {editingMr.client_name} ({editingMr.sol_id})
+                  </DialogDescription>
+                </DialogHeader>
+                <MaterialRequest
+                  clientId={editingMr.client_id}
+                  editRequest={editingMr}
+                  onDone={() => {
+                    setEditingMr(null);
+                    invalidateMatReqs();
+                  }}
+                />
+              </DialogContent>
+            </Dialog>
+          )}
         </>
       )}
 
@@ -671,6 +715,93 @@ function ComplaintMiniRow({ c }) {
         <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
       </div>
     </Link>
+  );
+}
+
+function MyMaterialRequestsList({ requests, onEdit }) {
+  const invalidateMatReqs = useInvalidateMaterialRequests();
+
+  const handleCancel = async (id) => {
+    try {
+      await api.post(`/material-requests/${id}/cancel`);
+      toast.success("Material request cancelled");
+      invalidateMatReqs();
+    } catch (e) {
+      toast.error(formatApiError(e));
+    }
+  };
+
+  const handleRetry = async (id) => {
+    try {
+      const { data } = await api.post(`/material-requests/${id}/retry`);
+      toast.success(`Created retry request ${data.request_no}`);
+      invalidateMatReqs();
+    } catch (e) {
+      toast.error(formatApiError(e));
+    }
+  };
+
+  if (!requests || requests.length === 0) {
+    return <div className="p-8 text-center text-slate-500 text-sm">No material requests submitted yet.</div>;
+  }
+
+  return (
+    <div className="divide-y divide-slate-100">
+      {requests.map((m) => {
+        const isEditable = m.status === "pending" || m.status === "draft";
+        const isRejected = m.status === "rejected";
+        const isLocked = m.status === "approved" || m.status === "issued" || m.status === "completed";
+
+        return (
+          <div key={m.id} className="p-4 flex items-center justify-between gap-3 flex-wrap" data-testid={`my-mr-${m.id}`}>
+            <div className="flex-1 min-w-[240px]">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-slate-900">{m.request_no}</span>
+                <span className="text-xs text-slate-500">• {m.client_name} ({m.sol_id})</span>
+                <Badge variant="outline" className={`text-[10px] ${
+                  isLocked
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    : isRejected
+                    ? "bg-red-50 text-red-700 border-red-200"
+                    : m.status === "Cancelled"
+                    ? "bg-slate-100 text-slate-600 border-slate-200"
+                    : "bg-amber-50 text-amber-700 border-amber-200"
+                }`}>
+                  {m.status}
+                </Badge>
+              </div>
+              <div className="text-xs text-slate-500 mt-1">
+                Requested on {dayjs(m.created_at).format("MMM D, YYYY")} • {m.items?.length || 0} item{(m.items?.length || 0) === 1 ? "" : "s"}
+              </div>
+              {m.remarks && <div className="text-xs text-slate-600 mt-1 italic">{m.remarks}</div>}
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {isEditable && (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => onEdit(m)} className="h-8 text-xs" data-testid={`edit-mr-${m.id}`}>
+                    <Edit className="w-3.5 h-3.5 mr-1 text-blue-600" /> Edit
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => handleCancel(m.id)} className="h-8 text-xs text-red-600 hover:bg-red-50" data-testid={`cancel-mr-${m.id}`}>
+                    <XCircle className="w-3.5 h-3.5 mr-1" /> Cancel Request
+                  </Button>
+                </>
+              )}
+              {isRejected && (
+                <Button size="sm" variant="outline" onClick={() => handleRetry(m.id)} className="h-8 text-xs text-blue-600 border-blue-200 hover:bg-blue-50" data-testid={`retry-mr-${m.id}`}>
+                  <RotateCcw className="w-3.5 h-3.5 mr-1" /> Create Retry Request
+                </Button>
+              )}
+              {isLocked && (
+                <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-500 border-slate-200 flex items-center gap-1">
+                  <Lock className="w-3 h-3" /> Locked
+                </Badge>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1309,7 +1440,7 @@ function MeterTestingWorkflow({ task, canMutate, updateStatus, onDone }) {
 
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Attachments</div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {ATTACHMENT_FIELDS.map((label) => {
                     const fileId = attachments[label];
                     return (
@@ -2242,11 +2373,23 @@ function ComplaintWorkflow({ task, canMutate, updateStatus }) {
 
 import { fetchProductsDeduplicated, getCachedProducts } from "@/lib/productCache";
 
-export function MaterialRequest({ clientId, onDone }) {
-  const [items, setItems] = useState([{ product: "", size: "", quantity: 1, remarks: "" }]);
-  const [remarks, setRemarks] = useState("");
+export function MaterialRequest({ clientId, onDone, editRequest = null }) {
+  const [items, setItems] = useState(() => {
+    if (editRequest && editRequest.items && editRequest.items.length > 0) {
+      return editRequest.items.map((it) => ({
+        product: it.product || "",
+        size: it.size || "",
+        quantity: it.quantity || 1,
+        remarks: it.remarks || "",
+        available_stock: it.available_stock,
+      }));
+    }
+    return [{ product: "", size: "", quantity: 1, remarks: "" }];
+  });
+  const [remarks, setRemarks] = useState(() => editRequest?.remarks || "");
   const [products, setProducts] = useState(() => getCachedProducts() || []);
   const [submitting, setSubmitting] = useState(false);
+  const invalidateMatReqs = useInvalidateMaterialRequests();
 
   // Refs for auto-focus: productRefs[i] → product input of row i
   const productRefs = useRef({});
@@ -2278,7 +2421,6 @@ export function MaterialRequest({ clientId, onDone }) {
     const newItems = [...items, { product: "", size: "", quantity: 1, remarks: "" }];
     setItems(newItems);
     const newRowIndex = newItems.length - 1;
-    // Focus the product input of the new row after React renders it
     setTimeout(() => {
       const ref = productRefs.current[newRowIndex];
       if (ref) ref.focus();
@@ -2288,7 +2430,6 @@ export function MaterialRequest({ clientId, onDone }) {
   // Keyboard handler for Qty field: Enter or Tab → auto-add next row
   const handleQtyKeyDown = useCallback((e, i) => {
     if (e.key === "Enter" || e.key === "Tab") {
-      // Only add new row if this is the last row (avoid duplicates mid-list)
       if (i === items.length - 1) {
         e.preventDefault();
         addRow(i);
@@ -2311,68 +2452,94 @@ export function MaterialRequest({ clientId, onDone }) {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await api.post("/material-requests", { client_id: clientId, items: normalizedItems, remarks });
-      toast.success("Material requested");
+      if (editRequest) {
+        await api.put(`/material-requests/${editRequest.id}`, { items: normalizedItems, remarks });
+        toast.success("Material request updated");
+      } else {
+        await api.post("/material-requests", { client_id: clientId, items: normalizedItems, remarks });
+        toast.success("Material requested");
+      }
+      invalidateMatReqs();
       if (onDone) onDone();
     } catch (e) { toast.error(formatApiError(e)); }
     finally { setSubmitting(false); }
   };
+
   return (
-    <Card className="border-slate-200"><CardContent className="p-4 space-y-3">
-      {items.map((it, i) => (
-        <div key={i} className="grid grid-cols-12 gap-2 items-center border-b border-slate-100 pb-2 md:pb-0 md:border-b-0">
-          <div className="col-span-8 md:col-span-4">
-            <ProductAutocompleteInput
-              value={it.product}
-              onChange={(v) => handleProductChange(i, v)}
-              products={products}
-              placeholder="Product"
-              className="h-10 uppercase font-medium"
-              testid={`mat-product-${i}`}
-              inputRef={(el) => { productRefs.current[i] = el; }}
-            />
-          </div>
-          <Input
-            placeholder="Size"
-            className="col-span-4 md:col-span-2 h-10"
-            value={it.size}
-            onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, size: e.target.value } : x))}
-            data-testid={`mat-size-${i}`}
-          />
-          <Input
-            type="number"
-            placeholder="Qty"
-            className="col-span-4 md:col-span-2 h-10"
-            min="1"
-            value={it.quantity || ""}
-            onChange={(e) => {
-              const val = e.target.value === "" ? "" : Number(e.target.value);
-              setItems(items.map((x, idx) => idx === i ? { ...x, quantity: val } : x));
-            }}
-            onKeyDown={(e) => handleQtyKeyDown(e, i)}
-          />
-          <Input
-            placeholder="Remarks"
-            className="col-span-6 md:col-span-3 h-10"
-            value={it.remarks}
-            onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, remarks: e.target.value } : x))}
-          />
-          <Button
-            size="sm"
-            variant="ghost"
-            className="col-span-2 md:col-span-1 h-10 flex items-center justify-center p-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
-            onClick={() => setItems(items.filter((_, idx) => idx !== i))}
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
-        </div>
-      ))}
-      <Button size="sm" variant="outline" onClick={() => setItems([...items, { product: "", size: "", quantity: 1, remarks: "" }])}><Plus className="w-4 h-4 mr-1" /> Add Item</Button>
-      <Textarea placeholder="Additional remarks" rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
-      <Button onClick={submit} disabled={submitting} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50" data-testid="submit-material-req">
-        {submitting ? "Submitting…" : "Submit Request"}
-      </Button>
-    </CardContent></Card>
+    <Card className="border-slate-200">
+      <CardContent className="p-4 space-y-3">
+        {items.map((it, i) => {
+          const matchedProduct = products.find((p) => (p.name || "").toUpperCase() === (it.product || "").toUpperCase());
+          const availStock = matchedProduct?.available_stock ?? it.available_stock;
+          const isLowStock = availStock !== undefined && Number(it.quantity) > Number(availStock);
+
+          return (
+            <div key={i} className="space-y-1 border-b border-slate-100 pb-3 md:pb-2 md:border-b-0">
+              <div className="grid grid-cols-12 gap-2 items-center">
+                <div className="col-span-8 md:col-span-4">
+                  <ProductAutocompleteInput
+                    value={it.product}
+                    onChange={(v) => handleProductChange(i, v)}
+                    products={products}
+                    placeholder="Product"
+                    className="h-10 uppercase font-medium"
+                    testid={`mat-product-${i}`}
+                    inputRef={(el) => { productRefs.current[i] = el; }}
+                  />
+                </div>
+                <Input
+                  placeholder="Size"
+                  className="col-span-4 md:col-span-2 h-10"
+                  value={it.size}
+                  onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, size: e.target.value } : x))}
+                  data-testid={`mat-size-${i}`}
+                />
+                <Input
+                  type="number"
+                  placeholder="Qty"
+                  className="col-span-4 md:col-span-2 h-10"
+                  min="1"
+                  value={it.quantity || ""}
+                  onChange={(e) => {
+                    const val = e.target.value === "" ? "" : Number(e.target.value);
+                    setItems(items.map((x, idx) => idx === i ? { ...x, quantity: val } : x));
+                  }}
+                  onKeyDown={(e) => handleQtyKeyDown(e, i)}
+                />
+                <Input
+                  placeholder="Remarks"
+                  className="col-span-6 md:col-span-3 h-10"
+                  value={it.remarks}
+                  onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, remarks: e.target.value } : x))}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="col-span-2 md:col-span-1 h-10 flex items-center justify-center p-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
+                  onClick={() => setItems(items.filter((_, idx) => idx !== i))}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </div>
+              {/* Fix 6: Low stock warning indicator (Warning only — does not block submission) */}
+              {isLowStock && (
+                <div className="flex items-center gap-1.5 text-xs text-amber-700 font-medium pl-1">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Low Stock (Available: {availStock})</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <Button size="sm" variant="outline" onClick={() => setItems([...items, { product: "", size: "", quantity: 1, remarks: "" }])}>
+          <Plus className="w-4 h-4 mr-1" /> Add Item
+        </Button>
+        <Textarea placeholder="Additional remarks" rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+        <Button onClick={submit} disabled={submitting} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50" data-testid="submit-material-req">
+          {submitting ? (editRequest ? "Updating…" : "Submitting…") : (editRequest ? "Update Material Request" : "Submit Request")}
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 
