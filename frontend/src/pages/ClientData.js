@@ -215,11 +215,13 @@ export default function ClientData() {
                 <th className="px-4 py-3 text-left font-semibold">Mobile</th>
                 <th className="px-4 py-3 text-left font-semibold">City</th>
                 <th className="px-4 py-3 text-right font-semibold">Capacity</th>
-                <th className="px-4 py-3 text-left font-semibold">Inverter</th>
+                <th className="px-4 py-3 text-left font-semibold">Stage</th>
+                <th className="px-4 py-3 text-left font-semibold">Assigned Team</th>
                 <th className="px-4 py-3 text-left font-semibold">Status</th>
-                <th className="px-4 py-3 text-left font-semibold">Installation</th>
-                <th className="px-4 py-3 text-center font-semibold w-32">Quick</th>
-                <th className="px-4 py-3"></th>
+                <th className="px-4 py-3 text-left font-semibold">Inverter</th>
+                <th className="px-4 py-3 text-left font-semibold">Updated</th>
+                <th className="px-4 py-3 text-center font-semibold w-32">Quick Actions</th>
+                <th className="px-4 py-3 w-10"></th>
               </tr>
             </thead>
             <tbody>
