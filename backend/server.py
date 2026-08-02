@@ -7832,11 +7832,16 @@ async def get_client_data_detail(
         raise HTTPException(status_code=404, detail="Client not found")
 
     # Standardize string ID and client_code for frontend
-    c["id"] = str(c.get("id") or c.get("_id") or client_id)
+    raw_mongo_id = str(c.get("_id")) if c.get("_id") else None
+    doc_id = c.get("id")
+    canonical_id = str(doc_id or raw_mongo_id or client_id)
+
+    c["id"] = canonical_id
     c.pop("_id", None)
     c["client_code"] = c.get("sol_id")
-        
-    q = {"company_id": cid, "client_id": client_id}
+
+    client_ids = list({x for x in [client_id, canonical_id, doc_id, raw_mongo_id] if x})
+    q = {"company_id": cid, "client_id": {"$in": client_ids}}
 
     # Build list of coroutines based on which tab is requested, then gather them all.
     # This turns N sequential round-trips into a single parallel wave.
