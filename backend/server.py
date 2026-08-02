@@ -7810,9 +7810,9 @@ async def list_client_data(
     clients = await db.clients.find(q, list_projection).sort("updated_at", -1).to_list(500)
     logger.info(f"[DIAG] list_client_data: raw DB returned {len(clients)} clients")
 
-    # Ensure valid string ID for every client document
+    # Ensure valid string ID for every client document (prefers id, fallback _id, sol_id)
     for c in clients:
-        c["id"] = str(c.get("id") or c.get("sol_id") or "")
+        c["id"] = str(c.get("id") or c.get("_id") or c.get("sol_id") or "")
 
     if stage and stage != "all":
         clients = [c for c in clients if _client_current_stage(c) == stage]
@@ -7878,20 +7878,25 @@ async def get_client_data_detail(
     user=Depends(get_current_user)
 ):
     cid = user["company_id"]
-    or_conds: List[Dict[str, Any]] = [{"id": client_id}, {"sol_id": client_id}]
+    or_conds: List[Dict[str, Any]] = [{"id": client_id}, {"_id": client_id}, {"sol_id": client_id}]
+    if ObjectId.is_valid(client_id):
+        or_conds.append({"_id": ObjectId(client_id)})
 
-    c = await db.clients.find_one({"$or": or_conds, "company_id": cid}, {"_id": 0})
+    c = await db.clients.find_one({"$or": or_conds, "company_id": cid})
     if not c:
-        c = await db.clients.find_one({"$or": or_conds}, {"_id": 0})
+        c = await db.clients.find_one({"$or": or_conds})
     if not c:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    canonical_id = str(c.get("id") or c.get("sol_id") or client_id)
+    raw_mongo_id = str(c.get("_id")) if c.get("_id") else None
+    doc_id = c.get("id")
+    canonical_id = str(doc_id or raw_mongo_id or c.get("sol_id") or client_id)
+
     c["id"] = canonical_id
     c.pop("_id", None)
     c["client_code"] = c.get("sol_id")
 
-    client_ids = list({x for x in [client_id, canonical_id, c.get("sol_id")] if x})
+    client_ids = list({x for x in [client_id, canonical_id, doc_id, raw_mongo_id, c.get("sol_id")] if x})
     q = {"company_id": cid, "client_id": {"$in": client_ids}}
 
     # Build list of coroutines based on which tab is requested, then gather them all.
