@@ -203,19 +203,32 @@ export default function DeliveryBill() {
           }
         });
 
-        const mapped = Array.from(mergedMap.values()).map((row) => {
-          const p = products.find((prod) => prod.name.toUpperCase() === row.product.toUpperCase());
-          return {
-            id: newId(),
-            product_id: p ? p.id : "",
-            product: row.product,
-            size: row.size,
-            unit: row.unit,
-            dispatch_qty: String(row.quantity),
-            rate: row.rate !== undefined && row.rate !== null ? String(row.rate) : (p && p.rate !== undefined && p.rate !== null ? String(p.rate) : ""),
-            serial_numbers: row.serial_numbers.join(", ")
-          };
-        });
+        const hvKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"];
+        const mapped = Array.from(mergedMap.values())
+          .map((row) => {
+            const p = products.find((prod) => prod.name.toUpperCase() === row.product.toUpperCase());
+            return {
+              id: newId(),
+              product_id: p ? p.id : "",
+              product: row.product,
+              size: row.size,
+              unit: row.unit,
+              dispatch_qty: String(row.quantity),
+              rate: row.rate !== undefined && row.rate !== null ? String(row.rate) : (p && p.rate !== undefined && p.rate !== null ? String(p.rate) : ""),
+              serial_numbers: row.serial_numbers.join(", ")
+            };
+          })
+          .sort((a, b) => {
+            const aName = (a.product || "").toUpperCase();
+            const bName = (b.product || "").toUpperCase();
+            const aMatched = products.find(p => p.name.toUpperCase() === aName);
+            const bMatched = products.find(p => p.name.toUpperCase() === bName);
+            const aIsHV = (aMatched?.high_value_goods) || hvKeywords.some(kw => aName.includes(kw));
+            const bIsHV = (bMatched?.high_value_goods) || hvKeywords.some(kw => bName.includes(kw));
+            if (aIsHV && !bIsHV) return -1;
+            if (!aIsHV && bIsHV) return 1;
+            return aName.localeCompare(bName);
+          });
         setItems(mapped);
       } else {
         setItems([EMPTY_ROW()]);

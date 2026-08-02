@@ -218,6 +218,12 @@ async def _record_workflow_details(task: dict, user: dict):
         table_name = "meter_testings"
     elif task_type == "Installation":
         table_name = "installations"
+    elif task_type == "Handover":
+        table_name = "handovers"
+    elif task_type == "PM Surya Ghar Upload":
+        table_name = "pm_surya_uploads"
+    elif task_type == "MSEDCL Upload":
+        table_name = "msedcl_uploads"
     elif task_type == "Verification":
         # Verification already has its own table, we can sync or let it be
         pass
@@ -7674,14 +7680,15 @@ async def _next_ticket_no(company_id: str) -> str:
 
 async def _attach_assets(client_id: str, company_id: str) -> List[Dict[str, str]]:
     """Aggregate all uploaded files across the client life cycle into Client Assets.
-    All top-level queries run in parallel via asyncio.gather — reduces 8 sequential
-    Supabase round-trips to a single parallel wave (~1 RTT instead of ~8).
+    All top-level queries run in parallel via asyncio.gather — reduces sequential
+    Supabase round-trips to a single parallel wave.
     """
     q = {"company_id": company_id, "client_id": client_id}
 
-    # Fire all 7 collection queries + 1 client doc lookup simultaneously
+    # Fire all collection queries + client doc lookup simultaneously
     (
-        verifs, surveys, mds, docs, mts, insts, complaints, client_doc
+        verifs, surveys, mds, docs, mts, insts, complaints,
+        handovers, pm_surya, msedcl, client_doc
     ) = await asyncio.gather(
         db.verifications.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
         db.surveys.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
@@ -7690,6 +7697,9 @@ async def _attach_assets(client_id: str, company_id: str) -> List[Dict[str, str]
         db.meter_testings.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
         db.installations.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
         db.complaints.find(q, {"_id": 0}).sort("created_at", -1).to_list(100),
+        db.handovers.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
+        db.pm_surya_uploads.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
+        db.msedcl_uploads.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
         db.clients.find_one({"id": client_id, "company_id": company_id}, {"_id": 0, "documents": 1}),
     )
 
@@ -7743,7 +7753,28 @@ async def _attach_assets(client_id: str, company_id: str) -> List[Dict[str, str]
             fid = val.get("file_id") if isinstance(val, dict) else (val if isinstance(val, str) else None)
             add_asset(fid, f"Installation - {label}", "Installation", details.get("completed_date") or inst.get("created_at"))
 
-    # 7. complaints — fetch all comment batches in parallel
+    # 7. handovers
+    for h in (handovers or []):
+        details = h.get("details") or {}
+        for label, val in (details.get("photos") or details.get("attachments") or {}).items():
+            fid = val.get("file_id") if isinstance(val, dict) else (val if isinstance(val, str) else None)
+            add_asset(fid, f"Handover - {label}", "handover", details.get("completed_date") or h.get("created_at"))
+
+    # 8. PM Surya uploads
+    for ps in (pm_surya or []):
+        details = ps.get("details") or {}
+        for label, val in (details.get("photos") or details.get("attachments") or {}).items():
+            fid = val.get("file_id") if isinstance(val, dict) else (val if isinstance(val, str) else None)
+            add_asset(fid, f"PM Surya - {label}", "PM Surya", details.get("completed_date") or ps.get("created_at"))
+
+    # 9. MSEDCL uploads
+    for ms in (msedcl or []):
+        details = ms.get("details") or {}
+        for label, val in (details.get("photos") or details.get("attachments") or {}).items():
+            fid = val.get("file_id") if isinstance(val, dict) else (val if isinstance(val, str) else None)
+            add_asset(fid, f"MSEDCL - {label}", "MSEDCL", details.get("completed_date") or ms.get("created_at"))
+
+    # 10. complaints — fetch all comment batches in parallel
     if complaints:
         comment_batches = await asyncio.gather(*[
             db.complaint_comments.find(
@@ -7759,7 +7790,7 @@ async def _attach_assets(client_id: str, company_id: str) -> List[Dict[str, str]
                 for attachment in (comm.get("attachments") or []):
                     fid = attachment.get("file_id") if isinstance(attachment, dict) else (attachment if isinstance(attachment, str) else None)
                     add_asset(fid, "Complaint Comment Attachment", "Complaint Center", comm.get("created_at"))
-    # 8. client.documents (only image content types)
+    # 11. client.documents (only image content types)
     for d in c_doc.get("documents") or []:
         if isinstance(d, dict):
             fid = d.get("file_id") or d.get("id")

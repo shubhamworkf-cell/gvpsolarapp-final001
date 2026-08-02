@@ -553,6 +553,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
         } catch (refreshErr) {
           console.error("[IMPORT] Safe post-import refresh failed:", refreshErr);
         }
+        return;
       } else {
         setStep("review");
       }
