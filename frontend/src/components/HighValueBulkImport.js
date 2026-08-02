@@ -403,9 +403,22 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
 
       setImportProgress(100);
       toast.success(`Successfully imported ${payloadRows.length} High Value Goods!`);
-      setStep("done");
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      onImported?.();
+      setStep("input");
+      setFile(null);
+      setFileName("");
+      setRows([]);
+      setErrors("");
+      setProcessing(false);
+      
+      // Close modal cleanly
+      onOpenChange(false);
+      
+      // Refresh inventory
+      try {
+        onImported?.();
+      } catch (e) {
+        console.error("onImported error:", e);
+      }
     } catch (err) {
       toast.error("High Value Import failed: " + formatApiError(err));
       setStep("review");

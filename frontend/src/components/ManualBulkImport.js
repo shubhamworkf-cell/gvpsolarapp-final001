@@ -527,6 +527,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
 
       if (!cancelImportRef.current) {
         console.log("[IMPORT] entering success handler");
+        setImportProgress(100);
         toast.success(`Successfully imported ${validRows.length} ${mode} entries.`);
         
         // Reset state to initial "input" step so UI is immediately ready for next import
@@ -541,21 +542,17 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
         setImportProgress(0);
         setCancelImport(false);
         cancelImportRef.current = false;
+        setProcessing(false);
         
         // Release processing and close modal cleanly
-        setProcessing(false);
         onOpenChange(false);
         
-        // Defer non-critical post-import refresh so it doesn't block UI or hold modal hostage
-        setTimeout(() => {
-          console.log("[IMPORT] starting post-import refresh (calling onImported) safely");
-          try {
-            onImported?.();
-            console.log("[IMPORT] post-import refresh complete");
-          } catch (refreshErr) {
-            console.error("[IMPORT] Safe post-import refresh failed:", refreshErr);
-          }
-        }, 50);
+        // Post-import refresh callback
+        try {
+          onImported?.();
+        } catch (refreshErr) {
+          console.error("[IMPORT] Safe post-import refresh failed:", refreshErr);
+        }
       } else {
         setStep("review");
       }
