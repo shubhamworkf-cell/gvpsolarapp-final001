@@ -169,6 +169,8 @@ function App() {
             <Route path="/tasks" element={<Protected><PermissionRoute page="task_portal"><MainTabShell activeTab="tasks" /></PermissionRoute></Protected>} />
             <Route path="/inventory" element={<Protected><PermissionRoute page="data_management"><MainTabShell activeTab="inventory" /></PermissionRoute></Protected>} />
             <Route path="/templates" element={<Protected><PermissionRoute page="documents"><DocumentTemplates /></PermissionRoute></Protected>} />
+            <Route path="/document-templates" element={<Protected><PermissionRoute page="documents"><DocumentTemplates /></PermissionRoute></Protected>} />
+            <Route path="/documents" element={<Protected><PermissionRoute page="documents"><DocumentTemplates /></PermissionRoute></Protected>} />
             <Route path="/quotation" element={<Protected><PermissionRoute page="sales_documents"><Quotation /></PermissionRoute></Protected>} />
             <Route path="/tax-invoice" element={<Protected><PermissionRoute page="sales_documents"><TaxInvoice /></PermissionRoute></Protected>} />
             <Route path="/delivery-bill" element={<Protected><PermissionRoute page="sales_documents"><DeliveryBill /></PermissionRoute></Protected>} />
