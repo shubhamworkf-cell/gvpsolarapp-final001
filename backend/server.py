@@ -3877,8 +3877,13 @@ async def create_task(data: TaskIn, user=Depends(get_current_user)):
     }
     await db.tasks.insert_one(doc)
     doc.pop("_id", None)
-    await push_notification(user["company_id"], "user", "New Task Assigned", f"{data.task_type} for {client.get('full_name')}", to_user_id=data.assigned_to)
-    await push_notification(user["company_id"], "admin", "Task Assigned", f"{data.task_type} → {assignee.get('name')}")
+    await push_notification(
+        user["company_id"],
+        "user",
+        "📋 New Task Assigned",
+        f"{data.task_type} has been assigned by {user['name']} for Client: {client.get('full_name')}",
+        to_user_id=data.assigned_to
+    )
     await log_activity(user["company_id"], user["id"], user["name"], "Assigned Task", f"{data.task_type} to {assignee.get('name')}")
     return doc
 
@@ -3962,7 +3967,13 @@ async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_u
         task_type_str = str(t.get("task_type") or "")
         action_name = action_log_map.get(task_type_str, f"Completed Task: {task_type_str}")
         await log_activity(user["company_id"], user["id"], user["name"], action_name, t.get("client_name", ""))
-        await push_notification(user["company_id"], "admin", "Task Completed", f"{task_type_str} · {t.get('client_name')}")
+        await push_notification(
+            user["company_id"],
+            "task_completion",
+            "✅ Task Completed",
+            f"{task_type_str} completed for Client: {t.get('client_name')}",
+            to_user_id=t.get("created_by") or t.get("assigned_by")
+        )
         
         # Always sync checklist completed status to client
         sub = t.get("submission") or {}
@@ -4052,7 +4063,12 @@ async def create_material_request(data: MaterialRequestIn, user=Depends(get_curr
     }
     await db.material_requests.insert_one(doc)
     doc.pop("_id", None)
-    await push_notification(user["company_id"], "admin", "Material Requested", f"{client.get('full_name')} · {len(normalized_items)} items")
+    await push_notification(
+        user["company_id"],
+        "inventory_admin",
+        "📦 New Material Request",
+        f"{client.get('full_name')} requested materials."
+    )
     await log_activity(user["company_id"], user["id"], user["name"], "Material Request Created", client.get("full_name", ""))
     return doc
 
@@ -4275,7 +4291,12 @@ async def create_retry_material_request(req_id: str, user=Depends(get_current_us
     retry_doc["retry_of_id"] = req_id
     retry_doc["retry_of_request_no"] = orig_req.get("request_no")
 
-    await push_notification(cid, "admin", "Retry Material Request Created", f"{retry_doc.get('client_name')} · {request_no}")
+    await push_notification(
+        cid,
+        "inventory_admin",
+        "🔄 Retry Material Request",
+        f"Retry material request for {retry_doc.get('client_name')}"
+    )
     await log_activity(cid, user["id"], user["name"], "Created Retry Material Request", retry_doc.get("client_name") or "")
     return await _enrich_request_with_stock(retry_doc)
 
@@ -4373,7 +4394,16 @@ async def approve_material(req_id: str, data: MaterialApproval, user=Depends(get
             await db.clients.update_one({"id": req["client_id"]}, {"$set": {"stages": new_stages, "progress": calc_progress(new_stages), "updated_at": now_iso()}})
 
     await db.material_requests.update_one({"id": req_id}, {"$set": update})
-    await push_notification(user["company_id"], "user", f"Material {status.replace('_', ' ').title()}", req.get("client_name", ""), to_user_id=req.get("requested_by"))
+    is_approved = status in ("approved", "partial_approved")
+    notif_title = "✅ Material Request Approved" if is_approved else "❌ Material Request Rejected"
+    notif_body = f"Material request for {req.get('client_name', '')} was {status.replace('_', ' ').lower()}."
+    await push_notification(
+        user["company_id"],
+        "user",
+        notif_title,
+        notif_body,
+        to_user_id=req.get("requested_by")
+    )
     action_name = "Material Approved" if status in ("approved", "partial_approved") else f"Material {status.replace('_', ' ').title()}"
     await log_activity(user["company_id"], user["id"], user["name"], action_name, req.get("client_name", ""))
     refreshed = await db.material_requests.find_one({"id": req_id}, {"_id": 0})
@@ -4691,12 +4721,26 @@ async def delete_employee(emp_id: str, user=Depends(get_current_user)):
 # ---------- Notifications ----------
 @api_router.get("/notifications")
 async def list_notifications(user=Depends(get_current_user)):
-    q = {"company_id": user["company_id"]}
-    if user["role"] != "Admin":
-        q["$or"] = [{"audience": "employee"}, {"to_user_id": user["id"]}]
+    cid = user["company_id"]
+    uid = user["id"]
+    role = user.get("role", "")
+
+    if role == "Admin":
+        q = {"company_id": cid}
+    elif role == "Inventory Manager":
+        q = {"company_id": cid, "$or": [
+            {"to_user_id": uid},
+            {"audience": {"$in": ["employee", "all", "inventory_admin", "task_completion"]}}
+        ]}
+    else:
+        q = {"company_id": cid, "$or": [
+            {"to_user_id": uid},
+            {"audience": {"$in": ["employee", "all", "task_completion"]}}
+        ]}
+
     items = await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
     for it in items:
-        it["is_read"] = user["id"] in it.get("read_by", [])
+        it["is_read"] = uid in it.get("read_by", [])
     return items
 
 @api_router.post("/notifications/{notif_id}/read")
