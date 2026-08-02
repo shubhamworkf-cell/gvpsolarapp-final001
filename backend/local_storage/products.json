@@ -560,19 +560,6 @@
     "created_at": "2026-07-29T06:46:30.591186+00:00"
   },
   {
-    "id": "7a856481-b0d9-4d91-bd82-8ebc5d581824",
-    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
-    "name": "BENCHMARK_HV_PANEL_3_DFF4AD9C",
-    "size": "",
-    "category": "Solar",
-    "unit": "Nos",
-    "min_stock": 0.0,
-    "opening_stock": 0.0,
-    "status": "Active",
-    "high_value_goods": true,
-    "created_at": "2026-07-29T06:46:30.591186+00:00"
-  },
-  {
     "id": "eb6c4806-d8ce-4ccc-80de-7c08db0c252f",
     "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
     "name": "BENCHMARK_HV_PANEL_4_DFF4AD9C",
@@ -690,19 +677,6 @@
     "created_at": "2026-07-29T06:46:43.162166+00:00"
   },
   {
-    "id": "dab9ff2e-e0f9-4798-9d7f-8f17a661ce3a",
-    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
-    "name": "BENCHMARK_HV_PANEL_3_9B9F973F",
-    "size": "",
-    "category": "Solar",
-    "unit": "Nos",
-    "min_stock": 0.0,
-    "opening_stock": 0.0,
-    "status": "Active",
-    "high_value_goods": true,
-    "created_at": "2026-07-29T06:46:43.162166+00:00"
-  },
-  {
     "id": "a2fddef5-6bbd-435a-b43d-8733ec9eedd3",
     "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
     "name": "BENCHMARK_HV_PANEL_4_9B9F973F",
@@ -742,19 +716,6 @@
     "created_at": "2026-07-29T06:46:43.162166+00:00"
   },
   {
-    "id": "01c064cf-f6b7-4ff4-b2d6-36739d71899f",
-    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
-    "name": "BENCHMARK_HV_PANEL_2_9B9F973F",
-    "size": "",
-    "category": "Solar",
-    "unit": "Nos",
-    "min_stock": 0.0,
-    "opening_stock": 0.0,
-    "status": "Active",
-    "high_value_goods": true,
-    "created_at": "2026-07-29T06:46:43.162166+00:00"
-  },
-  {
     "id": "ccbd2da7-9c91-4e5c-8247-2280c04f45d7",
     "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
     "name": "BENCHMARK_HV_PANEL_3_9B9F973F",
@@ -785,19 +746,6 @@
     "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
     "name": "BENCHMARK_HV_PANEL_0_9B9F973F",
     "size": "400W",
-    "category": "Solar",
-    "unit": "Nos",
-    "min_stock": 0.0,
-    "opening_stock": 0.0,
-    "status": "Active",
-    "high_value_goods": true,
-    "created_at": "2026-07-29T06:46:43.162696+00:00"
-  },
-  {
-    "id": "c9dab7ef-e1c8-4de9-a152-9f20fa961638",
-    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
-    "name": "BENCHMARK_HV_PANEL_1_9B9F973F",
-    "size": "",
     "category": "Solar",
     "unit": "Nos",
     "min_stock": 0.0,
@@ -950,19 +898,6 @@
     "created_at": "2026-07-29T06:46:55.905969+00:00"
   },
   {
-    "id": "891ab42e-bc92-48e4-afe3-97c76773abef",
-    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
-    "name": "BENCHMARK_HV_PANEL_3_61653610",
-    "size": "",
-    "category": "Solar",
-    "unit": "Nos",
-    "min_stock": 0.0,
-    "opening_stock": 0.0,
-    "status": "Active",
-    "high_value_goods": true,
-    "created_at": "2026-07-29T06:46:55.905969+00:00"
-  },
-  {
     "id": "9385bc17-31b6-4706-a8c1-103f54070cda",
     "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
     "name": "BENCHMARK_HV_PANEL_4_61653610",
@@ -993,19 +928,6 @@
     "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
     "name": "BENCHMARK_HV_PANEL_1_61653610",
     "size": "500W",
-    "category": "Solar",
-    "unit": "Nos",
-    "min_stock": 0.0,
-    "opening_stock": 0.0,
-    "status": "Active",
-    "high_value_goods": true,
-    "created_at": "2026-07-29T06:46:55.905969+00:00"
-  },
-  {
-    "id": "a835d20c-4f32-4435-a608-34dc2b5a4874",
-    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
-    "name": "BENCHMARK_HV_PANEL_2_61653610",
-    "size": "",
     "category": "Solar",
     "unit": "Nos",
     "min_stock": 0.0,
@@ -1052,19 +974,6 @@
     "status": "Active",
     "high_value_goods": true,
     "created_at": "2026-07-29T06:46:55.905969+00:00"
-  },
-  {
-    "id": "3ac1e5e2-8e0f-4795-b744-8fe2f2616def",
-    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
-    "name": "BENCHMARK_HV_PANEL_1_61653610",
-    "size": "",
-    "category": "Solar",
-    "unit": "Nos",
-    "min_stock": 0.0,
-    "opening_stock": 0.0,
-    "status": "Active",
-    "high_value_goods": true,
-    "created_at": "2026-07-29T06:46:55.906592+00:00"
   },
   {
     "id": "52ee9bbf-cd6a-4d6a-879f-9184db35f3f9",
@@ -1210,19 +1119,6 @@
     "created_at": "2026-07-29T06:47:09.100347+00:00"
   },
   {
-    "id": "eb330003-9b61-4d12-8a64-4e29d5eecb29",
-    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
-    "name": "BENCHMARK_HV_PANEL_3_AB6274EF",
-    "size": "",
-    "category": "Solar",
-    "unit": "Nos",
-    "min_stock": 0.0,
-    "opening_stock": 0.0,
-    "status": "Active",
-    "high_value_goods": true,
-    "created_at": "2026-07-29T06:47:09.100347+00:00"
-  },
-  {
     "id": "6b3466c9-95c2-4265-8bd6-48a3b8f6c188",
     "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
     "name": "BENCHMARK_HV_PANEL_4_AB6274EF",
@@ -1262,19 +1158,6 @@
     "created_at": "2026-07-29T06:47:09.100954+00:00"
   },
   {
-    "id": "85116b8a-5152-4853-ad68-54f787015fdc",
-    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
-    "name": "BENCHMARK_HV_PANEL_2_AB6274EF",
-    "size": "",
-    "category": "Solar",
-    "unit": "Nos",
-    "min_stock": 0.0,
-    "opening_stock": 0.0,
-    "status": "Active",
-    "high_value_goods": true,
-    "created_at": "2026-07-29T06:47:09.100954+00:00"
-  },
-  {
     "id": "759ca325-f82e-4fbd-b2d4-53f89694ce9b",
     "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
     "name": "BENCHMARK_HV_PANEL_3_AB6274EF",
@@ -1305,19 +1188,6 @@
     "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
     "name": "BENCHMARK_HV_PANEL_0_AB6274EF",
     "size": "400W",
-    "category": "Solar",
-    "unit": "Nos",
-    "min_stock": 0.0,
-    "opening_stock": 0.0,
-    "status": "Active",
-    "high_value_goods": true,
-    "created_at": "2026-07-29T06:47:09.100954+00:00"
-  },
-  {
-    "id": "e83ee177-aaf9-459d-ad6f-1c9f95ecaa48",
-    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
-    "name": "BENCHMARK_HV_PANEL_1_AB6274EF",
-    "size": "",
     "category": "Solar",
     "unit": "Nos",
     "min_stock": 0.0,
@@ -1861,5 +1731,181 @@
     "min_stock": 0.0,
     "status": "Active",
     "created_at": "2026-07-29T10:13:57.192680+00:00"
+  },
+  {
+    "id": "5c1cea30-62e3-4403-bb76-96aa80464f45",
+    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
+    "name": "BENCHMARK_HV_PANEL_3_DFF4AD9C",
+    "size": "",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:13.153944+00:00"
+  },
+  {
+    "id": "721ccf86-cd52-4843-8357-5b8488a739f3",
+    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
+    "name": "BENCHMARK_HV_PANEL_3_9B9F973F",
+    "size": "",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:16.903595+00:00"
+  },
+  {
+    "id": "ca2cf250-79b4-49bc-bd40-7d9c1df5c107",
+    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
+    "name": "BENCHMARK_HV_PANEL_2_9B9F973F",
+    "size": "",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:18.400465+00:00"
+  },
+  {
+    "id": "2607b782-1cd4-4ff3-b72c-71e0fc94e744",
+    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
+    "name": "BENCHMARK_HV_PANEL_1_9B9F973F",
+    "size": "",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:19.870486+00:00"
+  },
+  {
+    "id": "7d0e1c04-adeb-4f6f-974d-909848f85e16",
+    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
+    "name": "BENCHMARK_HV_PANEL_3_61653610",
+    "size": "",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:24.066274+00:00"
+  },
+  {
+    "id": "e1d32e25-458d-4829-bf89-951f1f73b681",
+    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
+    "name": "BENCHMARK_HV_PANEL_2_61653610",
+    "size": "",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:25.534410+00:00"
+  },
+  {
+    "id": "53d6323d-3d82-4c7f-b16c-a6df274e84d9",
+    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
+    "name": "BENCHMARK_HV_PANEL_1_61653610",
+    "size": "",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:27.096409+00:00"
+  },
+  {
+    "id": "e323132f-fea4-4e41-9d60-06233ac1e504",
+    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
+    "name": "BENCHMARK_HV_PANEL_3_AB6274EF",
+    "size": "",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:31.193901+00:00"
+  },
+  {
+    "id": "fc7aa7e4-3e09-464b-b945-2c0af9e0db2b",
+    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
+    "name": "BENCHMARK_HV_PANEL_2_AB6274EF",
+    "size": "",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:32.675146+00:00"
+  },
+  {
+    "id": "866c2e00-b519-4d69-8b64-08f6dc17c520",
+    "company_id": "9c2086c6-b6db-4609-a0da-fa25ede375d6",
+    "name": "BENCHMARK_HV_PANEL_1_AB6274EF",
+    "size": "",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:34.187204+00:00"
+  },
+  {
+    "id": "5c4a733a-2626-4c17-8fae-4a20ef4cbf77",
+    "company_id": "test_co_del_bc65cc7e",
+    "name": "DELETED_TEST_PRODUCT_EAA4BB",
+    "size": "100A",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:40.698603+00:00"
+  },
+  {
+    "id": "740c4234-e042-4c80-830e-285dedbd57de",
+    "company_id": "test_co_del_278f8beb",
+    "name": "TEST_DEL_PANEL_CA91BC",
+    "size": "450W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:41.852566+00:00"
+  },
+  {
+    "id": "f7fee024-4e65-4266-b8dd-1336def6fc61",
+    "company_id": "test_co_multi_del_5401e508",
+    "name": "TEST_MULTI_DEL_PANEL_0_F47D11",
+    "size": "400W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:42.349308+00:00"
+  },
+  {
+    "id": "53646c8b-0120-4a90-8e8d-6b0d500c4b52",
+    "company_id": "test_co_multi_del_7f97bfcb",
+    "name": "TEST_MULTI_DEL_PANEL_1_A2B576",
+    "size": "450W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:42.850511+00:00"
+  },
+  {
+    "id": "c4cd97f5-d971-4d73-8fea-e88aa42d5a7d",
+    "company_id": "test_co_multi_del_5401e508",
+    "name": "TEST_MULTI_DEL_PANEL_2_A5D3FE",
+    "size": "500W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:43.349001+00:00"
+  },
+  {
+    "id": "358413e0-c844-4e0b-852d-ec9df7c44b94",
+    "company_id": "test_co_multi_del_7f97bfcb",
+    "name": "TEST_MULTI_DEL_PANEL_3_2874C6",
+    "size": "550W",
+    "category": "Solar",
+    "unit": "Nos",
+    "min_stock": 0.0,
+    "status": "Active",
+    "created_at": "2026-08-02T06:48:43.847421+00:00"
   }
 ]
