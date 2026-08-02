@@ -7,6 +7,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
+from reportlab.graphics.shapes import Drawing, Rect, String, Line, Group, Circle, PolyLine
 
 styles = getSampleStyleSheet()
 H1 = ParagraphStyle('h1', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#1d4ed8'), spaceAfter=8, alignment=1)
@@ -743,10 +744,208 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     return buf.getvalue()
 
 
+def _build_sldr_drawing(sol_kw="5", sol_wp="540", num_panels="10", panel_make="GVP SOLAR", inverter_make="GROWATT", inverter_kw="5"):
+    d = Drawing(490, 305)
+    d.add(Rect(0, 0, 490, 305, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#334155"), strokeWidth=1))
+    
+    d.add(String(245, 290, "Grid Tied Solar Inverter System Electrical Single Line Diagram", fontName="Helvetica-Bold", fontSize=9.5, textAnchor="middle", fillColor=colors.HexColor("#1e293b")))
+
+    # 1. PV Modules Array (Left)
+    for col in range(2):
+        for row in range(3):
+            px = 25 + col * 35
+            py = 175 - row * 35
+            d.add(Rect(px, py, 30, 30, fillColor=colors.HexColor("#f8fafc"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
+            d.add(Line(px+15, py, px+15, py+30, strokeColor=colors.HexColor("#e2e8f0"), strokeWidth=0.5))
+            d.add(Line(px, py+15, px+30, py+15, strokeColor=colors.HexColor("#e2e8f0"), strokeWidth=0.5))
+            d.add(Rect(px+10, py+22, 10, 6, fillColor=colors.HexColor("#bae6fd"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=0.5))
+            d.add(String(px+15, py+23, "J-Box", fontName="Helvetica", fontSize=4, textAnchor="middle", fillColor=colors.HexColor("#0369a1")))
+
+    d.add(String(55, 95, f"PV Array: {num_panels} x {sol_wp}Wp", fontName="Helvetica-Bold", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#0f172a")))
+
+    # Earthing Green
+    d.add(Line(40, 105, 40, 45, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(30, 45, 50, 45, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(33, 41, 47, 41, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(36, 37, 44, 37, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(String(40, 27, "Ground Earth", fontName="Helvetica", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#15803d")))
+
+    # DC Cables Red
+    d.add(Line(75, 105, 75, 70, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+    d.add(Line(75, 70, 140, 70, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+    d.add(String(105, 75, "DC 240V", fontName="Helvetica-Bold", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#b91c1c")))
+
+    # 2. DC Isolator
+    d.add(Rect(140, 50, 50, 40, fillColor=colors.HexColor("#fef2f2"), strokeColor=colors.HexColor("#ef4444"), strokeWidth=1))
+    d.add(Line(150, 70, 180, 70, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.2))
+    d.add(Circle(155, 70, 2.5, fillColor=colors.HexColor("#dc2626"), strokeColor=colors.HexColor("#dc2626")))
+    d.add(Circle(175, 70, 2.5, fillColor=colors.HexColor("#dc2626"), strokeColor=colors.HexColor("#dc2626")))
+    d.add(Line(155, 70, 172, 78, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+    d.add(String(165, 38, "DC Isolator", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#991b1b")))
+    d.add(String(165, 28, "B 31A", fontName="Helvetica", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#7f1d1d")))
+
+    d.add(Line(190, 70, 220, 70, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+    d.add(Line(220, 70, 220, 115, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+
+    # 3. Grid Tied Solar Inverter Box
+    d.add(Rect(200, 115, 120, 140, rx=8, ry=8, fillColor=colors.HexColor("#f8fafc"), strokeColor=colors.HexColor("#1e293b"), strokeWidth=1.5))
+    d.add(String(260, 242, "Grid Tied Solar Inverter", fontName="Helvetica-Bold", fontSize=8, textAnchor="middle", fillColor=colors.HexColor("#0f172a")))
+    
+    # Wi-Fi Plug
+    d.add(Rect(280, 255, 25, 15, rx=3, ry=3, fillColor=colors.HexColor("#e0f2fe"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
+    d.add(String(292.5, 259, "Wi-Fi", fontName="Helvetica-Bold", fontSize=6, textAnchor="middle", fillColor=colors.HexColor("#0369a1")))
+    d.add(String(292.5, 274, "((( Wi-Fi Monitor )))", fontName="Helvetica", fontSize=6, textAnchor="middle", fillColor=colors.HexColor("#0284c7")))
+
+    # Converter Blocks
+    d.add(Rect(215, 135, 40, 40, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#475569"), strokeWidth=1))
+    d.add(String(235, 151, "DC", fontName="Helvetica-Bold", fontSize=9, textAnchor="middle", fillColor=colors.HexColor("#334155")))
+    
+    d.add(Rect(215, 185, 40, 40, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#475569"), strokeWidth=1))
+    d.add(String(235, 201, "AC", fontName="Helvetica-Bold", fontSize=9, textAnchor="middle", fillColor=colors.HexColor("#334155")))
+
+    d.add(Line(235, 175, 235, 185, strokeColor=colors.HexColor("#2563eb"), strokeWidth=1.5))
+    d.add(String(215, 120, "DC In", fontName="Helvetica", fontSize=6.5, fillColor=colors.HexColor("#64748b")))
+    d.add(String(290, 120, "AC Out", fontName="Helvetica", fontSize=6.5, fillColor=colors.HexColor("#64748b")))
+    d.add(String(260, 102, f"Make: {inverter_make} ({inverter_kw})", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#1e293b")))
+
+    d.add(Line(320, 140, 350, 140, strokeColor=colors.HexColor("#2563eb"), strokeWidth=1.5))
+    d.add(String(335, 145, "AC 230V", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#1d4ed8")))
+
+    # 4. AC Breaker
+    d.add(Rect(350, 120, 40, 40, fillColor=colors.HexColor("#eff6ff"), strokeColor=colors.HexColor("#3b82f6"), strokeWidth=1))
+    d.add(Line(360, 140, 380, 140, strokeColor=colors.HexColor("#1d4ed8"), strokeWidth=1.2))
+    d.add(Circle(363, 140, 2, fillColor=colors.HexColor("#1d4ed8"), strokeColor=colors.HexColor("#1d4ed8")))
+    d.add(Circle(377, 140, 2, fillColor=colors.HexColor("#1d4ed8"), strokeColor=colors.HexColor("#1d4ed8")))
+    d.add(Line(363, 140, 375, 147, strokeColor=colors.HexColor("#1d4ed8"), strokeWidth=1.5))
+    d.add(String(370, 108, "AC Breaker", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#1e40af")))
+
+    d.add(Line(390, 140, 415, 140, strokeColor=colors.HexColor("#2563eb"), strokeWidth=1.5))
+
+    # 5. Main Distribution Panel & Meter
+    d.add(Rect(415, 80, 60, 185, rx=5, ry=5, fillColor=colors.HexColor("#f8fafc"), strokeColor=colors.HexColor("#0f172a"), strokeWidth=1.5))
+    d.add(String(445, 252, "Main Panel", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#0f172a")))
+
+    d.add(Rect(422, 195, 46, 45, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
+    d.add(String(445, 222, "Meter", fontName="Helvetica-Bold", fontSize=9, textAnchor="middle", fillColor=colors.HexColor("#0369a1")))
+    d.add(String(445, 204, "[ P14 ]", fontName="Helvetica", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#0284c7")))
+
+    d.add(Rect(422, 125, 46, 30, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#475569"), strokeWidth=1))
+    d.add(String(445, 137, "Main Switch", fontName="Helvetica-Bold", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#334155")))
+
+    d.add(Line(468, 217, 485, 217, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.5))
+    d.add(PolyLine([481, 221, 487, 217, 481, 213], strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.5, fillColor=colors.HexColor("#16a34a")))
+    d.add(String(450, 272, "To Utility Grid (N / L)", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#15803d")))
+
+    d.add(Line(468, 140, 485, 140, strokeColor=colors.HexColor("#d97706"), strokeWidth=1.5))
+    d.add(PolyLine([481, 144, 487, 140, 481, 136], strokeColor=colors.HexColor("#d97706"), strokeWidth=1.5, fillColor=colors.HexColor("#d97706")))
+    d.add(String(450, 95, "To Local Load (N / L)", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#b45309")))
+
+    d.add(Line(445, 80, 445, 45, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(435, 45, 455, 45, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(438, 41, 452, 41, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(441, 37, 449, 37, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(String(445, 27, "Ground Earth", fontName="Helvetica", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#15803d")))
+
+    return d
+
+
+def generate_sldr_pdf(client: dict, company: dict) -> bytes:
+    buf = BytesIO()
+
+    def _draw_sldr_frame(canvas, doc):
+        canvas.saveState()
+        canvas.setLineWidth(1.5)
+        canvas.setStrokeColor(colors.HexColor("#0f172a"))
+        canvas.rect(0.8 * cm, 0.8 * cm, 19.4 * cm, 27.9 * cm)
+        canvas.setLineWidth(0.6)
+        canvas.rect(0.95 * cm, 0.95 * cm, 19.1 * cm, 27.6 * cm)
+        canvas.restoreState()
+
+    pdf = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.2 * cm,
+        rightMargin=1.2 * cm,
+        topMargin=1.1 * cm,
+        bottomMargin=1.1 * cm
+    )
+    story = []
+
+    client_name = (client.get('full_name') or client.get('name') or 'CONSUMER NAME').upper()
+    consumer_num = client.get('consumer_number') or '—'
+    bu_num = client.get('bu_number') or client.get('billing_unit') or '4710'
+    sol_kw = str(client.get('system_kw') or '5')
+    sol_wp = str(client.get('panel_wattage') or '540')
+    num_panels = str(client.get('num_panels') or '10')
+    panel_make = (client.get('panel_make') or 'GVP SOLAR').upper()
+    inverter_make = (client.get('inverter_make') or 'GROWATT').upper()
+    inverter_kw = str(client.get('inverter_capacity') or f"{sol_kw} KW").upper()
+
+    company_name = (company.get('company_name') or 'GVP SOLAR ENERGY').upper()
+
+    STYLE_SLDR_TITLE = ParagraphStyle('sldr_t', parent=styles['Normal'], fontSize=15, fontName='Helvetica-Bold', alignment=1, spaceAfter=8, textColor=colors.HexColor('#0f172a'))
+    STYLE_SLDR_META = ParagraphStyle('sldr_m', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', leading=15, textColor=colors.HexColor('#0f172a'))
+    STYLE_TBL_HDR = ParagraphStyle('sldr_th', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Bold', alignment=1, textColor=colors.HexColor('#0f172a'))
+    STYLE_TBL_CELL = ParagraphStyle('sldr_tc', parent=styles['Normal'], fontSize=8.5, fontName='Helvetica-Bold', alignment=1, textColor=colors.HexColor('#1e293b'))
+    STYLE_FTR = ParagraphStyle('sldr_ftr', parent=styles['Normal'], fontSize=8.5, fontName='Helvetica-Bold', textColor=colors.HexColor('#0f172a'))
+
+    story.append(Paragraph("<u><b>SINGLE LINE DIAGRAM</b></u>", STYLE_SLDR_TITLE))
+    story.append(Spacer(1, 0.15 * cm))
+
+    meta_text = (
+        f"<b>CONSUMER NAME :-</b> {client_name}<br/>"
+        f"<b>CONSUMER NO.:-</b>{consumer_num} <b>B.U.:-</b>{bu_num}<br/>"
+        f"<b>PROJECT:-</b> GCRT OF {sol_kw} KW"
+    )
+    story.append(Paragraph(meta_text, STYLE_SLDR_META))
+    story.append(Spacer(1, 0.2 * cm))
+
+    story.append(_build_sldr_drawing(sol_kw, sol_wp, num_panels, panel_make, inverter_make, inverter_kw))
+    story.append(Spacer(1, 0.25 * cm))
+
+    story.append(Paragraph("<b>TECHNICAL SPECIFICATIONS</b>", ParagraphStyle('tech_title', parent=styles['Normal'], fontSize=9.5, fontName='Helvetica-Bold', spaceAfter=4, textColor=colors.HexColor('#0f172a'))))
+
+    tech_table_data = [
+        [Paragraph("<b>PARAMETER</b>", STYLE_TBL_HDR), Paragraph("<b>SPECIFICATIONS</b>", STYLE_TBL_HDR), Paragraph("<b>MAKE</b>", STYLE_TBL_HDR), Paragraph("<b>KWP</b>", STYLE_TBL_HDR)],
+        [Paragraph("PV MODULES", STYLE_TBL_CELL), Paragraph(f"{sol_wp} Wp X {num_panels} Nos", STYLE_TBL_CELL), Paragraph(panel_make, STYLE_TBL_CELL), Paragraph(f"{sol_kw} KW", STYLE_TBL_CELL)],
+        [Paragraph("INVERTER", STYLE_TBL_CELL), Paragraph(f"{inverter_kw} X 1 NOS", STYLE_TBL_CELL), Paragraph(inverter_make, STYLE_TBL_CELL), Paragraph(f"{inverter_kw}", STYLE_TBL_CELL)],
+    ]
+    t_tech = Table(tech_table_data, colWidths=[4.5 * cm, 5.5 * cm, 4.6 * cm, 4.0 * cm])
+    t_tech.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.8, colors.HexColor('#000000')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f8fafc')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 5),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(t_tech)
+    story.append(Spacer(1, 0.4 * cm))
+
+    footer_table = Table([
+        [
+            Paragraph(f"<b>{company_name}</b><br/><br/><br/>Proprietor / Manager", STYLE_FTR),
+            Paragraph("___________________________<br/><br/><b>Consumer / Authorized Signature</b>", ParagraphStyle('sig_r', parent=STYLE_FTR, alignment=2))
+        ]
+    ], colWidths=[9.3 * cm, 9.3 * cm])
+    footer_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    story.append(footer_table)
+
+    pdf.build(story, onFirstPage=_draw_sldr_frame)
+    return buf.getvalue()
+
+
 def generate(doc_type: str, client: dict, company: dict) -> bytes:
     doc_type_clean = (doc_type or "").lower().strip()
     if doc_type_clean == "wcr":
         return generate_wcr_pdf(client, company)
+    if doc_type_clean == "sldr":
+        return generate_sldr_pdf(client, company)
 
     buf = BytesIO()
     pdf = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5*cm, rightMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
