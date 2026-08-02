@@ -3805,6 +3805,9 @@ class TaskUpdate(BaseModel):
     status: Optional[str] = None
     submission: Optional[Dict[str, Any]] = None
     remarks: Optional[str] = None
+    cancelled_by: Optional[str] = None
+    cancelled_at: Optional[str] = None
+    cancellation_reason: Optional[str] = None
 
 class MaterialRequestIn(BaseModel):
     client_id: str
@@ -3998,14 +4001,33 @@ async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = 
 
 @api_router.patch("/tasks/{task_id}")
 async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_user)):
+    existing_task = await db.tasks.find_one({"id": task_id, "company_id": user["company_id"]})
+    if not existing_task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if data.status == "cancelled":
+        if existing_task.get("status") in ["completed", "closed"]:
+            raise HTTPException(status_code=400, detail="Completed tasks cannot be cancelled")
+
     update = {k: v for k, v in data.model_dump().items() if v is not None}
     update["updated_at"] = now_iso()
+
+    if data.status == "cancelled":
+        update["cancelled_by"] = user.get("name") or user.get("id") or "Admin"
+        update["cancelled_at"] = now_iso()
+        if data.cancellation_reason:
+            update["cancellation_reason"] = data.cancellation_reason
+
     res = await db.tasks.update_one({"id": task_id, "company_id": user["company_id"]}, {"$set": update})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     t = await db.tasks.find_one({"id": task_id}, {"_id": 0})
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    if data.status == "cancelled":
+        task_type_str = str(t.get("task_type") or "")
+        await log_activity(user["company_id"], user["id"], user["name"], f"Cancelled Task: {task_type_str}", t.get("client_name", ""))
 
     if t.get("status") == "completed":
         await _record_workflow_details(t, user)
@@ -5505,6 +5527,7 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
             "total_out": tot_out,
             "returned": ret_qty,
             "available_qty": avail,
+            "minimum_stock": float(p.get("minimum_stock") or 0.0),
             "last_movement": last_mov,
             "status": status
         }
@@ -5601,6 +5624,10 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
             "return_reason": ie.get("remarks") or "Material Returned From Client",
             "status": "Returned"
         })
+
+    # Sort all_goods and available Ascending A-Z by Product Name
+    all_goods.sort(key=lambda x: (x.get("product") or "").lower())
+    available.sort(key=lambda x: (x.get("product") or "").lower())
 
     return {
         "all_goods": all_goods,

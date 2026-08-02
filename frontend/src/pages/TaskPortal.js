@@ -37,7 +37,7 @@ const SURVEY_CHECKLIST = [
   "Meter / grid connection identified",
   "Client requirements confirmed",
 ];
-const STATUS_OPTIONS = ["all", "pending", "in_progress", "completed"];
+const STATUS_OPTIONS = ["all", "pending", "in_progress", "completed", "cancelled"];
 
 // ─── Task Type → Workflow mapping ────────────────────────────────────────────
 const TASK_TYPE_WORKFLOWS = {
@@ -837,9 +837,13 @@ const TaskRow = React.memo(function TaskRow({ t, showAssignee = false, onSelect 
   );
 });
 
-// ─── Task Detail – renders correct workflow based on task_type ────────────────
 function TaskDetail({ task, onClose, onMutate, canMutate = true }) {
+  const { user } = useAuth();
   const { data: fetchedClient } = useClientDetail(task.client_id);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+
   const client = fetchedClient || {
     full_name: task.client_name || task.full_name || "—",
     sol_id: task.sol_id || "—",
@@ -870,23 +874,69 @@ function TaskDetail({ task, onClose, onMutate, canMutate = true }) {
     }
   };
 
+  const handleCancelTask = async () => {
+    setCancelling(true);
+    try {
+      await api.patch(`/tasks/${task.id}`, {
+        status: "cancelled",
+        cancellation_reason: cancelReason,
+        cancelled_by: user?.name || "Admin",
+        cancelled_at: new Date().toISOString()
+      });
+      toast.success("Task has been cancelled");
+      onMutate?.();
+      setCancelDialogOpen(false);
+      onClose();
+    } catch (e) {
+      toast.error(formatApiError(e) || "Failed to cancel task");
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const mapsUrl = client
     ? `https://maps.google.com/?q=${encodeURIComponent([client.address, client.city, client.state, client.pincode].filter(Boolean).join(", "))}`
     : "#";
+
+  const isCancellable = canMutate && task.status !== "completed" && task.status !== "closed" && task.status !== "cancelled";
 
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <span>{task.task_type}</span>
-            <span className="text-slate-400">—</span>
-            <span className="text-slate-600 font-normal truncate">{task.client_name}</span>
+          <DialogTitle className="flex items-center justify-between gap-2 pr-6">
+            <div className="flex items-center gap-2">
+              <span>{task.task_type}</span>
+              <span className="text-slate-400">—</span>
+              <span className="text-slate-600 font-normal truncate">{task.client_name}</span>
+            </div>
+            {isCancellable && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 font-semibold text-xs h-8 shrink-0"
+                onClick={() => setCancelDialogOpen(true)}
+                data-testid="cancel-task-btn"
+              >
+                <XCircle className="w-3.5 h-3.5 mr-1" /> Cancel Task
+              </Button>
+            )}
           </DialogTitle>
         </DialogHeader>
 
         {client && (
           <div className="space-y-4 mt-2">
+            {/* Cancelled Banner */}
+            {task.status === "cancelled" && (
+              <div className="text-xs bg-red-50 border border-red-200 text-red-800 rounded-lg p-3 space-y-1">
+                <div className="font-bold flex items-center gap-1.5">
+                  <XCircle className="w-4 h-4 text-red-600" /> Task Cancelled
+                </div>
+                <div>Cancelled by <span className="font-semibold">{task.cancelled_by || "Admin"}</span> {task.cancelled_at ? `on ${dayjs(task.cancelled_at).format('DD MMM YYYY, HH:mm')}` : ""}</div>
+                {task.cancellation_reason && <div>Reason: <span className="italic">{task.cancellation_reason}</span></div>}
+              </div>
+            )}
+
             {/* Client info card */}
             <Card className="border-slate-200">
               <CardContent className="p-4 grid md:grid-cols-2 gap-3 text-sm">
@@ -910,14 +960,14 @@ function TaskDetail({ task, onClose, onMutate, canMutate = true }) {
             </Card>
 
             {/* ── Workflow panel: driven by task_type ── */}
-            {(!canMutate || task.status === "completed") && (
+            {(!canMutate || task.status === "completed" || task.status === "cancelled") && (
               <div className="text-xs text-slate-500 italic bg-slate-50 border border-slate-200 rounded-lg p-3">
-                {task.status === "completed" ? "This task is completed and locked." : "Read-only — you are viewing another employee's task."}
+                {task.status === "completed" ? "This task is completed and locked." : task.status === "cancelled" ? "This task has been cancelled." : "Read-only — you are viewing another employee's task."}
               </div>
             )}
 
             {(() => {
-              const activeCanMutate = canMutate && task.status !== "completed";
+              const activeCanMutate = canMutate && task.status !== "completed" && task.status !== "cancelled";
               return (
                 <>
                   {workflow === "survey" && <SurveyWorkflow task={task} canMutate={activeCanMutate} updateStatus={updateStatus} />}
@@ -936,6 +986,44 @@ function TaskDetail({ task, onClose, onMutate, canMutate = true }) {
             })()}
           </div>
         )}
+
+        {/* Cancel Task Confirmation Dialog */}
+        <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+          <DialogContent className="max-w-md p-6 space-y-4">
+            <DialogHeader>
+              <DialogTitle className="text-lg font-bold text-slate-900">Cancel Task</DialogTitle>
+              <DialogDescription className="text-xs text-slate-500">
+                Are you sure you want to cancel this task?
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-2 py-2">
+              <Label className="text-xs font-semibold text-slate-700">Cancellation Reason (Optional)</Label>
+              <Textarea
+                placeholder="Enter reason for cancelling this task..."
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                className="text-xs h-20"
+                data-testid="cancel-reason-input"
+              />
+            </div>
+
+            <DialogFooter className="flex justify-end gap-2 pt-2 border-t">
+              <Button variant="outline" size="sm" onClick={() => setCancelDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={cancelling}
+                onClick={handleCancelTask}
+                data-testid="confirm-cancel-task-btn"
+              >
+                {cancelling ? "Cancelling..." : "Yes, Cancel Task"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   );
