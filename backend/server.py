@@ -7821,7 +7821,7 @@ async def get_client_data_detail(
     user=Depends(get_current_user)
 ):
     cid = user["company_id"]
-    or_conds = [{"id": client_id}, {"_id": client_id}]
+    or_conds: List[Dict[str, Any]] = [{"id": client_id}, {"_id": client_id}]
     if ObjectId.is_valid(client_id):
         or_conds.append({"_id": ObjectId(client_id)})
 
