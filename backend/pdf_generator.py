@@ -703,6 +703,9 @@ def generate(doc_type: str, client: dict, company: dict) -> bytes:
         "sldr": "SINGLE LINE DIAGRAM REPORT (SLDR)",
         "net_meter_agreement": "NET METER AGREEMENT",
         "vendor_agreement": "VENDOR AGREEMENT",
+        "quotation": "SOLAR PV SYSTEM QUOTATION",
+        "installation_report": "INSTALLATION & COMMISSIONING REPORT",
+        "completion_report": "FINAL SYSTEM COMPLETION REPORT",
     }
     story.append(Paragraph(title_map.get(doc_type_clean, doc_type_clean.upper()), H2))
     story.append(Paragraph(f"Document No.: <b>{client.get('sol_id','SOL-')}-{doc_type_clean.upper()}</b> &nbsp;&nbsp; Date: <b>{datetime.now(timezone.utc).strftime('%d %b %Y')}</b>", SMALL))

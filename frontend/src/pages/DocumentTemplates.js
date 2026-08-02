@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import api, { formatApiError } from "@/lib/api";
 import { queryKeys } from "@/lib/queryKeys";
@@ -6,13 +7,23 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, FileText, Download, User, Zap, Building2, CheckCircle2, ShieldCheck, FileCheck2, Layers } from "lucide-react";
+import { Search, FileText, Download, User, Zap, Building2, CheckCircle2, ShieldCheck, FileCheck2, Layers, CheckSquare } from "lucide-react";
 import { toast } from "sonner";
 
 export default function DocumentTemplates() {
+  const [searchParams] = useSearchParams();
+  const initialClientId = searchParams.get("client_id") || null;
   const [search, setSearch] = useState("");
-  const [selectedClientId, setSelectedClientId] = useState(null);
+  const [selectedClientId, setSelectedClientId] = useState(initialClientId);
   const [generatingDoc, setGeneratingDoc] = useState(null);
+
+  // Synchronize client_id from URL query if provided
+  useEffect(() => {
+    const cid = searchParams.get("client_id");
+    if (cid) {
+      setSelectedClientId(cid);
+    }
+  }, [searchParams]);
 
   // 1. Fetch Client List
   const { data: clientsData = [], isLoading: loadingClients } = useQuery({
@@ -23,6 +34,14 @@ export default function DocumentTemplates() {
     },
     staleTime: 60000,
   });
+
+  // Automatically select first client if none selected
+  useEffect(() => {
+    if (!selectedClientId && clientsData.length > 0) {
+      const first = clientsData[0];
+      setSelectedClientId(first.id || first.sol_id || first._id);
+    }
+  }, [clientsData, selectedClientId]);
 
   // 2. Fetch Selected Client Details (Parallel wave fetching for onboarding & specs)
   const { data: clientDetail, isLoading: loadingDetail } = useQuery({
@@ -45,22 +64,23 @@ export default function DocumentTemplates() {
     staleTime: 300000,
   });
 
-  // Filter clients
+  // Filter clients by Name, Mobile, Consumer Number, or SOL ID
   const filteredClients = clientsData.filter((c) => {
     const q = search.toLowerCase().trim();
     if (!q) return true;
     const name = (c.full_name || c.name || "").toLowerCase();
     const consumer = (c.consumer_number || "").toLowerCase();
     const mobile = (c.mobile || "").toLowerCase();
+    const solId = (c.sol_id || c.client_code || "").toLowerCase();
     const city = (c.city || "").toLowerCase();
-    return name.includes(q) || consumer.includes(q) || mobile.includes(q) || city.includes(q);
+    return name.includes(q) || consumer.includes(q) || mobile.includes(q) || solId.includes(q) || city.includes(q);
   });
 
   // Selected client object
-  const activeClient = clientDetail?.client || clientsData.find((c) => (c.id === selectedClientId || c.sol_id === selectedClientId)) || null;
+  const activeClient = clientDetail?.client || clientsData.find((c) => (c.id === selectedClientId || c.sol_id === selectedClientId || c._id === selectedClientId)) || null;
   const company = companyDoc || {};
 
-  // Handle direct PDF generation & download
+  // Handle direct PDF generation & immediate download
   const handleGeneratePdf = async (docType, docLabel) => {
     if (!selectedClientId) {
       toast.error("Please select a client first.");
@@ -95,11 +115,14 @@ export default function DocumentTemplates() {
   };
 
   const availableDocs = [
-    { type: "wcr", title: "WCR (Work Completion Report)", desc: "Complete 3-Page WCR with 28-row technical observation table, declaration, CMC certificate & Aadhaar card box.", bg: "border-emerald-500 bg-emerald-50/40 hover:bg-emerald-50", badge: "Primary 3-Page WCR" },
-    { type: "annexure", title: "Material Annexure", desc: "BOM component details, field verified quantities and panel/inverter serial specifications.", bg: "border-blue-500 bg-blue-50/40 hover:bg-blue-50", badge: "Material Spec" },
+    { type: "wcr", title: "WCR (Work Completion Report)", desc: "Complete 3-Page WCR with 28-row technical observation table, structural declaration, CMC certificate & Aadhaar box.", bg: "border-emerald-500 bg-emerald-50/40 hover:bg-emerald-50", badge: "3-Page Official WCR" },
+    { type: "annexure", title: "Annexure", desc: "Material & site specifications, panel/inverter serials and BOM component verification details.", bg: "border-blue-500 bg-blue-50/40 hover:bg-blue-50", badge: "Material Specs" },
     { type: "sldr", title: "SLDR (Single Line Diagram)", desc: "Electrical DC/AC protection layout, surge arresters, net meter & earthing pit certifications.", bg: "border-amber-500 bg-amber-50/40 hover:bg-amber-50", badge: "Single Line Diagram" },
-    { type: "vendor_agreement", title: "Vendor Agreement", desc: "Formal installation agreement, quality assurances, 5-year maintenance contract & warranty terms.", bg: "border-purple-500 bg-purple-50/40 hover:bg-purple-50", badge: "Legal Agreement" },
-    { type: "net_meter_agreement", title: "Net Metering Agreement", desc: "DISCOM grid synchronization terms, bi-directional meter parameters & tariff compliance.", bg: "border-sky-500 bg-sky-50/40 hover:bg-sky-50", badge: "DISCOM Compliance" },
+    { type: "vendor_agreement", title: "Vendor Agreement", desc: "Installation agreement, quality assurances, 5-year maintenance contract & warranty terms.", bg: "border-purple-500 bg-purple-50/40 hover:bg-purple-50", badge: "Legal Agreement" },
+    { type: "net_meter_agreement", title: "Net Meter Agreement", desc: "DISCOM grid synchronization terms, bi-directional meter parameters & tariff compliance.", bg: "border-sky-500 bg-sky-50/40 hover:bg-sky-50", badge: "DISCOM Compliance" },
+    { type: "quotation", title: "Quotation", desc: "Solar system commercial proposal, component pricing breakups & payment terms.", bg: "border-violet-500 bg-violet-50/40 hover:bg-violet-50", badge: "Commercial Proposal" },
+    { type: "installation_report", title: "Installation Report", desc: "On-site mechanical structure, panel mounting, electrical safety & inverter commissioning checklist.", bg: "border-teal-500 bg-teal-50/40 hover:bg-teal-50", badge: "Field Engineering" },
+    { type: "completion_report", title: "Completion Report", desc: "Final system handover report, meter testing summary & DISCOM grid synchronization certificate.", bg: "border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50", badge: "Project Handover" },
   ];
 
   return (
@@ -109,29 +132,29 @@ export default function DocumentTemplates() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <FileCheck2 className="w-7 h-7 text-blue-600" />
-            Documents Engine
+            Documents
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Automatic 100% code-based PDF generator for WCR, Annexure, SLDR, and Agreements. No templates or manual editing required.
+            Generate and download 100% code-based PDFs automatically using existing Client, Onboarding, and Company details.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 px-3 py-1 text-xs">
-            <ShieldCheck className="w-3.5 h-3.5 mr-1" /> Fresh Direct PDF Download
+            <ShieldCheck className="w-3.5 h-3.5 mr-1" /> Code-Based Direct Download
           </Badge>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Client List Search */}
+        {/* Left Panel: Searchable Client List */}
         <div className="lg:col-span-4 space-y-4">
-          <Card className="shadow-sm">
+          <Card className="shadow-sm border-slate-200">
             <CardHeader className="pb-3">
               <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
                 <User className="w-4 h-4 text-slate-500" />
-                Select Client
+                Search Client
               </CardTitle>
-              <CardDescription className="text-xs">Search client by name, consumer number, or mobile</CardDescription>
+              <CardDescription className="text-xs">Search by Name, Mobile, Consumer Number, or SOL ID</CardDescription>
               <div className="relative mt-2">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <Input
@@ -144,15 +167,15 @@ export default function DocumentTemplates() {
                 />
               </div>
             </CardHeader>
-            <CardContent className="p-0 max-h-[520px] overflow-y-auto divide-y divide-slate-100">
+            <CardContent className="p-0 max-h-[560px] overflow-y-auto divide-y divide-slate-100">
               {loadingClients ? (
                 <div className="p-6 text-center text-sm text-slate-500">Loading client list...</div>
               ) : filteredClients.length === 0 ? (
                 <div className="p-6 text-center text-sm text-slate-500">No matching clients found</div>
               ) : (
                 filteredClients.map((client) => {
-                  const cid = client.id || client.sol_id;
-                  const isSelected = selectedClientId === cid;
+                  const cid = client.id || client.sol_id || client._id;
+                  const isSelected = selectedClientId === cid || selectedClientId === client.sol_id;
                   return (
                     <div
                       key={cid}
@@ -167,8 +190,12 @@ export default function DocumentTemplates() {
                           {client.full_name || client.name || "Unnamed Client"}
                         </div>
                         <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                          <span>Consumer: {client.consumer_number || "—"}</span>
-                          {client.system_kw && <span>• {client.system_kw} kW</span>}
+                          <span>SOL ID: <strong className="text-slate-700">{client.sol_id || client.client_code || "—"}</strong></span>
+                          <span>•</span>
+                          <span>{client.mobile || "—"}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          Consumer: {client.consumer_number || "—"}
                         </div>
                       </div>
                       {isSelected && <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0 ml-2" />}
@@ -180,7 +207,7 @@ export default function DocumentTemplates() {
           </Card>
         </div>
 
-        {/* Right Column: Selected Client Info Preview & Available Document Generators */}
+        {/* Right Panel: Client Summary & Document Generator Cards */}
         <div className="lg:col-span-8 space-y-6">
           {!selectedClientId ? (
             <Card className="border-dashed border-2 border-slate-200 shadow-none">
@@ -188,73 +215,77 @@ export default function DocumentTemplates() {
                 <FileText className="w-12 h-12 text-slate-300 mx-auto" />
                 <h3 className="text-lg font-semibold text-slate-700">No Client Selected</h3>
                 <p className="text-sm text-slate-500 max-w-md mx-auto">
-                  Please choose a client from the search list on the left to view verified onboarding details and generate official documents.
+                  Please select a client from the left list to load their onboarding details and generate official documents.
                 </p>
               </CardContent>
             </Card>
           ) : (
             <>
-              {/* Selected Client Information Preview Card */}
+              {/* Client Summary Header Card */}
               <Card className="shadow-sm border-blue-100">
                 <CardHeader className="bg-slate-50/70 pb-3 border-b border-slate-100">
                   <div className="flex items-center justify-between">
                     <div>
                       <CardTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
                         <User className="w-4 h-4 text-blue-600" />
-                        {activeClient?.full_name || activeClient?.name || "Client Details"}
+                        {activeClient?.full_name || activeClient?.name || "Client Summary"}
                       </CardTitle>
                       <CardDescription className="text-xs mt-0.5">
                         Consumer No: <span className="font-semibold text-slate-700">{activeClient?.consumer_number || "—"}</span> &nbsp;|&nbsp;
-                        Sol ID: <span className="font-semibold text-slate-700">{activeClient?.sol_id || activeClient?.client_code || "—"}</span>
+                        SOL ID: <span className="font-semibold text-slate-700">{activeClient?.sol_id || activeClient?.client_code || "—"}</span>
                       </CardDescription>
                     </div>
                     <Badge variant="secondary" className="bg-blue-100 text-blue-800 border-none font-semibold">
-                      {activeClient?.system_kw || "0"} kW System
+                      {activeClient?.system_kw || "0"} kW Capacity
                     </Badge>
                   </div>
                 </CardHeader>
+
                 <CardContent className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                  {/* General Info */}
+                  {/* Client Info */}
                   <div className="p-3 bg-slate-50 rounded-lg space-y-1.5 border border-slate-100">
                     <div className="font-semibold text-slate-700 text-xs border-b pb-1 flex items-center gap-1">
-                      <User className="w-3.5 h-3.5 text-blue-600" /> General Info
+                      <User className="w-3.5 h-3.5 text-blue-600" /> Client Details
                     </div>
                     <div><span className="text-slate-500">Name:</span> <span className="font-medium text-slate-900">{activeClient?.full_name || "—"}</span></div>
-                    <div><span className="text-slate-500">Consumer Type:</span> <span className="font-medium text-slate-900">{activeClient?.consumer_type || "Private Sector"}</span></div>
-                    <div><span className="text-slate-500">Aadhaar:</span> <span className="font-medium text-slate-900">{activeClient?.aadhaar || activeClient?.aadhaar_number || "—"}</span></div>
                     <div><span className="text-slate-500">Mobile:</span> <span className="font-medium text-slate-900">{activeClient?.mobile || "—"}</span></div>
+                    <div><span className="text-slate-500">Consumer Type:</span> <span className="font-medium text-slate-900">{activeClient?.consumer_type || "Private Sector"}</span></div>
+                    <div><span className="text-slate-500">Subsidy:</span> <span className="font-medium text-slate-900">{activeClient?.subsidy_eligible ? "Eligible" : "Standard"}</span></div>
+                    <div><span className="text-slate-500">Aadhaar:</span> <span className="font-medium text-slate-900">{activeClient?.aadhaar || activeClient?.aadhaar_number || "—"}</span></div>
                   </div>
 
-                  {/* Solar System Info */}
+                  {/* Onboarding & System Info */}
                   <div className="p-3 bg-slate-50 rounded-lg space-y-1.5 border border-slate-100">
                     <div className="font-semibold text-slate-700 text-xs border-b pb-1 flex items-center gap-1">
-                      <Zap className="w-3.5 h-3.5 text-amber-600" /> Solar Info
+                      <Zap className="w-3.5 h-3.5 text-amber-600" /> Onboarding & System
                     </div>
                     <div><span className="text-slate-500">Capacity:</span> <span className="font-medium text-slate-900">{activeClient?.system_kw || "0"} kW ({activeClient?.panel_wattage || "540"}Wp)</span></div>
+                    <div><span className="text-slate-500">Phase:</span> <span className="font-medium text-slate-900">{activeClient?.phase_type || "3 Phase"}</span></div>
                     <div><span className="text-slate-500">Panels:</span> <span className="font-medium text-slate-900">{activeClient?.panel_make || "GVP SOLAR"} ({activeClient?.num_panels || 0} Nos)</span></div>
                     <div><span className="text-slate-500">Inverter:</span> <span className="font-medium text-slate-900">{activeClient?.inverter_make || "GROWATT"} ({activeClient?.inverter_capacity || "—"})</span></div>
                     <div><span className="text-slate-500">Inv Serial:</span> <span className="font-medium text-slate-900">{activeClient?.inverter_serial || "—"}</span></div>
                   </div>
 
-                  {/* Company Info */}
+                  {/* Company Details */}
                   <div className="p-3 bg-slate-50 rounded-lg space-y-1.5 border border-slate-100">
                     <div className="font-semibold text-slate-700 text-xs border-b pb-1 flex items-center gap-1">
-                      <Building2 className="w-3.5 h-3.5 text-purple-600" /> Company Info
+                      <Building2 className="w-3.5 h-3.5 text-purple-600" /> Company Details
                     </div>
                     <div><span className="text-slate-500">Vendor:</span> <span className="font-medium text-slate-900">{company.company_name || "GVP SOLAR ENERGY"}</span></div>
                     <div><span className="text-slate-500">GSTIN:</span> <span className="font-medium text-slate-900">{company.gst_number || company.gst || "27AAAAA0000A1Z5"}</span></div>
                     <div><span className="text-slate-500">Phone:</span> <span className="font-medium text-slate-900">{company.mobile || company.phone || "—"}</span></div>
+                    <div><span className="text-slate-500">Email:</span> <span className="font-medium text-slate-900 truncate block">{company.email || "—"}</span></div>
                     <div><span className="text-slate-500">Address:</span> <span className="font-medium text-slate-900 truncate block">{company.address || "Office Address"}</span></div>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Document Generation Buttons Grid */}
+              {/* Generate Documents Cards Grid */}
               <Card className="shadow-sm">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <Layers className="w-4 h-4 text-blue-600" />
-                    Available Document Generators
+                    Generate Documents
                   </CardTitle>
                   <CardDescription className="text-xs">
                     Click any document below to generate a fresh, complete PDF from code and download immediately.
@@ -284,7 +315,7 @@ export default function DocumentTemplates() {
                           data-testid={`generate-${doc.type}-btn`}
                         >
                           <Download className="w-3.5 h-3.5 mr-2" />
-                          {isGenerating ? "Generating PDF..." : "Generate & Download"}
+                          {isGenerating ? "Generating..." : "Generate"}
                         </Button>
                       </div>
                     );

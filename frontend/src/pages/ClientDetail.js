@@ -249,11 +249,11 @@ export default function ClientDetail() {
             <Button
               variant="outline"
               size="sm"
-              className="ml-auto border-indigo-300 bg-gradient-to-r from-indigo-50 to-blue-50 text-indigo-700 hover:from-indigo-100 hover:to-blue-100 hover:text-indigo-800"
-              onClick={() => setTplOpen(true)}
+              className="ml-auto border-blue-300 bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 hover:from-blue-100 hover:to-indigo-100 hover:text-blue-800"
+              onClick={() => navigate(`/templates?client_id=${id}`)}
               data-testid="generate-from-template-btn"
             >
-              <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Generate from Template (.docx)
+              <FileText className="w-3.5 h-3.5 mr-1.5" /> Open Documents Hub
             </Button>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -271,8 +271,6 @@ export default function ClientDetail() {
           </div>
         </CardContent>
       </Card>
-
-      <TemplateGenerateDialog open={tplOpen} onOpenChange={setTplOpen} clientId={id} onGenerated={invalidate} />
 
       <div className="grid lg:grid-cols-3 gap-6">
         <Card className="border-slate-200 lg:col-span-2">
