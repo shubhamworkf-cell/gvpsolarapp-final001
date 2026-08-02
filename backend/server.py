@@ -4224,17 +4224,27 @@ async def cancel_material_request(req_id: str, user=Depends(get_current_user)):
 
 @api_router.post("/material-requests/{req_id}/retry")
 async def create_retry_material_request(req_id: str, user=Depends(get_current_user)):
-    orig_req = await db.material_requests.find_one({"id": req_id, "company_id": user["company_id"]})
+    cid = user["company_id"]
+    or_conds = [{"id": req_id}, {"_id": req_id}]
+
+    orig_req = await db.material_requests.find_one({"$or": or_conds, "company_id": cid})
+    if not orig_req:
+        orig_req = await db.material_requests.find_one({"$or": or_conds})
     if not orig_req:
         raise HTTPException(status_code=404, detail="Original request not found")
     if (orig_req.get("status") or "").lower() != "rejected":
         raise HTTPException(status_code=400, detail="Only rejected requests can be retried")
 
-    client = await db.clients.find_one({"id": orig_req["client_id"], "company_id": user["company_id"]}, {"_id": 0})
-    
+    client_id = orig_req.get("client_id")
+    client = None
+    if client_id:
+        client = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": cid}, {"_id": 0})
+        if not client:
+            client = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
+
     year = datetime.now(timezone.utc).year
     seq_doc = await db.counters.find_one_and_update(
-        {"company_id": user["company_id"], "year": year, "type": "material_request"},
+        {"company_id": cid, "year": year, "type": "material_request"},
         {"$inc": {"seq": 1}},
         upsert=True
     )
@@ -4243,8 +4253,8 @@ async def create_retry_material_request(req_id: str, user=Depends(get_current_us
 
     retry_doc = {
         "id": str(uuid.uuid4()),
-        "company_id": user["company_id"],
-        "client_id": orig_req["client_id"],
+        "company_id": cid,
+        "client_id": client_id,
         "client_name": client.get("full_name") if client else orig_req.get("client_name"),
         "sol_id": client.get("sol_id") if client else orig_req.get("sol_id"),
         "requested_by": user["id"],
@@ -4253,8 +4263,6 @@ async def create_retry_material_request(req_id: str, user=Depends(get_current_us
         "items": orig_req.get("items") or [],
         "remarks": f"Retry for {orig_req.get('request_no')}",
         "status": "pending",
-        "retry_of_id": req_id,
-        "retry_of_request_no": orig_req.get("request_no"),
         "approval": None,
         "delivery": None,
         "created_at": now_iso(),
@@ -4262,8 +4270,13 @@ async def create_retry_material_request(req_id: str, user=Depends(get_current_us
     }
     await db.material_requests.insert_one(retry_doc)
     retry_doc.pop("_id", None)
-    await push_notification(user["company_id"], "admin", "Retry Material Request Created", f"{retry_doc.get('client_name')} · {request_no}")
-    await log_activity(user["company_id"], user["id"], user["name"], "Created Retry Material Request", retry_doc.get("client_name") or "")
+
+    # Attach response metadata for frontend
+    retry_doc["retry_of_id"] = req_id
+    retry_doc["retry_of_request_no"] = orig_req.get("request_no")
+
+    await push_notification(cid, "admin", "Retry Material Request Created", f"{retry_doc.get('client_name')} · {request_no}")
+    await log_activity(cid, user["id"], user["name"], "Created Retry Material Request", retry_doc.get("client_name") or "")
     return await _enrich_request_with_stock(retry_doc)
 
 
@@ -7906,7 +7919,40 @@ async def get_client_data_detail(
     if tab in ("all", "material"):
         coros["material_deliveries"] = db.material_deliveries.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
     if tab in ("all", "documents"):
-        coros["documents"] = db.documents.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+        async def get_client_documents():
+            raw_docs = await db.documents.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+            existing_ids = {d.get("id") or d.get("file_id") for d in raw_docs if (d.get("id") or d.get("file_id"))}
+            
+            # Fetch completed tasks with uploaded files/documents for this client
+            completed_tasks = await db.tasks.find({
+                "company_id": cid,
+                "client_id": client_id,
+                "status": "completed"
+            }, {"_id": 0}).to_list(100)
+
+            for t in completed_tasks:
+                sub = t.get("submission") or {}
+                file_id = sub.get("file_id") or sub.get("id")
+                filename = sub.get("filename") or sub.get("original_filename") or f"{t.get('task_type')}.pdf"
+                if file_id and file_id not in existing_ids:
+                    doc = {
+                        "id": file_id,
+                        "company_id": cid,
+                        "client_id": client_id,
+                        "label": t.get("title") or t.get("task_type") or "Uploaded Document",
+                        "filename": filename,
+                        "created_at": sub.get("submitted_at") or t.get("updated_at") or now_iso(),
+                        "details": {
+                            "completed_date": sub.get("submitted_at") or t.get("updated_at") or now_iso(),
+                            "completed_by": t.get("assigned_to_name") or "Employee",
+                            "attachments": { (t.get("title") or t.get("task_type") or "Document"): file_id }
+                        }
+                    }
+                    raw_docs.append(doc)
+                    existing_ids.add(file_id)
+
+            return raw_docs
+        coros["documents"] = get_client_documents()
     if tab in ("all", "meter"):
         coros["meter_testings"] = db.meter_testings.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
     if tab in ("all", "installation"):

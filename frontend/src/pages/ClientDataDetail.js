@@ -343,23 +343,50 @@ export default function ClientDataDetail() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
-        <TabsList className="bg-slate-100 flex flex-wrap h-auto gap-1 p-1">
-          <TabsTrigger value="info" data-testid="tab-info"><User className="w-3.5 h-3.5 mr-1.5" /> Basic Info</TabsTrigger>
-          <TabsTrigger value="survey" data-testid="tab-survey"><ClipboardList className="w-3.5 h-3.5 mr-1.5" /> Survey Details <Badge variant="outline" className="ml-1.5 text-[10px]">{surveys.length}</Badge></TabsTrigger>
-          <TabsTrigger value="material" data-testid="tab-material"><Truck className="w-3.5 h-3.5 mr-1.5" /> Material Delivery <Badge variant="outline" className="ml-1.5 text-[10px]">{materialDeliveries.length}</Badge></TabsTrigger>
-          <TabsTrigger value="material_history" data-testid="tab-material-history"><Package className="w-3.5 h-3.5 mr-1.5" /> Material History <Badge variant="outline" className="ml-1.5 text-[10px]">{materialRequests.length}</Badge></TabsTrigger>
-          <TabsTrigger value="material_ledger" data-testid="tab-material-ledger"><ScrollText className="w-3.5 h-3.5 mr-1.5" /> Material Ledger</TabsTrigger>
-          <TabsTrigger value="documents" data-testid="tab-documents"><FileText className="w-3.5 h-3.5 mr-1.5" /> Documents <Badge variant="outline" className="ml-1.5 text-[10px]">{documents.length}</Badge></TabsTrigger>
-          <TabsTrigger value="meter" data-testid="tab-meter"><Gauge className="w-3.5 h-3.5 mr-1.5" /> Meter Testing <Badge variant="outline" className="ml-1.5 text-[10px]">{meterTestings.length}</Badge></TabsTrigger>
-          <TabsTrigger value="installation" data-testid="tab-installation"><Wrench className="w-3.5 h-3.5 mr-1.5" /> Installation <Badge variant="outline" className="ml-1.5 text-[10px]">{installations.length}</Badge></TabsTrigger>
-          <TabsTrigger value="verification" data-testid="tab-verification"><CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Verification <Badge variant="outline" className="ml-1.5 text-[10px]">{verifications.length}</Badge></TabsTrigger>
-          <TabsTrigger value="assets" data-testid="tab-assets"><ImageIcon className="w-3.5 h-3.5 mr-1.5" /> Installation Assets <Badge variant="outline" className="ml-1.5 text-[10px]">{assets.length}</Badge></TabsTrigger>
-          <TabsTrigger value="hva" data-testid="tab-hva"><Package className="w-3.5 h-3.5 mr-1.5" /> High Value Assets <Badge variant="outline" className="ml-1.5 text-[10px]">{highValueAssets.length}</Badge></TabsTrigger>
-          <TabsTrigger value="monitoring" data-testid="tab-monitoring"><Activity className="w-3.5 h-3.5 mr-1.5" /> Inverter Monitoring</TabsTrigger>
-          <TabsTrigger value="tickets" data-testid="tab-tickets"><Wrench className="w-3.5 h-3.5 mr-1.5" /> Service Tickets <Badge variant="outline" className="ml-1.5 text-[10px]">{tickets.length}</Badge></TabsTrigger>
-          <TabsTrigger value="tasks" data-testid="tab-tasks"><ClipboardList className="w-3.5 h-3.5 mr-1.5" /> Tasks & Team <Badge variant="outline" className="ml-1.5 text-[10px]">{tasks.length}</Badge></TabsTrigger>
-          <TabsTrigger value="activity" data-testid="tab-activity"><Activity className="w-3.5 h-3.5 mr-1.5" /> Activity Log <Badge variant="outline" className="ml-1.5 text-[10px]">{activityLogs.length}</Badge></TabsTrigger>
-        </TabsList>
+        <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-2 space-y-2">
+          {/* Overview & Management */}
+          <div className="flex flex-wrap items-center gap-1.5 pb-1.5 border-b border-slate-200/60">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 min-w-[110px]">Overview</span>
+            <TabsList className="bg-white border border-slate-200/60 shadow-xs flex flex-wrap h-auto gap-1 p-1 rounded-xl">
+              <TabsTrigger value="info" data-testid="tab-info"><User className="w-3.5 h-3.5 mr-1.5" /> Basic Info</TabsTrigger>
+              <TabsTrigger value="monitoring" data-testid="tab-monitoring"><Activity className="w-3.5 h-3.5 mr-1.5" /> Monitoring</TabsTrigger>
+              <TabsTrigger value="tasks" data-testid="tab-tasks"><ClipboardList className="w-3.5 h-3.5 mr-1.5" /> Tasks & Team <Badge variant="outline" className="ml-1.5 text-[10px]">{tasks.length}</Badge></TabsTrigger>
+              <TabsTrigger value="activity" data-testid="tab-activity"><Activity className="w-3.5 h-3.5 mr-1.5" /> Activity Log <Badge variant="outline" className="ml-1.5 text-[10px]">{activityLogs.length}</Badge></TabsTrigger>
+            </TabsList>
+          </div>
+
+          {/* Field Work & Installation */}
+          <div className="flex flex-wrap items-center gap-1.5 pb-1.5 border-b border-slate-200/60">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 min-w-[110px]">Field & Site</span>
+            <TabsList className="bg-white border border-slate-200/60 shadow-xs flex flex-wrap h-auto gap-1 p-1 rounded-xl">
+              <TabsTrigger value="survey" data-testid="tab-survey"><ClipboardList className="w-3.5 h-3.5 mr-1.5" /> Survey <Badge variant="outline" className="ml-1.5 text-[10px]">{surveys.length}</Badge></TabsTrigger>
+              <TabsTrigger value="installation" data-testid="tab-installation"><Wrench className="w-3.5 h-3.5 mr-1.5" /> Installation <Badge variant="outline" className="ml-1.5 text-[10px]">{installations.length}</Badge></TabsTrigger>
+              <TabsTrigger value="verification" data-testid="tab-verification"><CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Verification <Badge variant="outline" className="ml-1.5 text-[10px]">{verifications.length}</Badge></TabsTrigger>
+              <TabsTrigger value="meter" data-testid="tab-meter"><Gauge className="w-3.5 h-3.5 mr-1.5" /> Meter Testing <Badge variant="outline" className="ml-1.5 text-[10px]">{meterTestings.length}</Badge></TabsTrigger>
+              <TabsTrigger value="assets" data-testid="tab-assets"><ImageIcon className="w-3.5 h-3.5 mr-1.5" /> Site Photos <Badge variant="outline" className="ml-1.5 text-[10px]">{assets.length}</Badge></TabsTrigger>
+              <TabsTrigger value="hva" data-testid="tab-hva"><Package className="w-3.5 h-3.5 mr-1.5" /> High Value Goods <Badge variant="outline" className="ml-1.5 text-[10px]">{highValueAssets.length}</Badge></TabsTrigger>
+            </TabsList>
+          </div>
+
+          {/* Materials & Stock */}
+          <div className="flex flex-wrap items-center gap-1.5 pb-1.5 border-b border-slate-200/60">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 min-w-[110px]">Materials</span>
+            <TabsList className="bg-white border border-slate-200/60 shadow-xs flex flex-wrap h-auto gap-1 p-1 rounded-xl">
+              <TabsTrigger value="material" data-testid="tab-material"><Truck className="w-3.5 h-3.5 mr-1.5" /> Delivery <Badge variant="outline" className="ml-1.5 text-[10px]">{materialDeliveries.length}</Badge></TabsTrigger>
+              <TabsTrigger value="material_history" data-testid="tab-material-history"><Package className="w-3.5 h-3.5 mr-1.5" /> History <Badge variant="outline" className="ml-1.5 text-[10px]">{materialRequests.length}</Badge></TabsTrigger>
+              <TabsTrigger value="material_ledger" data-testid="tab-material-ledger"><ScrollText className="w-3.5 h-3.5 mr-1.5" /> Ledger</TabsTrigger>
+            </TabsList>
+          </div>
+
+          {/* Documents & Support */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 min-w-[110px]">Docs & Service</span>
+            <TabsList className="bg-white border border-slate-200/60 shadow-xs flex flex-wrap h-auto gap-1 p-1 rounded-xl">
+              <TabsTrigger value="documents" data-testid="tab-documents"><FileText className="w-3.5 h-3.5 mr-1.5" /> Documents <Badge variant="outline" className="ml-1.5 text-[10px]">{documents.length}</Badge></TabsTrigger>
+              <TabsTrigger value="tickets" data-testid="tab-tickets"><Wrench className="w-3.5 h-3.5 mr-1.5" /> Tickets <Badge variant="outline" className="ml-1.5 text-[10px]">{tickets.length}</Badge></TabsTrigger>
+            </TabsList>
+          </div>
+        </div>
 
         <div style={{ display: tab === "info" ? "block" : "none" }}>
           <BasicInfoSection client={c} />

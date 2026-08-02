@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, fileUrl } from "@/lib/api";
+import { compressImageIfNeeded } from "@/lib/imageCompressor";
 import { useAuth } from "@/context/AuthContext";
 import { useTaskList, useInvalidateTasks } from "@/hooks/useTasks";
 import { useMaterialRequestList, useInvalidateMaterialRequests } from "@/hooks/useMaterialRequests";
