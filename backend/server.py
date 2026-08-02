@@ -3643,6 +3643,44 @@ async def generate_public_document(payload: Dict[str, Any], user=Depends(get_cur
     
     return {"id": file_id, "filename": filename, "label": _document_label(doc_type)}
 
+@api_router.post("/documents/download-direct")
+async def download_direct_document(payload: Dict[str, Any], user=Depends(get_current_user)):
+    client_id = payload.get("client_id")
+    doc_type = (payload.get("doc_type") or "wcr").lower().strip()
+    
+    if not client_id:
+        raise HTTPException(status_code=400, detail="client_id is required")
+
+    company_doc = await db.companies.find_one({"id": user["company_id"]}, {"_id": 0}) or {}
+    client_doc = await db.clients.find_one({
+        "$or": [{"id": client_id}, {"_id": client_id}, {"sol_id": client_id}],
+        "company_id": user["company_id"]
+    }, {"_id": 0})
+    
+    if not client_doc:
+        client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"_id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
+        
+    if not client_doc:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    pdf_bytes = pdf_generator.generate(doc_type, client_doc, company_doc)
+    client_name = client_doc.get("full_name") or "Client"
+    safe_name = "".join(c for c in client_name if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+    filename = f"{doc_type.upper()}_{safe_name}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
+
+@api_router.get("/documents/download-direct/{client_id}/{doc_type}")
+async def download_direct_document_get(client_id: str, doc_type: str, user=Depends(get_current_user)):
+    return await download_direct_document({"client_id": client_id, "doc_type": doc_type}, user)
+
 @api_router.get("/documents/generated")
 async def list_generated_documents(doc_type: Optional[str] = None, user=Depends(get_current_user)):
     query = {

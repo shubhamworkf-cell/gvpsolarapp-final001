@@ -507,7 +507,192 @@ def generate_document(doc_type: str, data: dict, company: dict) -> bytes:
     return buf.getvalue()
 
 
+def generate_wcr_pdf(client: dict, company: dict) -> bytes:
+    buf = BytesIO()
+    pdf = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.2 * cm,
+        rightMargin=1.2 * cm,
+        topMargin=1.2 * cm,
+        bottomMargin=1.2 * cm
+    )
+    story = []
+
+    company_name = company.get('company_name', 'GVP SOLAR ENERGY')
+    vendor_title = f"<b><font size='14' color='#1e3a8a'>{company_name}</font></b>"
+    gst_no = company.get('gst_number') or company.get('gst') or '27AAAAA0000A1Z5'
+    address = company.get('address') or 'Office Address, Maharashtra'
+    phone = company.get('mobile') or company.get('phone') or '9876543210'
+    
+    header_para = Paragraph(
+        f"{vendor_title}<br/>"
+        f"<b>GST NO:</b> {gst_no} &nbsp;|&nbsp; <b>Phone:</b> {phone}<br/>"
+        f"<b>Office Address:</b> {address}",
+        ParagraphStyle('wcr_hdr', parent=styles['BodyText'], fontSize=9, leading=12, alignment=1)
+    )
+    story.append(header_para)
+    story.append(Spacer(1, 0.3 * cm))
+    
+    title_p = Paragraph(
+        "<b><font size='11' color='#0f172a'>WORK COMPLETION REPORT FOR SOLAR POWER PLANT</font></b>",
+        ParagraphStyle('wcr_title', parent=styles['Heading1'], alignment=1, spaceAfter=6)
+    )
+    story.append(title_p)
+    story.append(Spacer(1, 0.2 * cm))
+
+    # --- PAGE 1: 28-row Table ---
+    client_name = client.get('full_name') or client.get('name') or 'Consumer Name'
+    consumer_num = client.get('consumer_number') or '—'
+    site_addr = f"{client.get('address','')}, {client.get('city','')}, {client.get('state','')} - {client.get('pincode','')}".strip(', -')
+    category = client.get('consumer_type') or 'Private Sector'
+    sanction_no = client.get('sanction_number') or 'INA'
+    sol_kw = str(client.get('system_kw') or '0')
+    sol_wp = str(client.get('panel_wattage') or '540')
+    num_panels = str(client.get('num_panels') or '0')
+    panel_make = client.get('panel_make') or 'GVP SOLAR'
+    almm_model = client.get('almm_model_number') or 'INA'
+    inverter_make = client.get('inverter_make') or 'GROWATT'
+    inverter_kw = str(client.get('inverter_capacity') or f"{sol_kw}KW")
+    inverter_sr = client.get('inverter_serial') or 'INA'
+
+    table_data = [
+        [Paragraph("<b>Sr.No</b>", BOLD_SMALL), Paragraph("<b>Component</b>", BOLD_SMALL), Paragraph("<b>Observation</b>", BOLD_SMALL), Paragraph("<b>Value / Details</b>", BOLD_SMALL)],
+        [Paragraph("1", SMALL), Paragraph("Name", BOLD_SMALL), Paragraph("Observation", SMALL), Paragraph(client_name, SMALL)],
+        [Paragraph("2", SMALL), Paragraph("Consumer Number", BOLD_SMALL), Paragraph("Observation", SMALL), Paragraph(consumer_num, SMALL)],
+        [Paragraph("3", SMALL), Paragraph("Site / Location Address", BOLD_SMALL), Paragraph("Observation", SMALL), Paragraph(site_addr, SMALL)],
+        [Paragraph("4", SMALL), Paragraph("Category", BOLD_SMALL), Paragraph("Govt / Private Sector", SMALL), Paragraph(category, SMALL)],
+        [Paragraph("5", SMALL), Paragraph("Sanction Number", BOLD_SMALL), Paragraph("Observation", SMALL), Paragraph(sanction_no, SMALL)],
+        [Paragraph("6", SMALL), Paragraph("Sanctioned Capacity", BOLD_SMALL), Paragraph("Solar PV System (KW)", SMALL), Paragraph(f"{sol_kw} KW", SMALL)],
+        [Paragraph("7", SMALL), Paragraph("Installed Capacity", BOLD_SMALL), Paragraph("Solar PV System (KW)", SMALL), Paragraph(f"{sol_kw} KW", SMALL)],
+        [Paragraph("8", SMALL), Paragraph("Make & Type of Modules", BOLD_SMALL), Paragraph("Specification of Modules", SMALL), Paragraph(panel_make, SMALL)],
+        [Paragraph("9", SMALL), Paragraph("ALMM Model Number", BOLD_SMALL), Paragraph("Specification of Modules", SMALL), Paragraph(almm_model, SMALL)],
+        [Paragraph("10", SMALL), Paragraph("Wattage per Module", BOLD_SMALL), Paragraph("Specification of Modules", SMALL), Paragraph(f"{sol_wp} Wp", SMALL)],
+        [Paragraph("11", SMALL), Paragraph("No. of Modules", BOLD_SMALL), Paragraph("Specification of Modules", SMALL), Paragraph(num_panels, SMALL)],
+        [Paragraph("12", SMALL), Paragraph("Total Capacity (KWP)", BOLD_SMALL), Paragraph("Specification of Modules", SMALL), Paragraph(f"{sol_kw} KWP", SMALL)],
+        [Paragraph("13", SMALL), Paragraph("Warranty Details", BOLD_SMALL), Paragraph("Product + Performance", SMALL), Paragraph("12+15 YEARS", SMALL)],
+        [Paragraph("14", SMALL), Paragraph("Make & Model of Inverter", BOLD_SMALL), Paragraph("PCU", SMALL), Paragraph(inverter_make, SMALL)],
+        [Paragraph("15", SMALL), Paragraph("Rating", BOLD_SMALL), Paragraph("PCU", SMALL), Paragraph(inverter_kw, SMALL)],
+        [Paragraph("16", SMALL), Paragraph("Type of Charge Controller", BOLD_SMALL), Paragraph("MPPT", SMALL), Paragraph("MPPT", SMALL)],
+        [Paragraph("17", SMALL), Paragraph("Capacity of Inverter", BOLD_SMALL), Paragraph("PCU", SMALL), Paragraph(inverter_kw, SMALL)],
+        [Paragraph("18", SMALL), Paragraph("SR Number", BOLD_SMALL), Paragraph("PCU", SMALL), Paragraph(inverter_sr, SMALL)],
+        [Paragraph("19", SMALL), Paragraph("Year of Manufacturing", BOLD_SMALL), Paragraph("PCU", SMALL), Paragraph("2025", SMALL)],
+        [Paragraph("20", SMALL), Paragraph("Separate Earthings", BOLD_SMALL), Paragraph("Earthing & Protection", SMALL), Paragraph("3 Earthings (< 5 Ohms)", SMALL)],
+        [Paragraph("21", SMALL), Paragraph("Certification", BOLD_SMALL), Paragraph("Earthing & Protection", SMALL), Paragraph("Certified as per IS 3043 / CEA Safety Guidelines", SMALL)],
+        [Paragraph("22", SMALL), Paragraph("Lightning Arrester", BOLD_SMALL), Paragraph("Earthing & Protection", SMALL), Paragraph("Yes", SMALL)],
+    ]
+
+    t1 = Table(table_data, colWidths=[1.2 * cm, 4.8 * cm, 4.5 * cm, 7.5 * cm])
+    t1.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor("#6b7280")),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('PADDING', (0, 0), (-1, -1), 2.5),
+    ]))
+    story.append(t1)
+    
+    # Page 1 Break
+    story.append(PageBreak())
+
+    # --- PAGE 2: DECLARATION & UNDERTAKING ---
+    story.append(header_para)
+    story.append(Spacer(1, 0.4 * cm))
+    story.append(Paragraph("<b><font size='12' color='#0f172a'>DECLARATION & STRUCTURAL STABILITY UNDERTAKING</font></b>", H2))
+    story.append(Spacer(1, 0.4 * cm))
+
+    p1_text = (
+        f"We <b>{company_name}</b> [Vendor] & <b>{client_name}</b> [Consumer] bearing Consumer Number "
+        f"<b>{consumer_num}</b> ensured structural stability of installed solar power plant and obtained "
+        f"requisite permissions from the concerned authority. If in future, by virtue of any means due to "
+        f"collapsing or damage to the installed solar power plant, MSEDCL will not be held responsible for "
+        f"any loss to property or human life, if any."
+    )
+    story.append(Paragraph(p1_text, BODY))
+    story.append(Spacer(1, 0.5 * cm))
+
+    p2_text = (
+        "This is to certify above installed Solar PV System is working properly with electrical safety & "
+        "islanding switch. In case of any presence of backup inverter, an arrangement should be made in such way "
+        "the backup inverter supply should never be synchronized with solar inverter to avoid any electrical accident "
+        "due to back feeding. We will be held responsible for non-working of islanding mechanism and back feed to the "
+        "de-energized grid."
+    )
+    story.append(Paragraph(p2_text, BODY))
+    story.append(Spacer(1, 2.0 * cm))
+
+    # Bottom Signatures
+    sign2 = Table([
+        [
+            Paragraph(f"<b>Signature [Vendor]</b><br/><br/><br/>______________________<br/>For {company_name}", SMALL),
+            Paragraph(f"<b>Signature [Consumer]</b><br/><br/><br/>______________________<br/>{client_name}", SMALL)
+        ]
+    ], colWidths=[9 * cm, 9 * cm])
+    sign2.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+    story.append(sign2)
+    story.append(Spacer(1, 1.5 * cm))
+
+    footer_p = Paragraph(f"<b>Office Address:</b> {address} &nbsp;|&nbsp; <b>Phone:</b> {phone}", SMALL)
+    story.append(footer_p)
+
+    # Page 2 Break
+    story.append(PageBreak())
+
+    # --- PAGE 3: GUARANTEE CERTIFICATE UNDERTAKING ---
+    story.append(header_para)
+    story.append(Spacer(1, 0.4 * cm))
+    story.append(Paragraph("<b><font size='12' color='#0f172a'>Guarantee Certificate Undertaking to be submitted by Vendor</font></b>", H2))
+    story.append(Spacer(1, 0.4 * cm))
+
+    body3_text = (
+        "The undersigned will provide services to the consumers for repairs/maintenance of the RTS plant "
+        "free of cost for 5 years of the Comprehensive Maintenance Contract (CMC) period from the date of "
+        "commissioning of the plant. Non-performing/under-performing system components will be replaced/repaired "
+        "free of cost during the CMC period."
+    )
+    story.append(Paragraph(body3_text, BODY))
+    story.append(Spacer(1, 0.6 * cm))
+
+    story.append(Paragraph("<b>Identity Details of Consumer : Aadhaar Card</b>", BOLD_SMALL))
+    aadhaar_num = client.get('aadhaar') or client.get('aadhaar_number') or 'XXXX-XXXX-XXXX'
+    story.append(Paragraph(f"<b>Aadhaar Number:</b> {aadhaar_num}", SMALL))
+    story.append(Spacer(1, 0.4 * cm))
+
+    # Photo Box / Card Container
+    aadhaar_box_data = [
+        [Paragraph("<b>[ Client Aadhaar / Identity Verification Card ]</b>", ParagraphStyle('a_center', parent=SMALL, alignment=1))],
+        [Paragraph(f"Aadhaar No: {aadhaar_num}<br/>Client Name: {client_name}<br/>Consumer No: {consumer_num}", ParagraphStyle('a_box', parent=SMALL, alignment=1))]
+    ]
+    aadhaar_table = Table(aadhaar_box_data, colWidths=[12 * cm])
+    aadhaar_table.setStyle(TableStyle([
+        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor("#3b82f6")),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#eff6ff")),
+        ('PADDING', (0, 0), (-1, -1), 10),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+    ]))
+    story.append(aadhaar_table)
+    story.append(Spacer(1, 1.5 * cm))
+
+    sign3 = Table([
+        [
+            Paragraph(f"<b>Signature [Vendor]</b><br/><br/><br/>______________________<br/>For {company_name}", SMALL),
+            Paragraph("<b>Stamp & Seal</b><br/><br/><br/>[ Vendor Seal ]", SMALL)
+        ]
+    ], colWidths=[9 * cm, 9 * cm])
+    sign3.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+    story.append(sign3)
+    story.append(Spacer(1, 1.5 * cm))
+
+    story.append(footer_p)
+
+    pdf.build(story)
+    return buf.getvalue()
+
+
 def generate(doc_type: str, client: dict, company: dict) -> bytes:
+    doc_type_clean = (doc_type or "").lower().strip()
+    if doc_type_clean == "wcr":
+        return generate_wcr_pdf(client, company)
+
     buf = BytesIO()
     pdf = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5*cm, rightMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
     story: list = _header(company)
@@ -517,9 +702,10 @@ def generate(doc_type: str, client: dict, company: dict) -> bytes:
         "wcr": "WORK COMPLETION REPORT (WCR)",
         "sldr": "SINGLE LINE DIAGRAM REPORT (SLDR)",
         "net_meter_agreement": "NET METER AGREEMENT",
+        "vendor_agreement": "VENDOR AGREEMENT",
     }
-    story.append(Paragraph(title_map.get(doc_type, doc_type.upper()), H2))
-    story.append(Paragraph(f"Document No.: <b>{client.get('sol_id','SOL-')}-{doc_type.upper()}</b> &nbsp;&nbsp; Date: <b>{datetime.now(timezone.utc).strftime('%d %b %Y')}</b>", SMALL))
+    story.append(Paragraph(title_map.get(doc_type_clean, doc_type_clean.upper()), H2))
+    story.append(Paragraph(f"Document No.: <b>{client.get('sol_id','SOL-')}-{doc_type_clean.upper()}</b> &nbsp;&nbsp; Date: <b>{datetime.now(timezone.utc).strftime('%d %b %Y')}</b>", SMALL))
     story.append(Spacer(1, 0.4 * cm))
 
     story.append(Paragraph("Client Details", H2))
@@ -543,21 +729,13 @@ def generate(doc_type: str, client: dict, company: dict) -> bytes:
     ]))
     story.append(Spacer(1, 0.5 * cm))
 
-    if doc_type == "annexure":
+    if doc_type_clean == "annexure":
         story.append(Paragraph("Material Annexure", H2))
         story.append(Paragraph(
             "This annexure certifies that the following materials have been used in the installation as per the agreed BOM. "
             "Quantities and serial numbers reflect the field verification report.", BODY,
         ))
-    elif doc_type == "wcr":
-        story.append(Paragraph("Declaration of Work Completion", H2))
-        story.append(Paragraph(
-            f"This is to certify that the rooftop solar PV system of capacity <b>{client.get('system_kw',0)} kW</b> "
-            f"has been installed, tested, and commissioned at the client's premises in accordance with all applicable "
-            f"DISCOM and MNRE standards. All site verification photos and serial numbers have been documented digitally.",
-            BODY,
-        ))
-    elif doc_type == "sldr":
+    elif doc_type_clean == "sldr":
         story.append(Paragraph("Single Line Diagram Summary", H2))
         story.append(Paragraph(
             "DC side: Solar panels → DCDB (with surge arrester & DC isolator) → Inverter MPPT input. "
@@ -565,13 +743,13 @@ def generate(doc_type: str, client: dict, company: dict) -> bytes:
             "Earthing: Separate earth pits for AC, DC and lightning arrester as per IS 3043.",
             BODY,
         ))
-    elif doc_type == "net_meter_agreement":
-        story.append(Paragraph("Net Metering Agreement Terms", H2))
+    elif doc_type_clean in ("net_meter_agreement", "vendor_agreement"):
+        story.append(Paragraph("Agreement Terms & Undertaking", H2))
         story.append(Paragraph(
             "1. The consumer agrees to install a bi-directional net meter at their premises.<br/>"
             "2. Excess generation will be credited as per the prevailing DISCOM tariff.<br/>"
             "3. Annual settlement will be carried out by the DISCOM as per state regulations.<br/>"
-            "4. The system will comply with all CEA technical standards for grid connectivity.",
+            "4. The vendor agrees to provide 5-year Comprehensive Maintenance Contract (CMC) coverage.",
             BODY,
         ))
 
