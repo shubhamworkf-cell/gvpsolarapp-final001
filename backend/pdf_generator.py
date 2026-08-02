@@ -665,11 +665,13 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     story.append(Paragraph(p2_text, STYLE_BODY_JUSTIFY))
     story.append(Spacer(1, 2.5 * cm))
 
+    STYLE_VAL = ParagraphStyle('c_val', parent=styles['Normal'], fontSize=8.5, fontName='Helvetica', textColor=colors.HexColor('#0f172a'))
+
     # Balanced Signatures
     sign2 = Table([
         [
-            Paragraph(f"<b>Authorized Signature [Vendor]</b><br/><br/><br/>______________________<br/>For <b>{company_name}</b>", cell_val("")),
-            Paragraph(f"<b>Consumer Signature</b><br/><br/><br/>______________________<br/><b>{client_name}</b>", cell_val(""))
+            Paragraph(f"<b>Authorized Signature [Vendor]</b><br/><br/><br/>______________________<br/>For <b>{company_name}</b>", STYLE_VAL),
+            Paragraph(f"<b>Consumer Signature</b><br/><br/><br/>______________________<br/><b>{client_name}</b>", STYLE_VAL)
         ]
     ], colWidths=[9.3 * cm, 9.3 * cm])
     sign2.setStyle(TableStyle([
@@ -724,8 +726,8 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
 
     sign3 = Table([
         [
-            Paragraph(f"<b>Authorized Signature [Vendor]</b><br/><br/><br/>______________________<br/>For <b>{company_name}</b>", cell_val("")),
-            Paragraph("<b>Vendor Stamp & Seal</b><br/><br/><br/>[ OFFICIAL SEAL ]", cell_val(""))
+            Paragraph(f"<b>Authorized Signature [Vendor]</b><br/><br/><br/>______________________<br/>For <b>{company_name}</b>", STYLE_VAL),
+            Paragraph("<b>Vendor Stamp & Seal</b><br/><br/><br/>[ OFFICIAL SEAL ]", STYLE_VAL)
         ]
     ], colWidths=[9.3 * cm, 9.3 * cm])
     sign3.setStyle(TableStyle([
