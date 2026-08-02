@@ -7944,8 +7944,13 @@ async def get_client_data_detail(
     results: Dict[str, Any] = {}
     if coros:
         keys = list(coros.keys())
-        values = await asyncio.gather(*[coros[k] for k in keys])
-        results = dict(zip(keys, values))
+        values = await asyncio.gather(*[coros[k] for k in keys], return_exceptions=True)
+        for k, v in zip(keys, values):
+            if isinstance(v, Exception):
+                logger.error(f"[ERROR] get_client_data_detail sub-section '{k}' failed: {v!r}")
+                results[k] = None if k == "monitoring" else []
+            else:
+                results[k] = v
 
     monitoring          = results.get("monitoring")
     assets              = results.get("assets", [])
