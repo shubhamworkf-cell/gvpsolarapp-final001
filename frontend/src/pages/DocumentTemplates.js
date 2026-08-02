@@ -2,12 +2,11 @@ import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import api, { formatApiError } from "@/lib/api";
-import { queryKeys } from "@/lib/queryKeys";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, FileText, Download, User, Zap, Building2, CheckCircle2, ShieldCheck, FileCheck2, Layers, CheckSquare } from "lucide-react";
+import { Search, FileText, Download, User, Zap, Building2, CheckCircle2, ShieldCheck, FileCheck2, Layers } from "lucide-react";
 import { toast } from "sonner";
 
 export default function DocumentTemplates() {
@@ -25,31 +24,50 @@ export default function DocumentTemplates() {
     }
   }, [searchParams]);
 
-  // 1. Fetch Client List
-  const { data: clientsData = [], isLoading: loadingClients } = useQuery({
-    queryKey: queryKeys.clientData.list({ limit: 500 }),
+  // 1. Fetch Client List using canonical /clients endpoint (same as Clients.js) with /client-data fallback
+  const { data: clientsList = [], isLoading: loadingClients } = useQuery({
+    queryKey: ["document-engine-clients-list"],
     queryFn: async () => {
-      const { data } = await api.get("/client-data");
-      return Array.isArray(data) ? data : data?.clients || [];
+      try {
+        const { data: primaryData } = await api.get("/clients?limit=500");
+        const list = Array.isArray(primaryData) ? primaryData : primaryData?.clients || [];
+        if (list.length > 0) return list;
+      } catch (_) {}
+
+      try {
+        const { data: fallbackData } = await api.get("/client-data");
+        return Array.isArray(fallbackData) ? fallbackData : fallbackData?.clients || [];
+      } catch (_) {}
+
+      return [];
     },
-    staleTime: 60000,
+    staleTime: 30000,
   });
 
-  // Automatically select first client if none selected
+  // Automatically pre-select first client if none selected
   useEffect(() => {
-    if (!selectedClientId && clientsData.length > 0) {
-      const first = clientsData[0];
+    if (!selectedClientId && clientsList.length > 0) {
+      const first = clientsList[0];
       setSelectedClientId(first.id || first.sol_id || first._id);
     }
-  }, [clientsData, selectedClientId]);
+  }, [clientsList, selectedClientId]);
 
-  // 2. Fetch Selected Client Details (Parallel wave fetching for onboarding & specs)
-  const { data: clientDetail, isLoading: loadingDetail } = useQuery({
+  // 2. Fetch Selected Client Full Details (onboarding & system specs)
+  const { data: clientDetailData, isLoading: loadingDetail } = useQuery({
     queryKey: ["client-detail-doc-engine", selectedClientId],
     queryFn: async () => {
       if (!selectedClientId) return null;
-      const { data } = await api.get(`/client-data/${selectedClientId}`);
-      return data;
+      try {
+        const { data: detail } = await api.get(`/client-data/${selectedClientId}`);
+        if (detail) return detail;
+      } catch (_) {}
+
+      try {
+        const { data: clientObj } = await api.get(`/clients/${selectedClientId}`);
+        return { client: clientObj };
+      } catch (_) {}
+
+      return null;
     },
     enabled: !!selectedClientId,
   });
@@ -65,19 +83,22 @@ export default function DocumentTemplates() {
   });
 
   // Filter clients by Name, Mobile, Consumer Number, or SOL ID
-  const filteredClients = clientsData.filter((c) => {
+  const filteredClients = clientsList.filter((c) => {
     const q = search.toLowerCase().trim();
     if (!q) return true;
     const name = (c.full_name || c.name || "").toLowerCase();
     const consumer = (c.consumer_number || "").toLowerCase();
     const mobile = (c.mobile || "").toLowerCase();
-    const solId = (c.sol_id || c.client_code || "").toLowerCase();
+    const solId = (c.sol_id || c.client_code || c.id || "").toLowerCase();
     const city = (c.city || "").toLowerCase();
     return name.includes(q) || consumer.includes(q) || mobile.includes(q) || solId.includes(q) || city.includes(q);
   });
 
-  // Selected client object
-  const activeClient = clientDetail?.client || clientsData.find((c) => (c.id === selectedClientId || c.sol_id === selectedClientId || c._id === selectedClientId)) || null;
+  // Selected client object (combining detail response and list item)
+  const activeClientInList = clientsList.find(
+    (c) => c.id === selectedClientId || c.sol_id === selectedClientId || c._id === selectedClientId
+  );
+  const activeClient = clientDetailData?.client || activeClientInList || null;
   const company = companyDoc || {};
 
   // Handle direct PDF generation & immediate download
@@ -175,7 +196,7 @@ export default function DocumentTemplates() {
               ) : (
                 filteredClients.map((client) => {
                   const cid = client.id || client.sol_id || client._id;
-                  const isSelected = selectedClientId === cid || selectedClientId === client.sol_id;
+                  const isSelected = selectedClientId === cid || selectedClientId === client.sol_id || selectedClientId === client.id;
                   return (
                     <div
                       key={cid}
