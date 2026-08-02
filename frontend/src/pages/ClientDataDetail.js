@@ -31,16 +31,35 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { InverterStatusBadge } from "./ClientData";
 import {
   ArrowLeft, Phone, MessageCircle, Download, MapPin, User, FileImage, Image as ImageIcon,
   Plus, Save, Eye, EyeOff, ExternalLink, Calendar, Wrench, AlertTriangle, Paperclip,
   Clock, CheckCircle2, ChevronRight, Activity, Megaphone, ClipboardList,
-  Truck, FileText, Gauge, Package, ScrollText, Check, Trash2, Edit3
+  Truck, FileText, Gauge, Package, ScrollText, Check, Trash2, Edit3, Wifi, WifiOff, Settings, AlertCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
 import RaiseComplaintDialog from "@/components/RaiseComplaintDialog";
+
+const INV_STATUS_STYLES = {
+  "Online": { dot: "bg-emerald-500", text: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", icon: Wifi },
+  "Offline": { dot: "bg-red-500", text: "text-red-700", bg: "bg-red-50 border-red-200", icon: WifiOff },
+  "Error": { dot: "bg-orange-500", text: "text-orange-700", bg: "bg-orange-50 border-orange-200", icon: AlertCircle },
+  "Maintenance": { dot: "bg-amber-500", text: "text-amber-700", bg: "bg-amber-50 border-amber-200", icon: Wrench },
+  "Not Configured": { dot: "bg-slate-300", text: "text-slate-500", bg: "bg-slate-50 border-slate-200", icon: Settings },
+};
+
+const InverterStatusBadge = ({ status, size = "md" }) => {
+  const cfg = INV_STATUS_STYLES[status] || INV_STATUS_STYLES["Not Configured"];
+  const Ic = cfg.icon;
+  return (
+    <Badge variant="outline" className={`${cfg.bg} ${cfg.text} ${size === "sm" ? "text-[10px]" : "text-xs"} gap-1 font-semibold`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot} ${status === "Online" ? "animate-pulse" : ""}`} />
+      <Ic className="w-3 h-3" />
+      {status}
+    </Badge>
+  );
+};
 
 const TabSkeleton = () => (
   <Card className="border-slate-200 animate-pulse p-8 space-y-4">
