@@ -3074,6 +3074,12 @@ async def create_client(data: ClientIn, user=Depends(get_current_user)):
 async def get_client(client_id: str, user=Depends(get_current_user)):
     c = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
     if not c:
+        c = await db.clients.find_one({"sol_id": client_id, "company_id": user["company_id"]}, {"_id": 0})
+    if not c:
+        c = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not c:
+        c = await db.clients.find_one({"sol_id": client_id}, {"_id": 0})
+    if not c:
         raise HTTPException(status_code=404, detail="Not found")
     c["high_value_assets"] = [a for a in _load_local_assets() if a.get("client_id") == client_id and a.get("company_id") == user["company_id"]]
     return c
@@ -7684,7 +7690,7 @@ async def _attach_assets(client_id: str, company_id: str) -> List[Dict[str, str]
         db.meter_testings.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
         db.installations.find(q, {"_id": 0}).sort("created_at", -1).to_list(50),
         db.complaints.find(q, {"_id": 0}).sort("created_at", -1).to_list(100),
-        db.clients.find_one({"id": client_id, "company_id": company_id}, {"_id": 0, "documents": 1, "cleared_assets": 1}),
+        db.clients.find_one({"id": client_id, "company_id": company_id}, {"_id": 0, "documents": 1}),
     )
 
     assets: List[Dict[str, str]] = []
@@ -7962,13 +7968,32 @@ async def get_client_data_detail(
     user=Depends(get_current_user)
 ):
     cid = user["company_id"]
-    or_conds: List[Dict[str, Any]] = [{"id": client_id}, {"_id": client_id}, {"sol_id": client_id}]
-    if ObjectId.is_valid(client_id):
-        or_conds.append({"_id": ObjectId(client_id)})
+    or_conds: List[Dict[str, Any]] = [{"id": client_id}, {"sol_id": client_id}]
+    c = None
+    
+    try:
+        c = await db.clients.find_one({"$or": or_conds, "company_id": cid})
+    except Exception as err:
+        logger.warning(f"OR query in get_client_data_detail: {err}")
 
-    c = await db.clients.find_one({"$or": or_conds, "company_id": cid})
     if not c:
-        c = await db.clients.find_one({"$or": or_conds})
+        try:
+            c = await db.clients.find_one({"id": client_id, "company_id": cid})
+        except Exception:
+            pass
+
+    if not c:
+        try:
+            c = await db.clients.find_one({"$or": or_conds})
+        except Exception:
+            pass
+
+    if not c:
+        try:
+            c = await db.clients.find_one({"id": client_id})
+        except Exception:
+            pass
+
     if not c:
         raise HTTPException(status_code=404, detail="Client not found")
 
