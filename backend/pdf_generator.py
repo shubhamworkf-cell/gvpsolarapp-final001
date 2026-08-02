@@ -7,6 +7,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
+from reportlab.pdfgen import canvas
 from reportlab.graphics.shapes import Drawing, Rect, String, Line, Group, Circle, PolyLine
 
 styles = getSampleStyleSheet()
@@ -940,12 +941,374 @@ def generate_sldr_pdf(client: dict, company: dict) -> bytes:
     return buf.getvalue()
 
 
+class NetMeterCanvas(canvas.Canvas):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_page_decorations(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_page_decorations(self, page_count):
+        self.saveState()
+        # Footer line
+        self.setStrokeColor(colors.HexColor('#cbd5e1'))
+        self.setLineWidth(0.5)
+        self.line(1.5 * cm, 1.2 * cm, 21.0 * cm - 1.5 * cm, 1.2 * cm)
+        
+        self.setFont("Helvetica", 8)
+        self.setFillColor(colors.HexColor('#475569'))
+        self.drawString(1.5 * cm, 0.8 * cm, "GVP SOLAR ENERGY")
+        self.drawCentredString(10.5 * cm, 0.8 * cm, "Net Metering Connection Agreement")
+        self.drawRightString(21.0 * cm - 1.5 * cm, 0.8 * cm, f"Page {self._pageNumber} of {page_count}")
+        self.restoreState()
+
+
+def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
+    # 1. Validation check
+    missing_fields = []
+    if not client.get("full_name"):
+        missing_fields.append("Client Name")
+    if not client.get("consumer_number"):
+        missing_fields.append("Consumer Number")
+    if not client.get("system_kw") and not client.get("capacity"):
+        missing_fields.append("Solar System Capacity (kW)")
+    
+    if missing_fields:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required client data for Net Meter Agreement: {', '.join(missing_fields)}. Please update client details before generating."
+        )
+
+    buf = BytesIO()
+    pdf = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.5 * cm,
+        rightMargin=1.5 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.8 * cm
+    )
+    story = []
+
+    # Dynamic Data Extraction
+    client_name = (client.get("full_name") or client.get("name") or "CLIENT").strip()
+    consumer_no = str(client.get("consumer_number") or "—").strip()
+    client_addr = (client.get("address") or "—").strip()
+    city = (client.get("city") or "ICHALKARANJI").strip()
+    pincode = str(client.get("pincode") or "").strip()
+    full_address = f"{client_addr}, {city} {pincode}".strip(", ")
+    
+    system_kw = str(client.get("system_kw") or client.get("capacity") or "8").strip()
+    
+    date_str = client.get("installation_date") or client.get("created_at") or datetime.now().strftime("%d/%m/%Y")
+    if len(date_str) > 10:
+        date_str = date_str[:10]
+        
+    company_name = company.get("company_name") or "GVP SOLAR ENERGY"
+    bu_no = client.get("bu_number") or "BU-4711"
+    sub_div = client.get("sub_division") or "ICHALKARANJI B S/DN."
+    division = client.get("division") or "Dist KOLHAPUR"
+
+    # Define Styles
+    style_h1 = ParagraphStyle('NMA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=18, alignment=1, spaceAfter=6)
+    style_h2 = ParagraphStyle('NMA_H2', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=12, leading=16, alignment=1, spaceAfter=12)
+    style_clause_h = ParagraphStyle('NMA_ClauseH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, leading=14, spaceBefore=8, spaceAfter=4)
+    style_body = ParagraphStyle('NMA_Body', parent=styles['Normal'], fontName='Helvetica', fontSize=9.5, leading=14, alignment=4, spaceAfter=6)
+    style_body_bold = ParagraphStyle('NMA_BodyBold', parent=style_body, fontName='Helvetica-Bold')
+
+    # ==================== PAGE 1 ====================
+    # Non-Judicial Government Stamp Header Box
+    stamp_header = Table([
+        [Paragraph("<b>भारतीय गैर न्यायिक</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>भारत INDIA</b>", ParagraphStyle('stmp1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=11, alignment=1, textColor=colors.HexColor('#991b1b')))],
+        [Paragraph("<b>रु. 500 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FIVE HUNDRED RUPEES &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Rs. 500</b>", ParagraphStyle('stmp2', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=12, alignment=1, textColor=colors.HexColor('#1e3a8a')))],
+        [Paragraph("<b>सत्यमेव जयते</b>", ParagraphStyle('stmp3', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, alignment=1))],
+        [Paragraph("<b>INDIA NON JUDICIAL</b>", ParagraphStyle('stmp4', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=13, alignment=1, textColor=colors.HexColor('#991b1b')))],
+        [Paragraph("<b>महाराष्ट्र MAHARASHTRA</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>2025</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>ED 513116</b>", ParagraphStyle('stmp5', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, alignment=1, textColor=colors.HexColor('#1e293b')))]
+    ], colWidths=[18.0 * cm])
+    stamp_header.setStyle(TableStyle([
+        ('BOX', (0, 0), (-1, -1), 1.5, colors.HexColor('#1e3a8a')),
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    story.append(stamp_header)
+    story.append(Spacer(1, 1.0 * cm))
+
+    # Treasury Stamp Table / Stamp Vendor Details Box
+    treasury_data = [
+        [Paragraph("<b>मुद्रांक विक्री नोंद अ क्र</b>", style_body), Paragraph(f"<b>१४७०</b> &nbsp; <b>दि.:</b> <b>{date_str}</b>", style_body), Paragraph("<b>मुद्रांक शुल्क रक्कम:</b> <b>रु. ५००/-</b>", style_body)],
+        [Paragraph("<b>मुद्रांक विकत घेणाऱ्याचे नाव:</b>", style_body), Paragraph(f"<b>{client_name}</b>", style_body_bold), Paragraph("<b>इचलकरंजी</b>", style_body)],
+        [Paragraph("<b>मुद्रांक परवानाधारक:</b>", style_body), Paragraph("श्री विश्वनाथ कृष्णा घाटगे (पत्ता: १०/५६३,इचलकरंजी) कोड नंबर: २७०७०५२", style_body), Paragraph("<b>Treasury Office:</b> Ichalkaranji", style_body)],
+        [Paragraph("<b>परवानाधारक सही / स्वाक्षरी:</b>", style_body), Paragraph("कोमल बिजमोहन माहेश्वरी", style_body), Paragraph("<b>Sub Treasury Officer</b>", style_body)]
+    ]
+    t_treasury = Table(treasury_data, colWidths=[5.5 * cm, 7.5 * cm, 5.0 * cm])
+    t_treasury.setStyle(TableStyle([
+        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#475569')),
+        ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#94a3b8')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story.append(t_treasury)
+    story.append(PageBreak())
+
+    # ==================== PAGE 2 ====================
+    story.append(Paragraph("<b>ANNEXURE – 3</b>", style_h1))
+    story.append(Spacer(1, 0.2 * cm))
+    story.append(Paragraph("<b>Net Metering Connection Agreement</b>", style_h2))
+    story.append(Spacer(1, 0.4 * cm))
+
+    preamble_p1 = (
+        f"This Agreement is made and entered into at (location) <b>ICHALKARANJI</b> on this "
+        f"<b>(date {date_str})</b> between the Eligible Consumer <b>{client_name}</b> "
+        f"having premises at <b>{full_address}</b> and Consumer No <b>{consumer_no}</b> "
+        f"as the first Party<br/>"
+        f"AND<br/>"
+        f"The Distribution Licensee <b>Additional Executive Engineer, {sub_div}/ {bu_no}, MSEDCL</b>, "
+        f"(hereinafter referred to as 'the Licensee') and having its Registered Office at <b>{division}</b> as second Party of this Agreement;"
+    )
+    story.append(Paragraph(preamble_p1, style_body))
+    story.append(Spacer(1, 0.3 * cm))
+
+    preamble_p2 = (
+        "Whereas, the Eligible Consumer has applied to the Licensee for approval of a Net Metering Arrangement "
+        "under the provisions of the Maharashtra Electricity Regulatory Commission (Net Metering for Roof-top Solar Photo Voltaic Systems) Regulations, 2019 "
+        "('the Net Metering Regulations') and sought its connectivity to the Licensee's Distribution Network;"
+    )
+    story.append(Paragraph(preamble_p2, style_body))
+    story.append(Spacer(1, 0.3 * cm))
+
+    preamble_p3 = (
+        f"And whereas, the Licensee has agreed to provide Network connectivity to the Eligible Consumer for injection "
+        f"of electricity generated from its Roof-top Solar PV System of <b>{system_kw} kilowatt</b>;"
+    )
+    story.append(Paragraph(preamble_p3, style_body))
+    story.append(Spacer(1, 0.3 * cm))
+
+    story.append(Paragraph("<b>Both Parties hereby agree as follows</b>", style_body_bold))
+    story.append(PageBreak())
+
+    # ==================== PAGE 3 ====================
+    story.append(Paragraph("<b>1. Eligibility:</b>", style_clause_h))
+    story.append(Paragraph(
+        "The Roof-top Solar PV System meets the applicable norms for being integrated into the Distribution Network, "
+        "and that the Eligible Consumer shall maintain the System accordingly for the duration of this Agreement.",
+        style_body
+    ))
+
+    story.append(Paragraph("<b>2. Technical and Inter-connection Requirements:</b>", style_clause_h))
+    story.append(Paragraph(
+        "2.1. The metering arrangement and the inter-connection of the Roof-top Solar PV System with the Network of the Licensee "
+        "shall be as per the provisions of the Net Metering Regulations and the technical standards and norms specified by the "
+        "Central Electricity Authority for connectivity of distributed generation resources and for the installation and operation of meters.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "2.2. The Eligible Consumer agrees, that he shall install, prior to connection of the Roof-top Solar PV System to the Network of the Licensee, "
+        "an isolation device (both automatic and in built within inverter and external manual relays); and the Licensee shall have access to it "
+        "if required for the repair and maintenance of the Distribution Network.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "2.3. The Licensee shall specify the interface/inter-connection point and metering point.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "2.4. The Eligible Consumer shall specify relevant data, such as voltage, frequency, circuit breaker, isolator position in his System, "
+        "as and when required by the Licensee.",
+        style_body
+    ))
+
+    story.append(Paragraph("<b>3. Safety:</b>", style_clause_h))
+    story.append(Paragraph(
+        "3.1 The equipment connected to the Licensee's Distribution System shall be compliant with relevant International (IEEE/IEC) "
+        "or Indian Standards (BIS), as the case may be, and the installation of electrical equipment shall comply with the requirements "
+        "specified by the Electricity Authority regarding safety and electricity supply.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "3.2 The design, installation, maintenance and operation of the Roof-top Solar PV System shall be undertaken in a manner "
+        "conducive to the safety of the Roof-top Solar PV System as well as the Licensee's Network.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "3.3 If, at any time, the Licensee determines that the Eligible Consumer's Roof-top Solar PV System is causing or may cause damage "
+        "to and/or results in the Licensee's other consumers or its assets, the Eligible Consumer shall disconnect the Roof-top Solar PV System "
+        "from the distribution Network upon direction from the Licensee, and shall undertake corrective measures at his own expense prior to re-connection.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "3.4 The Licensee shall not be responsible for any accident resulting in injury to human beings or animals or damage to property "
+        "that may occur due to back- feeding from the Roof-top Solar PV System when the grid supply is off. The Licensee may disconnect "
+        "the installation at any time in the event of such exigencies to prevent such accident.",
+        style_body
+    ))
+
+    story.append(Paragraph("<b>Other Clearances and Approvals:</b>", style_clause_h))
+    story.append(Paragraph(
+        "The Eligible Consumer shall obtain any statutory approvals and clearances that may be required, such as from the Electrical Inspector "
+        "or the municipal or other authorities, before connecting the Roof-top Solar PV System to the distribution Network.",
+        style_body
+    ))
+
+    story.append(Paragraph("<b>4. Period of Agreement, and Termination:</b>", style_clause_h))
+    story.append(PageBreak())
+
+    # ==================== PAGE 4 ====================
+    story.append(Paragraph("This Agreement shall be for a period of 20 years, but may be terminated prematurely", style_body))
+    story.append(Paragraph("(a) By mutual consent; or", style_body))
+    story.append(Paragraph("(b) By the Eligible Consumer, by giving 30 days' notice to the Licensee ;", style_body))
+    story.append(Paragraph(
+        "(c) By the Licensee, by giving 30 days' notice, if the Eligible Consumer breaches any terms of this Agreement or the provisions "
+        "of the Net Metering Regulations and does not remedy such breach within 30 days, or such other reasonable period as may be provided, "
+        "of receiving notice of such breach, or for any other valid reason communicated by the Licensee in writing.",
+        style_body
+    ))
+
+    story.append(Paragraph("<b>6. Access and Disconnection:</b>", style_clause_h))
+    story.append(Paragraph(
+        "6.1. The Eligible Consumer shall provide access to the Licensee to the metering equipment and disconnecting devices "
+        "of Roof-top Solar PV System, both automatic and manual, by the Eligible Consumer.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "6.2. If, in an emergent or outage situation, the Licensee cannot access the disconnecting devices of the Roof-top Solar PV System, "
+        "both automatic and manual, it may disconnect power supply to the premises.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "6.3 Upon termination of this Agreement under Clause 5, the Eligible Consumer shall disconnect the Roof-top Solar PV System "
+        "forthwith from the Network of the Licensee.",
+        style_body
+    ))
+
+    story.append(Paragraph("<b>7. Liabilities:</b>", style_clause_h))
+    story.append(Paragraph(
+        "7.1. The Parties shall indemnify each other for damages or adverse effects of either Party's negligence or misconduct "
+        "during the installation of the Roof-top Solar PV System, connectivity with the distribution Network and operation of the System.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "7.2. The Parties shall not be liable to each other for any loss of profits or revenues, business interruption losses, "
+        "loss of contract or goodwill, or for indirect, consequential, incidental or special damages including, but not limited to, "
+        "punitive or exemplary damages, whether any of these liabilities, losses or damages arise in contract, or otherwise.",
+        style_body
+    ))
+
+    story.append(Paragraph("<b>8. Commercial Settlement:</b>", style_clause_h))
+    story.append(Paragraph(
+        "8.1. The commercial settlements under this Agreement shall be in accordance with the Net Metering Regulations.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "8.2. The Licensee shall not be liable to compensate the Eligible Consumer if his Rooftop Solar PV System is unable to inject surplus power "
+        "generated into the Licensee's Network on account of failure of power supply in the grid/Network.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "8.3. The existing metering System, if not in accordance with the Net Metering Regulations, shall be replaced by a bi-directional meter "
+        "(whole current/CT operated) or a pair of meters (as per the definition of 'Net Meter' in the Regulations), and a separate generation meter "
+        "may be provided to measure Solar power generation. The bi-directional meter (whole current/CT operated) or pair of meters shall be installed "
+        "at the inter-connection point to the Licensee's Network for recording export and import of energy.",
+        style_body
+    ))
+    story.append(PageBreak())
+
+    # ==================== PAGE 5 ====================
+    story.append(Paragraph(
+        "8.4. The uni-directional and bi-directional or pair of meters shall be fixed in separate meter boxes in the same proximity.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "8.5. The Licensee shall issue monthly electricity bill for the net metered energy on the scheduled date of meter reading. "
+        "If the exported energy exceeds the imported energy, the Licensee shall show the net energy exported as credited Units of electricity "
+        "as specified in the Net Metering Regulations, 2015. If the exported energy is less than the imported energy, the Eligible Consumer "
+        "shall pay the Distribution Licensee for the net energy imported at the prevailing tariff approved by the Commission for the consumer "
+        "category to which he belongs.",
+        style_body
+    ))
+
+    story.append(Paragraph("<b>9. Connection Costs:</b>", style_clause_h))
+    story.append(Paragraph(
+        "The Eligible Consumer shall bear all costs related to the setting up of the Roof-top Solar PV System, excluding the Net Metering Arrangement costs.",
+        style_body
+    ))
+
+    story.append(Paragraph("<b>10. Dispute Resolution:</b>", style_clause_h))
+    story.append(Paragraph(
+        "10.1 Any dispute arising under this Agreement shall be resolved promptly, in good faith and in an equitable manner by both the Parties.",
+        style_body
+    ))
+    story.append(Paragraph(
+        "10.2 The Eligible Consumer shall have recourse to the concerned Consumer Grievance Redressal Forum constituted under the relevant Regulations "
+        "in respect of any grievance regarding billing which has not been redressed by the Licensee.",
+        style_body
+    ))
+    story.append(Spacer(1, 0.4 * cm))
+
+    witness_intro = (
+        f"In the witness where of <b>{client_name}</b> for and on behalf of Eligible Consumer and Shri. "
+        f"Additional Executive Engineer <b>{sub_div}/ MSEDCL</b>, for and on behalf of MSEDCL agree to this agreement."
+    )
+    story.append(Paragraph(witness_intro, style_body))
+    story.append(Spacer(1, 0.6 * cm))
+
+    # Signature Table
+    sig_table_data = [
+        [
+            Paragraph(f"<br/><br/>___________________________<br/><b>{client_name}</b><br/>for and on behalf of Eligible Consumer", style_body),
+            Paragraph(f"<br/><br/>Shri. ___________________________<br/>for and on behalf of MSEDCL", style_body)
+        ],
+        [
+            Paragraph("<br/><b>Witness 1:</b> ___________________________", style_body),
+            Paragraph("<br/><b>Witness 1:</b> ___________________________", style_body)
+        ],
+        [
+            Paragraph("<br/><b>Witness 2:</b> ___________________________", style_body),
+            Paragraph("<br/><b>Witness 2:</b> ___________________________", style_body)
+        ],
+        [
+            Paragraph(f"<br/><br/><b>{company_name}</b><br/>Proprietor / Authorized Manager", style_body),
+            Paragraph("<br/><br/>Official Stamp / Seal", style_body)
+        ]
+    ]
+    t_sig = Table(sig_table_data, colWidths=[9.0 * cm, 9.0 * cm])
+    t_sig.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(t_sig)
+
+    pdf.build(story, canvasmaker=NetMeterCanvas)
+    return buf.getvalue()
+
+
 def generate(doc_type: str, client: dict, company: dict) -> bytes:
     doc_type_clean = (doc_type or "").lower().strip()
     if doc_type_clean == "wcr":
         return generate_wcr_pdf(client, company)
     if doc_type_clean == "sldr":
         return generate_sldr_pdf(client, company)
+    if doc_type_clean == "net_meter_agreement":
+        return generate_net_meter_agreement_pdf(client, company)
 
     buf = BytesIO()
     pdf = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5*cm, rightMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
