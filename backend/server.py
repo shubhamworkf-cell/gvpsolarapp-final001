@@ -3652,13 +3652,32 @@ async def download_direct_document(payload: Dict[str, Any], user=Depends(get_cur
         raise HTTPException(status_code=400, detail="client_id is required")
 
     company_doc = await db.companies.find_one({"id": user["company_id"]}, {"_id": 0}) or {}
-    client_doc = await db.clients.find_one({
-        "$or": [{"id": client_id}, {"_id": client_id}, {"sol_id": client_id}],
-        "company_id": user["company_id"]
-    }, {"_id": 0})
+    cid = user["company_id"]
+    or_conds: List[Dict[str, Any]] = [{"id": client_id}, {"sol_id": client_id}]
+    client_doc = None
     
+    try:
+        client_doc = await db.clients.find_one({"$or": or_conds, "company_id": cid}, {"_id": 0})
+    except Exception as err:
+        logger.warning(f"OR query in download_direct_document: {err}")
+
     if not client_doc:
-        client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"_id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
+        try:
+            client_doc = await db.clients.find_one({"id": client_id, "company_id": cid}, {"_id": 0})
+        except Exception:
+            pass
+
+    if not client_doc:
+        try:
+            client_doc = await db.clients.find_one({"$or": or_conds}, {"_id": 0})
+        except Exception:
+            pass
+
+    if not client_doc:
+        try:
+            client_doc = await db.clients.find_one({"id": client_id}, {"_id": 0})
+        except Exception:
+            pass
         
     if not client_doc:
         raise HTTPException(status_code=404, detail="Client not found")
