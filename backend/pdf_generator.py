@@ -1288,6 +1288,9 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     story.append(sig_block)
 
     pdf.build(story, canvasmaker=NetMeterCanvas)
+    return buf.getvalue()
+
+
 def generate(doc_type: str, client: dict, company: dict) -> bytes:
     doc_type_clean = (doc_type or "").lower().strip()
     if doc_type_clean == "wcr":
