@@ -754,106 +754,130 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
 
 
 def _build_sldr_drawing(sol_kw="5", sol_wp="540", num_panels="10", panel_make="GVP SOLAR", inverter_make="GROWATT", inverter_kw="5"):
-    d = Drawing(490, 305)
-    d.add(Rect(0, 0, 490, 305, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#334155"), strokeWidth=1))
+    d = Drawing(490, 370)
+    d.add(Rect(0, 0, 490, 370, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#334155"), strokeWidth=1))
     
-    d.add(String(245, 290, "Grid Tied Solar Inverter System Electrical Single Line Diagram", fontName="Helvetica-Bold", fontSize=9.5, textAnchor="middle", fillColor=colors.HexColor("#1e293b")))
+    d.add(String(245, 355, "Grid Tied Solar Inverter System Electrical Single Line Diagram", fontName="Helvetica-Bold", fontSize=9.5, textAnchor="middle", fillColor=colors.HexColor("#1e293b")))
 
-    # 1. PV Modules Array (Left)
+    # 1. PV Modules Array (Left Side: 2 Vertical Strings of Small Panel Rectangles with Junction Boxes)
+    # Column 1 (x=22) & Column 2 (x=62)
     for col in range(2):
-        for row in range(3):
-            px = 25 + col * 35
-            py = 175 - row * 35
-            d.add(Rect(px, py, 30, 30, fillColor=colors.HexColor("#f8fafc"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
-            d.add(Line(px+15, py, px+15, py+30, strokeColor=colors.HexColor("#e2e8f0"), strokeWidth=0.5))
-            d.add(Line(px, py+15, px+30, py+15, strokeColor=colors.HexColor("#e2e8f0"), strokeWidth=0.5))
-            d.add(Rect(px+10, py+22, 10, 6, fillColor=colors.HexColor("#bae6fd"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=0.5))
-            d.add(String(px+15, py+23, "J-Box", fontName="Helvetica", fontSize=4, textAnchor="middle", fillColor=colors.HexColor("#0369a1")))
+        cx = 22 + col * 40
+        for row in range(4):
+            ry = 285 - row * 43
+            # Individual Solar Panel Rectangle
+            d.add(Rect(cx, ry, 30, 38, fillColor=colors.HexColor("#f8fafc"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
+            # Internal Solar Cell Grid Lines (3x2 grid)
+            d.add(Line(cx+10, ry, cx+10, ry+38, strokeColor=colors.HexColor("#cbd5e1"), strokeWidth=0.5))
+            d.add(Line(cx+20, ry, cx+20, ry+38, strokeColor=colors.HexColor("#cbd5e1"), strokeWidth=0.5))
+            d.add(Line(cx, ry+19, cx+30, ry+19, strokeColor=colors.HexColor("#cbd5e1"), strokeWidth=0.5))
+            
+            # Embedded Junction Box with + / - Terminals
+            d.add(Rect(cx+7, ry+13, 16, 12, rx=1, ry=1, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#0369a1"), strokeWidth=0.6))
+            d.add(String(cx+15, ry+19, "Junction", fontName="Helvetica-Bold", fontSize=4.5, textAnchor="middle", fillColor=colors.HexColor("#0369a1")))
+            d.add(String(cx+15, ry+14, "box", fontName="Helvetica-Bold", fontSize=4.5, textAnchor="middle", fillColor=colors.HexColor("#0369a1")))
+            d.add(String(cx+3, ry+31, "+", fontName="Helvetica-Bold", fontSize=5.5, fillColor=colors.HexColor("#dc2626")))
+            d.add(String(cx+22, ry+31, "-", fontName="Helvetica-Bold", fontSize=5.5, fillColor=colors.HexColor("#1e293b")))
 
-    d.add(String(55, 95, f"PV Array: {num_panels} x {sol_wp}Wp", fontName="Helvetica-Bold", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#0f172a")))
+    # Interconnecting String Wiring
+    d.add(Line(37, 323, 37, 156, strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
+    d.add(Line(77, 323, 77, 156, strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
 
-    # Earthing Green
-    d.add(Line(40, 105, 40, 45, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
-    d.add(Line(30, 45, 50, 45, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
-    d.add(Line(33, 41, 47, 41, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
-    d.add(Line(36, 37, 44, 37, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
-    d.add(String(40, 27, "Ground Earth", fontName="Helvetica", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#15803d")))
+    d.add(String(57, 142, f"PV Array: {num_panels} x {sol_wp}Wp", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#0f172a")))
 
-    # DC Cables Red
-    d.add(Line(75, 105, 75, 70, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
-    d.add(Line(75, 70, 140, 70, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
-    d.add(String(105, 75, "DC 240V", fontName="Helvetica-Bold", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#b91c1c")))
+    # PV Ground Earth Wire (Green)
+    d.add(Line(37, 140, 37, 50, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(27, 50, 47, 50, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(30, 46, 44, 46, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(33, 42, 41, 42, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(String(37, 30, "Ground Earth", fontName="Helvetica", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#15803d")))
 
-    # 2. DC Isolator
-    d.add(Rect(140, 50, 50, 40, fillColor=colors.HexColor("#fef2f2"), strokeColor=colors.HexColor("#ef4444"), strokeWidth=1))
-    d.add(Line(150, 70, 180, 70, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.2))
-    d.add(Circle(155, 70, 2.5, fillColor=colors.HexColor("#dc2626"), strokeColor=colors.HexColor("#dc2626")))
-    d.add(Circle(175, 70, 2.5, fillColor=colors.HexColor("#dc2626"), strokeColor=colors.HexColor("#dc2626")))
-    d.add(Line(155, 70, 172, 78, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
-    d.add(String(165, 38, "DC Isolator", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#991b1b")))
-    d.add(String(165, 28, "B 31A", fontName="Helvetica", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#7f1d1d")))
+    # DC Output Conductors from PV Array (Red)
+    d.add(Line(77, 156, 77, 75, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+    d.add(Line(77, 75, 140, 75, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+    d.add(String(108, 83, "DC240V", fontName="Helvetica-Bold", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#b91c1c")))
+    d.add(String(108, 65, "8.31A", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#b91c1c")))
 
-    d.add(Line(190, 70, 220, 70, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
-    d.add(Line(220, 70, 220, 115, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+    # 2. DC Isolator Box
+    d.add(Rect(140, 52, 55, 45, rx=3, ry=3, fillColor=colors.HexColor("#fef2f2"), strokeColor=colors.HexColor("#ef4444"), strokeWidth=1))
+    d.add(Line(150, 75, 180, 75, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.2))
+    d.add(Circle(155, 75, 2.5, fillColor=colors.HexColor("#dc2626"), strokeColor=colors.HexColor("#dc2626")))
+    d.add(Circle(175, 75, 2.5, fillColor=colors.HexColor("#dc2626"), strokeColor=colors.HexColor("#dc2626")))
+    d.add(Line(155, 75, 172, 83, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+    d.add(String(167, 38, "DC Isolator", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#991b1b")))
+    d.add(String(167, 28, "B 31A", fontName="Helvetica", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#7f1d1d")))
 
-    # 3. Grid Tied Solar Inverter Box
-    d.add(Rect(200, 115, 120, 140, rx=8, ry=8, fillColor=colors.HexColor("#f8fafc"), strokeColor=colors.HexColor("#1e293b"), strokeWidth=1.5))
-    d.add(String(260, 242, "Grid Tied Solar Inverter", fontName="Helvetica-Bold", fontSize=8, textAnchor="middle", fillColor=colors.HexColor("#0f172a")))
+    d.add(Line(195, 75, 225, 75, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+    d.add(Line(225, 75, 225, 140, strokeColor=colors.HexColor("#dc2626"), strokeWidth=1.5))
+
+    # 3. Grid Tied Solar Inverter Box (Enlarged Height & Spacing)
+    d.add(Rect(200, 140, 130, 175, rx=8, ry=8, fillColor=colors.HexColor("#f8fafc"), strokeColor=colors.HexColor("#1e293b"), strokeWidth=1.5))
+    d.add(String(265, 302, "Grid Tied Solar Inverter", fontName="Helvetica-Bold", fontSize=8.5, textAnchor="middle", fillColor=colors.HexColor("#0f172a")))
     
-    # Wi-Fi Plug
-    d.add(Rect(280, 255, 25, 15, rx=3, ry=3, fillColor=colors.HexColor("#e0f2fe"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
-    d.add(String(292.5, 259, "Wi-Fi", fontName="Helvetica-Bold", fontSize=6, textAnchor="middle", fillColor=colors.HexColor("#0369a1")))
-    d.add(String(292.5, 274, "((( Wi-Fi Monitor )))", fontName="Helvetica", fontSize=6, textAnchor="middle", fillColor=colors.HexColor("#0284c7")))
+    # Wi-Fi Monitor Plug
+    d.add(Rect(286, 276, 36, 18, rx=3, ry=3, fillColor=colors.HexColor("#e0f2fe"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
+    d.add(String(304, 285, "Wi-Fi Plug", fontName="Helvetica-Bold", fontSize=5.5, textAnchor="middle", fillColor=colors.HexColor("#0369a1")))
+    d.add(String(304, 279, "(Monitor)", fontName="Helvetica", fontSize=5, textAnchor="middle", fillColor=colors.HexColor("#0284c7")))
+    d.add(String(304, 297, "((( Wi-Fi )))", fontName="Helvetica", fontSize=5.5, textAnchor="middle", fillColor=colors.HexColor("#0284c7")))
 
-    # Converter Blocks
-    d.add(Rect(215, 135, 40, 40, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#475569"), strokeWidth=1))
-    d.add(String(235, 151, "DC", fontName="Helvetica-Bold", fontSize=9, textAnchor="middle", fillColor=colors.HexColor("#334155")))
+    # Converter Compartments (DC & AC)
+    d.add(Rect(218, 165, 44, 44, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#475569"), strokeWidth=1))
+    d.add(String(240, 183, "DC", fontName="Helvetica-Bold", fontSize=9.5, textAnchor="middle", fillColor=colors.HexColor("#334155")))
     
-    d.add(Rect(215, 185, 40, 40, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#475569"), strokeWidth=1))
-    d.add(String(235, 201, "AC", fontName="Helvetica-Bold", fontSize=9, textAnchor="middle", fillColor=colors.HexColor("#334155")))
+    d.add(Rect(218, 225, 44, 44, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#475569"), strokeWidth=1))
+    d.add(String(240, 243, "AC", fontName="Helvetica-Bold", fontSize=9.5, textAnchor="middle", fillColor=colors.HexColor("#334155")))
 
-    d.add(Line(235, 175, 235, 185, strokeColor=colors.HexColor("#2563eb"), strokeWidth=1.5))
-    d.add(String(215, 120, "DC In", fontName="Helvetica", fontSize=6.5, fillColor=colors.HexColor("#64748b")))
-    d.add(String(290, 120, "AC Out", fontName="Helvetica", fontSize=6.5, fillColor=colors.HexColor("#64748b")))
-    d.add(String(260, 102, f"Make: {inverter_make} ({inverter_kw})", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#1e293b")))
+    d.add(Line(240, 209, 240, 225, strokeColor=colors.HexColor("#2563eb"), strokeWidth=1.5))
+    d.add(String(215, 146, "DC In", fontName="Helvetica-Bold", fontSize=6.5, fillColor=colors.HexColor("#64748b")))
+    d.add(String(290, 146, "AC Out", fontName="Helvetica-Bold", fontSize=6.5, fillColor=colors.HexColor("#64748b")))
+    d.add(String(265, 126, f"Make: {inverter_make} ({inverter_kw})", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#1e293b")))
 
-    d.add(Line(320, 140, 350, 140, strokeColor=colors.HexColor("#2563eb"), strokeWidth=1.5))
-    d.add(String(335, 145, "AC 230V", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#1d4ed8")))
+    d.add(Line(330, 175, 355, 175, strokeColor=colors.HexColor("#2563eb"), strokeWidth=1.5))
+    d.add(String(342, 182, "AC 230V", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#1d4ed8")))
+    d.add(String(342, 164, "8.7A", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#1d4ed8")))
 
-    # 4. AC Breaker
-    d.add(Rect(350, 120, 40, 40, fillColor=colors.HexColor("#eff6ff"), strokeColor=colors.HexColor("#3b82f6"), strokeWidth=1))
-    d.add(Line(360, 140, 380, 140, strokeColor=colors.HexColor("#1d4ed8"), strokeWidth=1.2))
-    d.add(Circle(363, 140, 2, fillColor=colors.HexColor("#1d4ed8"), strokeColor=colors.HexColor("#1d4ed8")))
-    d.add(Circle(377, 140, 2, fillColor=colors.HexColor("#1d4ed8"), strokeColor=colors.HexColor("#1d4ed8")))
-    d.add(Line(363, 140, 375, 147, strokeColor=colors.HexColor("#1d4ed8"), strokeWidth=1.5))
-    d.add(String(370, 108, "AC Breaker", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#1e40af")))
+    # 4. AC Breaker Box
+    d.add(Rect(355, 153, 44, 44, rx=3, ry=3, fillColor=colors.HexColor("#eff6ff"), strokeColor=colors.HexColor("#3b82f6"), strokeWidth=1))
+    d.add(Line(365, 175, 389, 175, strokeColor=colors.HexColor("#1d4ed8"), strokeWidth=1.2))
+    d.add(Circle(368, 175, 2, fillColor=colors.HexColor("#1d4ed8"), strokeColor=colors.HexColor("#1d4ed8")))
+    d.add(Circle(386, 175, 2, fillColor=colors.HexColor("#1d4ed8"), strokeColor=colors.HexColor("#1d4ed8")))
+    d.add(Line(368, 175, 384, 182, strokeColor=colors.HexColor("#1d4ed8"), strokeWidth=1.5))
+    d.add(String(377, 140, "AC Breaker", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#1e40af")))
 
-    d.add(Line(390, 140, 415, 140, strokeColor=colors.HexColor("#2563eb"), strokeWidth=1.5))
+    d.add(Line(399, 175, 420, 175, strokeColor=colors.HexColor("#2563eb"), strokeWidth=1.5))
 
-    # 5. Main Distribution Panel & Meter
-    d.add(Rect(415, 80, 60, 185, rx=5, ry=5, fillColor=colors.HexColor("#f8fafc"), strokeColor=colors.HexColor("#0f172a"), strokeWidth=1.5))
-    d.add(String(445, 252, "Main Panel", fontName="Helvetica-Bold", fontSize=7.5, textAnchor="middle", fillColor=colors.HexColor("#0f172a")))
+    # 5. Main Distribution Panel & Utility Grid Meter (Taller Box)
+    d.add(Rect(420, 90, 62, 235, rx=5, ry=5, fillColor=colors.HexColor("#f8fafc"), strokeColor=colors.HexColor("#0f172a"), strokeWidth=1.5))
+    d.add(String(451, 312, "Main Distribution", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#0f172a")))
+    d.add(String(451, 303, "Panel", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#0f172a")))
 
-    d.add(Rect(422, 195, 46, 45, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
-    d.add(String(445, 222, "Meter", fontName="Helvetica-Bold", fontSize=9, textAnchor="middle", fillColor=colors.HexColor("#0369a1")))
-    d.add(String(445, 204, "[ P14 ]", fontName="Helvetica", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#0284c7")))
+    # Meter Box
+    d.add(Rect(427, 245, 48, 48, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=1))
+    d.add(Circle(451, 273, 12, fillColor=colors.HexColor("#f0f9ff"), strokeColor=colors.HexColor("#0284c7"), strokeWidth=0.8))
+    d.add(String(451, 270, "Meter", fontName="Helvetica-Bold", fontSize=8, textAnchor="middle", fillColor=colors.HexColor("#0369a1")))
+    d.add(String(451, 252, "[ P14 ]", fontName="Helvetica", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#0284c7")))
 
-    d.add(Rect(422, 125, 46, 30, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#475569"), strokeWidth=1))
-    d.add(String(445, 137, "Main Switch", fontName="Helvetica-Bold", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#334155")))
+    # Main Switch / PSE Box
+    d.add(Rect(427, 155, 48, 38, fillColor=colors.HexColor("#ffffff"), strokeColor=colors.HexColor("#475569"), strokeWidth=1))
+    d.add(String(451, 174, "Main Switch", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#334155")))
+    d.add(String(451, 163, "[ PSE ]", fontName="Helvetica-Bold", fontSize=6, textAnchor="middle", fillColor=colors.HexColor("#475569")))
 
-    d.add(Line(468, 217, 485, 217, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.5))
-    d.add(PolyLine([481, 221, 487, 217, 481, 213], strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.5, fillColor=colors.HexColor("#16a34a")))
-    d.add(String(450, 272, "To Utility Grid (N / L)", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#15803d")))
+    # Utility Grid Connection Line
+    d.add(Line(475, 269, 488, 269, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.5))
+    d.add(PolyLine([484, 273, 489, 269, 484, 265], strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.5, fillColor=colors.HexColor("#16a34a")))
+    d.add(String(451, 296, "To Utility Grid", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#15803d")))
 
-    d.add(Line(468, 140, 485, 140, strokeColor=colors.HexColor("#d97706"), strokeWidth=1.5))
-    d.add(PolyLine([481, 144, 487, 140, 481, 136], strokeColor=colors.HexColor("#d97706"), strokeWidth=1.5, fillColor=colors.HexColor("#d97706")))
-    d.add(String(450, 95, "To Local Load (N / L)", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#b45309")))
+    # Local Load Connection Line
+    d.add(Line(475, 174, 488, 174, strokeColor=colors.HexColor("#d97706"), strokeWidth=1.5))
+    d.add(PolyLine([484, 178, 489, 174, 484, 170], strokeColor=colors.HexColor("#d97706"), strokeWidth=1.5, fillColor=colors.HexColor("#d97706")))
+    d.add(String(451, 144, "To Local Load", fontName="Helvetica-Bold", fontSize=6.5, textAnchor="middle", fillColor=colors.HexColor("#b45309")))
 
-    d.add(Line(445, 80, 445, 45, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
-    d.add(Line(435, 45, 455, 45, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
-    d.add(Line(438, 41, 452, 41, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
-    d.add(Line(441, 37, 449, 37, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
-    d.add(String(445, 27, "Ground Earth", fontName="Helvetica", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#15803d")))
+    # Main Panel Ground Earth Wire
+    d.add(Line(451, 90, 451, 50, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(441, 50, 461, 50, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(444, 46, 458, 46, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(Line(447, 42, 455, 42, strokeColor=colors.HexColor("#16a34a"), strokeWidth=1.2))
+    d.add(String(451, 30, "Ground Earth", fontName="Helvetica", fontSize=7, textAnchor="middle", fillColor=colors.HexColor("#15803d")))
 
     return d
 
