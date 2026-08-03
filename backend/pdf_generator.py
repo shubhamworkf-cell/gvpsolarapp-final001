@@ -1093,17 +1093,16 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     story.append(Spacer(1, 0.3 * cm))
 
     story.append(Paragraph("<b>Both Parties hereby agree as follows</b>", style_body_bold))
-    story.append(Spacer(1, 0.3 * cm))
+    story.append(PageBreak())
 
+    # ==================== PAGE 2 (ELIGIBILITY, TECHNICAL & SAFETY) ====================
     story.append(Paragraph("<b>1. Eligibility:</b>", style_clause_h))
     story.append(Paragraph(
         "The Roof-top Solar PV System meets the applicable norms for being integrated into the Distribution Network, "
         "and that the Eligible Consumer shall maintain the System accordingly for the duration of this Agreement.",
         style_body
     ))
-    story.append(PageBreak())
 
-    # ==================== PAGE 2 (TECHNICAL & SAFETY) ====================
     story.append(Paragraph("<b>2. Technical and Inter-connection Requirements:</b>", style_clause_h))
     story.append(Paragraph(
         "2.1. The metering arrangement and the inter-connection of the Roof-top Solar PV System with the Network of the Licensee "
@@ -1160,7 +1159,7 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     ))
     story.append(PageBreak())
 
-    # ==================== PAGE 3 (TERM, ACCESS & LIABILITIES) ====================
+    # ==================== PAGE 3 (TERM, ACCESS, LIABILITIES & COMMERCIAL SETTLEMENT 8.1-8.3) ====================
     story.append(Paragraph("<b>4. Period of Agreement, and Termination:</b>", style_clause_h))
     story.append(Paragraph("This Agreement shall be for a period of 20 years, but may be terminated prematurely", style_body))
     story.append(Paragraph("(a) By mutual consent; or", style_body))
@@ -1201,9 +1200,7 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         "punitive or exemplary damages, whether any of these liabilities, losses or damages arise in contract, or otherwise.",
         style_body
     ))
-    story.append(PageBreak())
 
-    # ==================== PAGE 4 (COMMERCIAL SETTLEMENT 8.1 - 8.3) ====================
     story.append(Paragraph("<b>8. Commercial Settlement:</b>", style_clause_h))
     story.append(Paragraph(
         "8.1. The commercial settlements under this Agreement shall be in accordance with the Net Metering Regulations.",
@@ -1223,7 +1220,7 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     ))
     story.append(PageBreak())
 
-    # ==================== PAGE 5 (8.4-8.5, COSTS, DISPUTES & SIGNATURES) ====================
+    # ==================== PAGE 4 (CURRENT PAGE 5 - SIGNATURE PAGE) ====================
     story.append(Paragraph(
         "8.4. The uni-directional and bi-directional or pair of meters shall be fixed in separate meter boxes in the same proximity.",
         style_body
