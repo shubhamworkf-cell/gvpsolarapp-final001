@@ -241,8 +241,16 @@ def _render_items_table(doc_type: str, items: list[dict], data: dict, apply_gst:
         if show_amount:
             headers.append(Paragraph('<font color="#ffffff"><b>Amount</b></font>', HEADER_TEXT_STYLE))
             
+        hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
+        def _is_hv_db(row):
+            pn = (row.get("product") or "").upper()
+            return row.get("high_value_goods") or row.get("high_value_asset") or any(kw in pn for kw in hv_keywords)
+
+        sorted_items = list(items or [])
+        sorted_items.sort(key=lambda r: (0 if _is_hv_db(r) else 1, (r.get("product") or "").lower(), (r.get("size") or "").lower()))
+
         rows = [headers]
-        for idx, row in enumerate(items, 1):
+        for idx, row in enumerate(sorted_items, 1):
             qty = float(row.get("dispatch_qty") or 0)
             rate = float(row.get("rate") or 0)
             amount = qty * rate

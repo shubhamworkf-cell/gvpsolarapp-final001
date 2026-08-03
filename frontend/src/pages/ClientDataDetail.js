@@ -136,6 +136,7 @@ export default function ClientDataDetail() {
   const meterTestings = clientData?.meter_testings || [];
   const installations = clientData?.installations || [];
   const verifications = clientData?.verifications || [];
+  const handovers = clientData?.handovers || [];
   const assets = clientData?.assets || [];
   const highValueAssets = clientData?.high_value_assets || [];
   const tickets = clientData?.tickets || [];
@@ -362,6 +363,7 @@ export default function ClientDataDetail() {
               <TabsTrigger value="survey" data-testid="tab-survey"><ClipboardList className="w-3.5 h-3.5 mr-1.5" /> Survey <Badge variant="outline" className="ml-1.5 text-[10px]">{surveys.length}</Badge></TabsTrigger>
               <TabsTrigger value="installation" data-testid="tab-installation"><Wrench className="w-3.5 h-3.5 mr-1.5" /> Installation <Badge variant="outline" className="ml-1.5 text-[10px]">{installations.length}</Badge></TabsTrigger>
               <TabsTrigger value="verification" data-testid="tab-verification"><CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Verification <Badge variant="outline" className="ml-1.5 text-[10px]">{verifications.length}</Badge></TabsTrigger>
+              <TabsTrigger value="handover" data-testid="tab-handover"><CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Handover <Badge variant="outline" className="ml-1.5 text-[10px]">{handovers.length}</Badge></TabsTrigger>
               <TabsTrigger value="meter" data-testid="tab-meter"><Gauge className="w-3.5 h-3.5 mr-1.5" /> Meter Testing <Badge variant="outline" className="ml-1.5 text-[10px]">{meterTestings.length}</Badge></TabsTrigger>
               <TabsTrigger value="assets" data-testid="tab-assets"><ImageIcon className="w-3.5 h-3.5 mr-1.5" /> Site Photos <Badge variant="outline" className="ml-1.5 text-[10px]">{assets.length}</Badge></TabsTrigger>
               <TabsTrigger value="hva" data-testid="tab-hva"><Package className="w-3.5 h-3.5 mr-1.5" /> High Value Goods <Badge variant="outline" className="ml-1.5 text-[10px]">{highValueAssets.length}</Badge></TabsTrigger>
@@ -414,6 +416,9 @@ export default function ClientDataDetail() {
         </div>
         <div style={{ display: tab === "verification" ? "block" : "none" }}>
           {loading ? <TabSkeleton /> : <WorkflowDetailsSection title="Verification" icon={CheckCircle2} records={verifications} onZoom={setZoom} />}
+        </div>
+        <div style={{ display: tab === "handover" ? "block" : "none" }}>
+          {loading ? <TabSkeleton /> : <WorkflowDetailsSection title="Handover" icon={CheckCircle2} records={handovers} onZoom={setZoom} />}
         </div>
         <div style={{ display: tab === "assets" ? "block" : "none" }}>
           {loading ? <TabSkeleton /> : <AssetsSection assets={assets} onZoom={setZoom} />}

@@ -7992,6 +7992,7 @@ async def list_client_data(
     return out
 
 
+@api_router.get("/client-data/{client_id}")
 @api_router.get("/client-data/clients/{client_id}")
 async def get_client_data_detail(
     client_id: str,
@@ -7999,7 +8000,19 @@ async def get_client_data_detail(
     user=Depends(get_current_user)
 ):
     cid = user["company_id"]
-    or_conds: List[Dict[str, Any]] = [{"id": client_id}, {"sol_id": client_id}]
+    or_conds: List[Dict[str, Any]] = [
+        {"id": client_id},
+        {"sol_id": client_id},
+        {"client_code": client_id},
+        {"consumer_number": client_id}
+    ]
+    if len(client_id) == 24:
+        try:
+            from bson import ObjectId
+            or_conds.append({"_id": ObjectId(client_id)})
+        except Exception:
+            pass
+
     c = None
     
     try:
@@ -8148,6 +8161,8 @@ async def get_client_data_detail(
         coros["installations"] = db.installations.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
     if tab in ("all", "verification"):
         coros["verifications"] = db.verifications.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+    if tab in ("all", "handover"):
+        coros["handovers"] = db.handovers.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
     if tab in ("all", "material_history"):
         coros["material_requests_raw"] = db.material_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
     if tab in ("all", "tasks"):
@@ -8206,6 +8221,7 @@ async def get_client_data_detail(
         "meter_testings": meter_testings,
         "installations": installations,
         "verifications": verifications,
+        "handovers": results.get("handovers", []),
         "material_requests": material_requests,
         "tasks": results.get("tasks", []),
         "inward": results.get("inward", []),
@@ -9272,6 +9288,18 @@ async def calculate_client_ledger(company_id: str, client_id: str):
             item["last_movement_date"] = item["last_movement_date"][:10]
             
         items.append(item)
+
+    hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
+    local_hv = _load_local_high_value_products()
+    def _is_item_hv(it):
+        p_name = norm_product_name(it.get("product") or "")
+        if it.get("high_value_goods") or it.get("high_value_asset") or local_hv.get(p_name):
+            return True
+        if any(kw in p_name for kw in hv_keywords):
+            return True
+        return False
+
+    items.sort(key=lambda x: (0 if _is_item_hv(x) else 1, (x.get("product") or "").lower(), (x.get("size") or "").lower()))
         
     summary = {
         "total_products": len(items),

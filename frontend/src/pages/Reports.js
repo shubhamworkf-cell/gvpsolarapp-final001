@@ -78,22 +78,35 @@ export default function Reports() {
     return filteredClients.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
   }, [filteredClients, currentPage, itemsPerPage]);
 
-  // Filter ledger items by search query (Product Name, Size/Spec, Brand, Challan Number)
+  // Filter and sort ledger items: High Value Goods first -> A-Z inside HV -> Remaining -> A-Z inside remaining
   const filteredLedgerItems = useMemo(() => {
     if (!ledger?.items) return [];
-    if (!ledgerSearch.trim()) return ledger.items;
-    const s = ledgerSearch.toLowerCase().trim();
-    return ledger.items.filter((item) => {
-      const product = (item.product || item.name || "").toLowerCase();
-      const size = (item.size || "").toLowerCase();
-      const brand = (item.brand || "").toLowerCase();
-      const challan = (item.challan_number || item.challan || item.outward_challan_no || item.reference_number || "").toLowerCase();
-      return (
-        product.includes(s) ||
-        size.includes(s) ||
-        brand.includes(s) ||
-        challan.includes(s)
-      );
+    const hvKeywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"];
+    let list = [...ledger.items];
+    if (ledgerSearch.trim()) {
+      const s = ledgerSearch.toLowerCase().trim();
+      list = list.filter((item) => {
+        const product = (item.product || item.name || "").toLowerCase();
+        const size = (item.size || "").toLowerCase();
+        const brand = (item.brand || "").toLowerCase();
+        const challan = (item.challan_number || item.challan || item.outward_challan_no || item.reference_number || "").toLowerCase();
+        return (
+          product.includes(s) ||
+          size.includes(s) ||
+          brand.includes(s) ||
+          challan.includes(s)
+        );
+      });
+    }
+
+    return list.sort((a, b) => {
+      const aName = (a.product || a.name || "").toUpperCase();
+      const bName = (b.product || b.name || "").toUpperCase();
+      const aIsHV = Boolean(a.high_value_goods || a.high_value_asset || hvKeywords.some((kw) => aName.includes(kw)));
+      const bIsHV = Boolean(b.high_value_goods || b.high_value_asset || hvKeywords.some((kw) => bName.includes(kw)));
+      if (aIsHV && !bIsHV) return -1;
+      if (!aIsHV && bIsHV) return 1;
+      return aName.localeCompare(bName);
     });
   }, [ledger, ledgerSearch]);
 
