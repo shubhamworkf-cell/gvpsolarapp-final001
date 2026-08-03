@@ -220,6 +220,20 @@ async def _record_workflow_details(task: dict, user: dict):
         table_name = "installations"
     elif task_type == "Handover":
         table_name = "handovers"
+        h_photo = submission.get("handover_photo_id") or submission.get("photo_id") or submission.get("file_id")
+        if h_photo:
+            photos["Handover Photo"] = h_photo
+            details["photos"] = photos
+            details["attachments"] = photos
+        chk = list(details.get("checklist") or [])
+        if submission.get("declaration_confirmed"):
+            chk.append({"label": "Owner Declaration Confirmed", "checked": True})
+        if submission.get("installer_confirmed"):
+            chk.append({"label": "Installer Confirmed", "checked": True})
+        if submission.get("owner_name"):
+            chk.append({"label": f"Owner: {submission.get('owner_name')}", "checked": True})
+        if chk:
+            details["checklist"] = chk
     elif task_type == "PM Surya Ghar Upload":
         table_name = "pm_surya_uploads"
     elif task_type == "MSEDCL Upload":
@@ -4015,6 +4029,8 @@ async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = 
 async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_user)):
     existing_task = await db.tasks.find_one({"id": task_id, "company_id": user["company_id"]})
     if not existing_task:
+        existing_task = await db.tasks.find_one({"id": task_id})
+    if not existing_task:
         raise HTTPException(status_code=404, detail="Task not found")
 
     if data.status == "cancelled":
@@ -4030,9 +4046,7 @@ async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_u
         if data.cancellation_reason:
             update["cancellation_reason"] = data.cancellation_reason
 
-    res = await db.tasks.update_one({"id": task_id, "company_id": user["company_id"]}, {"$set": update})
-    if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Not found")
+    res = await db.tasks.update_one({"id": task_id}, {"$set": update})
     t = await db.tasks.find_one({"id": task_id}, {"_id": 0})
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -4042,7 +4056,10 @@ async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_u
         await log_activity(user["company_id"], user["id"], user["name"], f"Cancelled Task: {task_type_str}", t.get("client_name", ""))
 
     if t.get("status") == "completed":
-        await _record_workflow_details(t, user)
+        try:
+            await _record_workflow_details(t, user)
+        except Exception as w_err:
+            logger.error(f"[ERROR] _record_workflow_details failed for task {task_id}: {w_err!r}")
 
     if data.status == "completed":
         action_log_map = {
@@ -4054,6 +4071,7 @@ async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_u
             "Meter Testing Completed": "Meter Testing Completed",
             "Verification": "Verification Approved",
             "Installation": "Installation Completed",
+            "Handover": "Handover Completed",
         }
         task_type_str = str(t.get("task_type") or "")
         action_name = action_log_map.get(task_type_str, f"Completed Task: {task_type_str}")
@@ -4071,8 +4089,10 @@ async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_u
         chk = sub.get("checklist") or []
         completed_items = [item["label"] for item in chk if isinstance(item, dict) and item.get("checked")]
         
-        client_doc = await db.clients.find_one({"id": t.get("client_id") or ""})
+        cid_val = t.get("client_id") or ""
+        client_doc = await db.clients.find_one({"$or": [{"id": cid_val}, {"sol_id": cid_val}, {"client_code": cid_val}]})
         if client_doc:
+            target_id = client_doc.get("id") or cid_val
             new_stages = client_doc.get("stages") or {}
             
             stage_map = {
@@ -4101,13 +4121,15 @@ async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_u
             
             new_stages = sync_checklist_completed(new_stages)
             await db.clients.update_one(
-                {"id": t.get("client_id") or ""},
+                {"id": target_id},
                 {"$set": {
                     "stages": new_stages,
                     "progress": calc_progress(new_stages),
                     "updated_at": now_iso()
                 }}
             )
+            if stage_name == "Handover" and client_doc.get("status") != "Handover Complete":
+                await db.clients.update_one({"id": target_id}, {"$set": {"status": "Handover Complete"}})
     await log_activity(user["company_id"], user["id"], user["name"], f"Updated Task ({data.status or 'edit'})", t.get("client_name", ""))
     return t
 
