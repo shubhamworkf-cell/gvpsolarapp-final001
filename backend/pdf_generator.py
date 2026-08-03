@@ -1002,10 +1002,10 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     pdf = SimpleDocTemplate(
         buf,
         pagesize=A4,
-        leftMargin=1.5 * cm,
-        rightMargin=1.5 * cm,
-        topMargin=1.2 * cm,
-        bottomMargin=1.2 * cm
+        leftMargin=1.6 * cm,
+        rightMargin=1.6 * cm,
+        topMargin=1.3 * cm,
+        bottomMargin=1.3 * cm
     )
     story = []
 
@@ -1028,54 +1028,14 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     sub_div = client.get("sub_division") or "ICHALKARANJI B S/DN."
     division = client.get("division") or "Dist KOLHAPUR"
 
-    # Define Styles (Tightened spacing for exact 5-page reference layout match)
-    style_h1 = ParagraphStyle('NMA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=13, leading=16, alignment=1, spaceAfter=4)
-    style_h2 = ParagraphStyle('NMA_H2', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=11, leading=14, alignment=1, spaceAfter=8)
-    style_clause_h = ParagraphStyle('NMA_ClauseH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9.5, leading=13, spaceBefore=5, spaceAfter=2)
-    style_body = ParagraphStyle('NMA_Body', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, leading=11.5, alignment=4, spaceAfter=3)
+    # Define Styles (Refined font sizing & spacing for exact 5-page layout)
+    style_h1 = ParagraphStyle('NMA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=18, alignment=1, spaceBefore=8, spaceAfter=4)
+    style_h2 = ParagraphStyle('NMA_H2', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=12, leading=15, alignment=1, spaceAfter=10)
+    style_clause_h = ParagraphStyle('NMA_ClauseH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9.5, leading=13, spaceBefore=6, spaceAfter=3)
+    style_body = ParagraphStyle('NMA_Body', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, leading=11.5, alignment=4, spaceAfter=4)
     style_body_bold = ParagraphStyle('NMA_BodyBold', parent=style_body, fontName='Helvetica-Bold')
 
-    # ==================== PAGE 1 ====================
-    # Non-Judicial Government Stamp Header Box
-    stamp_header = Table([
-        [Paragraph("<b>भारतीय गैर न्यायिक</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>भारत INDIA</b>", ParagraphStyle('stmp1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=11, alignment=1, textColor=colors.HexColor('#991b1b')))],
-        [Paragraph("<b>रु. 500 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FIVE HUNDRED RUPEES &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Rs. 500</b>", ParagraphStyle('stmp2', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=12, alignment=1, textColor=colors.HexColor('#1e3a8a')))],
-        [Paragraph("<b>सत्यमेव जयते</b>", ParagraphStyle('stmp3', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, alignment=1))],
-        [Paragraph("<b>INDIA NON JUDICIAL</b>", ParagraphStyle('stmp4', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=13, alignment=1, textColor=colors.HexColor('#991b1b')))],
-        [Paragraph("<b>महाराष्ट्र MAHARASHTRA</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>2025</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>ED 513116</b>", ParagraphStyle('stmp5', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, alignment=1, textColor=colors.HexColor('#1e293b')))]
-    ], colWidths=[18.0 * cm])
-    stamp_header.setStyle(TableStyle([
-        ('BOX', (0, 0), (-1, -1), 1.5, colors.HexColor('#1e3a8a')),
-        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-    ]))
-    story.append(stamp_header)
-    story.append(Spacer(1, 0.8 * cm))
-
-    # Treasury Stamp Table / Stamp Vendor Details Box
-    treasury_data = [
-        [Paragraph("<b>मुद्रांक विक्री नोंद अ क्र</b>", style_body), Paragraph(f"<b>१४७०</b> &nbsp; <b>दि.:</b> <b>{date_str}</b>", style_body), Paragraph("<b>मुद्रांक शुल्क रक्कम:</b> <b>रु. ५००/-</b>", style_body)],
-        [Paragraph("<b>मुद्रांक विकत घेणाऱ्याचे नाव:</b>", style_body), Paragraph(f"<b>{client_name}</b>", style_body_bold), Paragraph("<b>इचलकरंजी</b>", style_body)],
-        [Paragraph("<b>मुद्रांक परवानाधारक:</b>", style_body), Paragraph("श्री विश्वनाथ कृष्णा घाटगे (पत्ता: १०/५६३,इचलकरंजी) कोड नंबर: २७०७०५२", style_body), Paragraph("<b>Treasury Office:</b> Ichalkaranji", style_body)],
-        [Paragraph("<b>परवानाधारक सही / स्वाक्षरी:</b>", style_body), Paragraph("कोमल बिजमोहन माहेश्वरी", style_body), Paragraph("<b>Sub Treasury Officer</b>", style_body)]
-    ]
-    t_treasury = Table(treasury_data, colWidths=[5.5 * cm, 7.5 * cm, 5.0 * cm])
-    t_treasury.setStyle(TableStyle([
-        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#475569')),
-        ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#94a3b8')),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-        ('LEFTPADDING', (0, 0), (-1, -1), 6),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-    ]))
-    story.append(t_treasury)
-    story.append(PageBreak())
-
-    # ==================== PAGE 2 ====================
+    # ==================== PAGE 1 (AGREEMENT PREAMBLE) ====================
     story.append(Paragraph("<b>ANNEXURE – 3</b>", style_h1))
     story.append(Spacer(1, 0.2 * cm))
     story.append(Paragraph("<b>Net Metering Connection Agreement</b>", style_h2))
@@ -1109,16 +1069,17 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     story.append(Spacer(1, 0.3 * cm))
 
     story.append(Paragraph("<b>Both Parties hereby agree as follows</b>", style_body_bold))
-    story.append(PageBreak())
+    story.append(Spacer(1, 0.3 * cm))
 
-    # ==================== PAGE 3 ====================
     story.append(Paragraph("<b>1. Eligibility:</b>", style_clause_h))
     story.append(Paragraph(
         "The Roof-top Solar PV System meets the applicable norms for being integrated into the Distribution Network, "
         "and that the Eligible Consumer shall maintain the System accordingly for the duration of this Agreement.",
         style_body
     ))
+    story.append(PageBreak())
 
+    # ==================== PAGE 2 (TECHNICAL & SAFETY) ====================
     story.append(Paragraph("<b>2. Technical and Inter-connection Requirements:</b>", style_clause_h))
     story.append(Paragraph(
         "2.1. The metering arrangement and the inter-connection of the Roof-top Solar PV System with the Network of the Licensee "
@@ -1173,11 +1134,10 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         "or the municipal or other authorities, before connecting the Roof-top Solar PV System to the distribution Network.",
         style_body
     ))
-
-    story.append(Paragraph("<b>4. Period of Agreement, and Termination:</b>", style_clause_h))
     story.append(PageBreak())
 
-    # ==================== PAGE 4 ====================
+    # ==================== PAGE 3 (TERM, ACCESS & LIABILITIES) ====================
+    story.append(Paragraph("<b>4. Period of Agreement, and Termination:</b>", style_clause_h))
     story.append(Paragraph("This Agreement shall be for a period of 20 years, but may be terminated prematurely", style_body))
     story.append(Paragraph("(a) By mutual consent; or", style_body))
     story.append(Paragraph("(b) By the Eligible Consumer, by giving 30 days' notice to the Licensee ;", style_body))
@@ -1217,7 +1177,9 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         "punitive or exemplary damages, whether any of these liabilities, losses or damages arise in contract, or otherwise.",
         style_body
     ))
+    story.append(PageBreak())
 
+    # ==================== PAGE 4 (COMMERCIAL SETTLEMENT 8.1 - 8.3) ====================
     story.append(Paragraph("<b>8. Commercial Settlement:</b>", style_clause_h))
     story.append(Paragraph(
         "8.1. The commercial settlements under this Agreement shall be in accordance with the Net Metering Regulations.",
@@ -1237,7 +1199,7 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     ))
     story.append(PageBreak())
 
-    # ==================== PAGE 5 ====================
+    # ==================== PAGE 5 (8.4-8.5, COSTS, DISPUTES & SIGNATURES) ====================
     story.append(Paragraph(
         "8.4. The uni-directional and bi-directional or pair of meters shall be fixed in separate meter boxes in the same proximity.",
         style_body
@@ -1267,14 +1229,14 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         "in respect of any grievance regarding billing which has not been redressed by the Licensee.",
         style_body
     ))
-    story.append(Spacer(1, 0.3 * cm))
+    story.append(Spacer(1, 0.4 * cm))
 
     witness_intro = (
         f"In the witness where of <b>{client_name}</b> for and on behalf of Eligible Consumer and Shri. "
         f"Additional Executive Engineer <b>{sub_div}/ MSEDCL</b>, for and on behalf of MSEDCL agree to this agreement."
     )
     story.append(Paragraph(witness_intro, style_body))
-    story.append(Spacer(1, 0.4 * cm))
+    story.append(Spacer(1, 0.6 * cm))
 
     # Signature Table (Aligned cleanly with consumer left, MSEDCL right, Witnesses aligned)
     sig_table_data = [
