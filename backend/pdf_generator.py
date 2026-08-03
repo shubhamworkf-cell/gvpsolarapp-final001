@@ -1291,6 +1291,243 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     return buf.getvalue()
 
 
+class VendorCanvas(canvas.Canvas):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_page_decorations(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_page_decorations(self, page_count):
+        self.saveState()
+        # Footer line
+        self.setStrokeColor(colors.HexColor('#cbd5e1'))
+        self.setLineWidth(0.5)
+        self.line(1.5 * cm, 1.2 * cm, 21.0 * cm - 1.5 * cm, 1.2 * cm)
+        
+        self.setFont("Helvetica", 8)
+        self.setFillColor(colors.HexColor('#475569'))
+        self.drawString(1.5 * cm, 0.8 * cm, "GVP SOLAR ENERGY")
+        self.drawCentredString(10.5 * cm, 0.8 * cm, "Rooftop Solar Vendor Agreement")
+        self.drawRightString(21.0 * cm - 1.5 * cm, 0.8 * cm, f"Page {self._pageNumber} of {page_count}")
+        self.restoreState()
+
+
+def generate_vendor_agreement_pdf(client: dict, company: dict) -> bytes:
+    buf = BytesIO()
+    pdf = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.6 * cm,
+        rightMargin=1.6 * cm,
+        topMargin=1.3 * cm,
+        bottomMargin=1.3 * cm
+    )
+    story = []
+
+    # Dynamic Data Extraction
+    client_name = (client.get("full_name") or client.get("name") or "CLIENT").strip()
+    consumer_no = str(client.get("consumer_number") or "—").strip()
+    client_addr = (client.get("address") or "—").strip()
+    city = (client.get("city") or "ICHALKARANJI").strip()
+    pincode = str(client.get("pincode") or "").strip()
+    full_address = f"{client_addr}, {city} {pincode}".strip(", ")
+    
+    system_kw = str(client.get("system_kw") or client.get("capacity") or "3.3").strip()
+    panel_make = (client.get("panel_make") or "INA").strip()
+    panel_wattage = str(client.get("panel_wattage") or "545").strip()
+    inverter_make = (client.get("inverter_make") or "UTL").strip()
+    inverter_kw = str(client.get("inverter_capacity") or client.get("system_kw") or "4.0").strip()
+    total_cost = str(client.get("total_cost") or client.get("quotation_amount") or "200000").strip()
+    
+    date_obj = datetime.now()
+    day_str = date_obj.strftime("%d")
+    month_str = date_obj.strftime("%m")
+    year_str = date_obj.strftime("%Y")
+
+    company_name = company.get("company_name") or "GVP SOLAR ENERGY"
+    company_address = company.get("address") or "SHOP NO 1-2, BUILDING NO 1, KAPAD MARKET, ICHALKARANJI"
+    company_pincode = company.get("pincode") or "416115"
+
+    # Define Styles
+    style_h1 = ParagraphStyle('VA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=17, alignment=1, spaceBefore=4, spaceAfter=3)
+    style_sub = ParagraphStyle('VA_Sub', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, leading=12, alignment=1, spaceAfter=6)
+    style_center_b = ParagraphStyle('VA_CenterB', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, leading=13, alignment=1, spaceBefore=4, spaceAfter=4)
+    style_clause_h = ParagraphStyle('VA_ClauseH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9.5, leading=12.5, spaceBefore=5, spaceAfter=2)
+    style_body = ParagraphStyle('VA_Body', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, leading=11.0, alignment=4, spaceBefore=0, spaceAfter=2)
+    style_body_bold = ParagraphStyle('VA_BodyBold', parent=style_body, fontName='Helvetica-Bold')
+
+    # ==================== PREAMBLE & TITLES ====================
+    story.append(Paragraph("<u><b>Agreement Between</b></u>", style_h1))
+    story.append(Paragraph("<b>Applicant and the registered/empaneled Vendor for installation of rooftop solar system in residential house of the Applicant under simplified procedure of Rooftop Solar Program Ph-II</b>", style_sub))
+    story.append(Spacer(1, 0.2 * cm))
+
+    exec_p = (
+        f"This agreement is executed on (Day) <b>{day_str}</b> , (Month) <b>{month_str}</b> , (Year) <b>{year_str}</b> "
+        f"for design, installation, commissioning and five years comprehensive maintenance of rooftop solar system "
+        f"to be installed undersimplified procedure of Rooftop Solar Program Ph-II."
+    )
+    story.append(Paragraph(exec_p, style_body))
+    story.append(Spacer(1, 0.2 * cm))
+
+    story.append(Paragraph("<b>Between</b>", style_center_b))
+    applicant_p = (
+        f"<b>{client_name}</b> has residential electricity connection with consumer number <b>{consumer_no}</b> "
+        f"from MSEDCL (DISCOM) at <b>{full_address} PIN code : {pincode}</b> (Hereinafter referred to as Applicant)."
+    )
+    story.append(Paragraph(applicant_p, style_body))
+    story.append(Spacer(1, 0.2 * cm))
+
+    story.append(Paragraph("<b>And</b>", style_center_b))
+    vendor_p = (
+        f"<b>{company_name}</b> (Name of Vendor) is registered/ empaneled with the MSEDCL (hereinafter referred as DISCOM) "
+        f"and is having registered/functional office at <b>{company_address} . PIN CODE- {company_pincode}</b> . "
+        f"Both Applicant and the Vendor are jointly referred as Parties."
+    )
+    story.append(Paragraph(vendor_p, style_body))
+    story.append(Spacer(1, 0.2 * cm))
+
+    story.append(Paragraph("<b>Whereas</b>", style_body_bold))
+    story.append(Paragraph("- The Applicant intends to install rooftop solar system under simplified procedure of Rooftop Solar Programmed Ph-II of the MNRE.", style_body))
+    story.append(Paragraph("- The Vendor is registered/empaneled vendor with DISCOM for installation of rooftop solar under MNRE Schemes. The Vendor satisfies all the existing regulation pertaining to electrical safety and license in the respective state and it is not debarred or blacklisted from undertaking any such installations by any state/central Government agency.", style_body))
+    story.append(Paragraph("- Both the parties are mutually agreed and understand their roles and responsibilities and have no liability to any other agency/firm/stakeholder especially to DISCOM and MNRE.", style_body))
+    story.append(Spacer(1, 0.3 * cm))
+
+    # ==================== SECTIONS 1 - 15 ====================
+    story.append(Paragraph("<b>1. GENERAL TERMS:</b>", style_clause_h))
+    story.append(Paragraph("1.1. The Applicant hereby represents and warrants that the Applicant has the sole legal capacity to enter into this Agreement and authorize the construction, installation and commissioning of the Rooftop Solar System (“RTS System”) which is inclusive of Balance of System (“BoS”) on the Applicant's premises (“Applicant Site”). The Vendor reserves its right to verify ownership of the Applicant Site and Applicant covenants to co-operate and provide all information and documentation required by the Vendor for the same.", style_body))
+    story.append(Paragraph("1.2. Vendor may propose changes to the scope, nature and or schedule of the services being performed under this Agreement. All proposed changes must be mutually agreed between the Parties. If Parties fail to agree on the variation proposed, either Party may terminate this Agreement by serving notice as per Clause 13.", style_body))
+    story.append(Paragraph("1.3. The Applicant understands and agrees that future changes in load, electricity usage patterns and/or electrical grid issues may affect the performance of the RTS System and these factors have not been and cannot be considered in any analysis or quotation provided by Vendor or its Authorized Persons (defined below).", style_body))
+
+    story.append(Paragraph("<b>2. RTS System:</b>", style_clause_h))
+    story.append(Paragraph(f"2.1. Total capacity of RTS System will be minimum <b>{system_kw} KWatt</b>.", style_body))
+    story.append(Paragraph("2.2. The Solar modules, inverters and BoS will confirm to minimum specifications and DCR requirement of MNRE.", style_body))
+    story.append(Paragraph(f"2.3. Solar modules of <b>{panel_make}</b> make model, <b>{panel_wattage} Wp</b> capacity each and <b>21.13%</b> efficiency will be procured and installed by the Vendor", style_body))
+    story.append(Paragraph(f"2.4. Solar inverter of <b>{inverter_make}</b> make, model <b>{inverter_kw} KW</b> rated output capacity will be procured and installed by the Vendor", style_body))
+    story.append(Paragraph("2.5. The module mounting structure must withstand minimum wind load pressure as specified by MNRE.", style_body))
+    story.append(Paragraph("2.6. Other BoS installations shall be as per best industry practice with all safety and protection gears installed by the vendor.", style_body))
+
+    story.append(Paragraph("<b>3. PRICE AND PAYMENT TERMS:</b>", style_clause_h))
+    story.append(Paragraph(f"3.1. The cost of an RTS System will be <b>Rs. {total_cost}/-</b> (to be decided mutually). The Applicant shall pay the total cost to the Vendor as under:", style_body))
+    story.append(Paragraph("(i) 50 % as an advance on confirmation of the order.", style_body))
+    story.append(Paragraph("(ii) 40 % against Proforma Invoice (PI) before dispatch of solar panels, inverters and other BoS items to be delivered.", style_body))
+    story.append(Paragraph("(iii) 10 % after installation and commissioning of the RTS System. The order value and payment terms are fixed and will not be subject to any adjustment except as approved in writing by Vendor. The payment shall be made only through bankers' cheque / NEFT / RTGS / online payment portal as intimated by Vendor. No cash payments shall be accepted by Vendor or its Authorized Person.", style_body))
+
+    story.append(Paragraph("<b>4. REPRESENTATIONS MADE BY THE APPLICANT:</b>", style_clause_h))
+    story.append(Paragraph("The Applicant acknowledges and agrees that:", style_body))
+    story.append(Paragraph("4.1. any timeline or schedule shared by Vendor for the provision of services and delivery of the RTS System is only an estimate and Vendor will not be liable for any delay that is not attributable to Vendor.", style_body))
+    story.append(Paragraph("4.2. all information disclosed by the Applicant to Vendor in connection with the supply of the RTS System (or any part thereof), services and generation estimation (including, without limitation, the load profile and power bill) are true and accurate and acknowledges that Vendor has relied on the information produced by the Applicant to customize the RTS System layout and BoS design for the purposes of this Agreement.", style_body))
+    story.append(Paragraph("4.3. all descriptive specifications, illustrations, drawings, data, dimensions, quotation, fact sheets, price lists and any advertising material circulated/published/provided by Vendor are approximate only.", style_body))
+    story.append(Paragraph("4.4. any drawings, pre-feasibility report, specifications and plans composed by Vendor shall require the Applicant's approval within 5 (five) days of its receipt by electronic mail to Vendor and if the Applicant does not respond within this period, the drawings, specifications or plans shall be final and deemed to have been approved by the Applicant.", style_body))
+    story.append(Paragraph("4.5. the Applicant shall not use the RTS System or any part thereof, other than in accordance with the product manufacturer's specifications, and covenants that any risk arising from misuse or/and inappropriate use shall be to the account of the Applicant alone.", style_body))
+    story.append(Paragraph("4.6. The Applicant represents, warrants and covenants that:", style_body))
+    story.append(Paragraph("(i) All electrical and plumbing infrastructure at the Applicant Site are in conformity with applicable laws.", style_body))
+    story.append(Paragraph("(ii) the Applicant has the legal capacity to permit unfettered access to Vendor and its Authorized Persons for the purposes of execution and performance of this Agreement.", style_body))
+    story.append(Paragraph("(iii) the Applicant has and will provide requisite power, water and other requisite resources and storage facilities for construction, installation, operation and maintenance of the RTS System.", style_body))
+    story.append(Paragraph("(iv) The Applicant will provide support for site fabrication of structure, assembly and fitting of module mounting structure at Applicant Site.", style_body))
+    story.append(Paragraph("(v) The Applicant will ensure that the Applicant Site is shadow free and free of all encumbrances during the lifetime of the RTS System.", style_body))
+    story.append(Paragraph("(vi) Applicant should ensure that the Applicant regularly cleans and ensures accessibility and safety to the RTS System, as required by Vendor and dusting frequency in the premises.", style_body))
+    story.append(Paragraph("(vii) The vendor is entitled to permit geo-tagging of the Applicant Site as a Vendor installation site.", style_body))
+    story.append(Paragraph("(viii) Unless otherwise intimated by the Applicant in writing, Vendor is entitled to take photographs, videos and testimonials of the Applicant and the Applicant Site, and to create content which will become the property of Vendor and the same can be freely used by Vendor as part of its promotional and marketing activities across all platforms as it deems fit;", style_body))
+    story.append(Paragraph("(ix) The Applicant validates the stability of the Applicant Site for the installation of the RTS System.", style_body))
+
+    story.append(Paragraph("<b>5. MAINTENANCE:</b>", style_clause_h))
+    story.append(Paragraph("5.1. Vendor shall provide five-year free workmanship maintenance. Vendor shall visit the Applicant's premises at least once every quarter after commissioning of the RTS System for maintenance purposes.", style_body))
+    story.append(Paragraph("5.2. During such maintenance visit, Vendor shall check all nuts and bolts, fuses, earth resistance and other consumables in respect of the RTS System to ensure that it is in good working condition.", style_body))
+    story.append(Paragraph("5.3. Cleaning requirement/expectation from the Applicant side – Applicant responsibility, minimum expectation from Applicant that it will be cleaned regularly as per the dusting frequency.", style_body))
+
+    story.append(Paragraph("<b>6. ACCESS AND RIGHT OF ENTRY:</b>", style_clause_h))
+    story.append(Paragraph("6.1. The Applicant hereby grants permission to Vendor and its authorized personnel, representatives, associates, officers, employees, financing agents, subcontractors (“Authorized Persons”) to enter the Applicant Site for the purposes of:", style_body))
+    story.append(Paragraph("(a) conducting feasibility study.", style_body))
+    story.append(Paragraph("(b) storing the RTS System/any part thereof.", style_body))
+    story.append(Paragraph("(c) installing the RTS System.", style_body))
+    story.append(Paragraph("(d) inspecting the RTS System.", style_body))
+    story.append(Paragraph("(e) conducting repairs and maintenance to the RTS System.", style_body))
+    story.append(Paragraph("(f) removing the RTS System (or any part thereof), if necessary for any reason whatsoever.", style_body))
+    story.append(Paragraph("(g) Such other matters as necessary to execute and perform its rights and obligations under this Agreement.", style_body))
+    story.append(Paragraph("6.2. The Applicant shall ensure that third-party consents necessary for the Authorized Persons to access the Applicant Site are obtained prior to commencement of services under this Agreement.", style_body))
+
+    story.append(Paragraph("<b>7. WARRANTIES:</b>", style_clause_h))
+    story.append(Paragraph("7.1. Product Warranty: The Applicant shall be entitled to manufacturers' warranty. Any warranty in relation to RTS System supplied to the Applicant by Vendor under this Agreement is limited to the warranty given by the manufacturer of the RTS System (or any part thereof) to Vendor.", style_body))
+    story.append(Paragraph("7.2. Installation Warranty: Vendor warrants that all installations shall be free from workmanship defects or BOS defects for a period of five years from the date of installation of the RTS System. The warranty is limited to Vendor rectifying the workmanship or BOS defects at Vendor's expense in respect of those defects reported by the Applicant, in writing. The Applicant is obliged and liable to report such defects within 15 (fifteen) days of occurrence of such defect.", style_body))
+    story.append(Paragraph("7.3. Subject to manufacturer warranty, Vendor warrants that the solar modules supplied herein shall have tolerance within a five-percentage range (+/-5%). The peak-power point voltage and the peak-power point current of any supplied solar module and/or any module string (series connected modules) shall not vary by more than 5% (five percent) from the respective arithmetic means for all modules and/or for all module strings, as the case may be, provided The RTS System is properly maintained, and the Applicant Site is free from shadow at the time of operation of the RTS System.", style_body))
+    story.append(Paragraph("7.4. Exceptions for warranty:", style_body))
+    story.append(Paragraph("(a) Any attempt by any person other than Vendor or its Authorized Persons to adjust, modify, repair or provide maintenance to the RTS System, shall disentitle the Applicant of the warranty provided by Vendor hereunder.", style_body))
+    story.append(Paragraph("(b) Vendor shall not be liable for any degeneration or damage to the RTS System due to any action or inaction on the part of the Applicant.", style_body))
+    story.append(Paragraph("(c) Vendor shall not be bound or liable to remedy any damage, fault, failure or malfunction of the RTS System owing to external causes, including but not limited to accidents, misuse, neglect, if usage and/or storage and/or installation are non-confirming to product instructions, modifications by the Applicant leading to shading or accessibility issues, failure to perform required maintenance, normal wear and tear, Force Majeure Event, or negligence or default attributable to the Applicant.", style_body))
+    story.append(Paragraph("(d) Vendor shall not be liable to repair or remedy any accessories or parts added to the RTS System that were not originally sourced by Vendor to the Applicant.", style_body))
+
+    story.append(Paragraph("<b>8. PERFORMANCE GUARANTEE:</b>", style_clause_h))
+    story.append(Paragraph("8.1. Vendor guarantees minimum system performance ratio of 75% as per performance ratio test carried out in adherence to IEC 61724 or equivalent BIS for a period of five years.", style_body))
+
+    story.append(Paragraph("<b>9. INSURANCE:</b>", style_clause_h))
+    story.append(Paragraph("9.1. Vendor may, at its sole discretion, obtain insurance covering risks of loss/damage to the RTS System (any part thereof) during transit from Vendor's warehouse until delivery to the Applicant Site and until installation and commissioning.", style_body))
+    story.append(Paragraph("9.2. Thereafter, all risk shall pass on to the Applicant and the Applicant may accordingly procure relevant insurances.", style_body))
+
+    story.append(Paragraph("<b>10. CANCELLATION:</b>", style_clause_h))
+    story.append(Paragraph("10.1. The Applicant may cancel the order placed on Vendor within 7 (seven) days from the date of remittance of advance money or the date of order acceptance, whichever is earlier (“Order Confirmation”) by serving notice as per Clause 13.", style_body))
+    story.append(Paragraph("10.2. If the Applicant cancels the order after the expiry of 7 (seven) days from the date of Order Form, the Applicant shall be liable to pay Vendor, a cancellation fee of 30 % of the total order value plus costs and expenses incurred by Vendor, including, costs for labour, design, return of products, administrative costs, subvention costs.", style_body))
+    story.append(Paragraph("10.3. Notwithstanding the aforesaid, the Applicant shall not be entitled to cancel the Order Form after Vendor has dispatched the RTS System (or any part thereof, including BOS) to the Applicant Site. If Applicant chooses to terminate the Order Form after dispatch, the entire amount paid by the Applicant till date, shall be forfeited by Vendor.", style_body))
+
+    story.append(Paragraph("<b>11. LIMITATION OF LIABILITY AND INDEMNITY:</b>", style_clause_h))
+    story.append(Paragraph("11.1. To the extent that terms implied by law apply to the RTS System and the services rendered under this Agreement, Vendor's liability for any breach of those terms is limited to:", style_body))
+    story.append(Paragraph("(a) repairing or replacing the RTS System/any part thereof, as applicable; or", style_body))
+    story.append(Paragraph("(b) Refund of the moneys paid by the Applicant to Vendor, if Vendor cannot fulfil the order.", style_body))
+
+    story.append(Paragraph("<b>12. SUSPENSION AND TERMINATION:</b>", style_clause_h))
+    story.append(Paragraph("12.1. If the Applicant fails to pay any sum due under this Agreement on the due date, Vendor may, in addition to its other rights under this Agreement, suspend its obligations under this Agreement until all outstanding amounts (including interest due) are paid.", style_body))
+
+    story.append(Paragraph("<b>13. NOTICES:</b>", style_clause_h))
+    story.append(Paragraph("Any notice or other communication under this Agreement to Vendor and or to the Applicant, shall be in writing, in English language and shall be delivered or sent: (a) by electronic mail and/or (b) by hand delivery or registered post/courier, at the registered address of Applicant/Vendor.", style_body))
+
+    story.append(Paragraph("<b>14. FORCE MAJEURE EVENT:</b>", style_clause_h))
+    story.append(Paragraph("14.1. Neither Party shall be in default due to any delay or failure to perform its/his/her/their obligations under this Agreement which arises from or is a consequence of occurrence of an event which is beyond the reasonable control of such Party, and which makes performance of its/his/her/their obligations under this Agreement impossible or so impractical as reasonably to be considered impossible in the circumstances, and includes, but is not limited to, war, riot, civil disorder, earthquake, fire, explosion, storm, flood or other adverse weather conditions, pandemic, epidemic, embargo, strikes, lockouts, labour difficulties, other industrial action, acts of government, unavailability of equipment from vendor, changes requested by the Applicant (“Force Majeure Event”).", style_body))
+
+    story.append(Paragraph("<b>15. GOVERNING LAW AND DISPUTE RESOLUTION:</b>", style_clause_h))
+    story.append(Paragraph("15.1. The interpretation and enforcement of this Agreement shall be governed by the laws of India.", style_body))
+    story.append(Paragraph("15.2. In the event of any dispute, controversy or difference between the Parties arising out of, or relating to this Agreement (“Dispute”), both Parties shall make an effort to resolve the Dispute in good faith, failing which, any Party to the Dispute shall be entitled to refer the Dispute to arbitration to resolve the Dispute in the manner set out in this Clause. The rights and obligations of the Parties under this Agreement shall remain in full force and effect pending the award in such arbitration proceeding.", style_body))
+    story.append(Paragraph("15.3. The arbitration proceeding shall be governed by the provisions of the Arbitration and Conciliation Act, 1996 and shall be settled by a sole arbitrator mutually appointed by the Parties.", style_body))
+
+    # Signature Block
+    sig_table_data = [
+        [
+            Paragraph(f"<br/><br/>___________________________<br/>(Applicant)<br/><b>{client_name}</b>", style_body),
+            Paragraph(f"<br/><br/>___________________________<br/>(Vendor)<br/><b>{company_name}</b>", style_body)
+        ],
+        [
+            Paragraph("", style_body),
+            Paragraph("<br/><br/><b>Official Stamp / Seal</b>", style_body)
+        ]
+    ]
+    t_sig = Table(sig_table_data, colWidths=[9.0 * cm, 9.0 * cm])
+    t_sig.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+
+    sig_block = KeepTogether([
+        Spacer(1, 0.5 * cm),
+        t_sig
+    ])
+    story.append(sig_block)
+
+    pdf.build(story, canvasmaker=VendorCanvas)
+    return buf.getvalue()
+
+
 def generate(doc_type: str, client: dict, company: dict) -> bytes:
     doc_type_clean = (doc_type or "").lower().strip()
     if doc_type_clean == "wcr":
@@ -1299,6 +1536,8 @@ def generate(doc_type: str, client: dict, company: dict) -> bytes:
         return generate_sldr_pdf(client, company)
     if doc_type_clean == "net_meter_agreement":
         return generate_net_meter_agreement_pdf(client, company)
+    if doc_type_clean in ("vendor_agreement", "vendor"):
+        return generate_vendor_agreement_pdf(client, company)
 
     buf = BytesIO()
     pdf = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5*cm, rightMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
