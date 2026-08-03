@@ -537,151 +537,220 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     email = company.get('email') or 'info@gvpsolar.com'
 
     # Styles
-    STYLE_TITLE = ParagraphStyle('wcr_title', parent=styles['Normal'], fontSize=13, fontName='Helvetica-Bold', textColor=colors.HexColor('#0f172a'), alignment=1, spaceAfter=2)
-    STYLE_META = ParagraphStyle('wcr_meta', parent=styles['Normal'], fontSize=8, fontName='Helvetica', textColor=colors.HexColor('#64748b'), alignment=1, spaceAfter=6)
-    STYLE_BODY_JUSTIFY = ParagraphStyle('wcr_body_j', parent=styles['Normal'], fontSize=9.5, fontName='Helvetica', textColor=colors.HexColor('#1e293b'), leading=14, alignment=4, spaceAfter=8)
-    STYLE_FOOTER = ParagraphStyle('wcr_ftr', parent=styles['Normal'], fontSize=8, fontName='Helvetica', textColor=colors.HexColor('#475569'), alignment=1, leading=11)
+def _build_gvp_logo_drawing(w=110, h=30):
+    d = Drawing(w, h)
+    d.add(String(0, 10, "GVP", fontName="Helvetica-Bold", fontSize=22, fillColor=colors.HexColor("#2563eb")))
+    d.add(Circle(30, 24, 6, fillColor=colors.HexColor("#f59e0b"), strokeColor=colors.HexColor("#d97706"), strokeWidth=0.8))
+    d.add(String(0, 1, "SOLAR ENERGY FOR BETTER TOMORROW", fontName="Helvetica-Bold", fontSize=4.5, fillColor=colors.HexColor("#d97706")))
+    return d
 
-    # 1. Header Builder
-    def _build_header():
-        header_text = (
-            f"<b><font size='15' color='#1e3a8a'>{company_name}</font></b><br/>"
-            f"<font size='8' color='#475569'><b>GSTIN:</b> {gst_no} &nbsp;|&nbsp; <b>Email:</b> {email} &nbsp;|&nbsp; <b>Phone:</b> {phone}</font><br/>"
-            f"<font size='8' color='#475569'><b>Office Address:</b> {address}</font>"
-        )
-        p_hdr = Paragraph(header_text, ParagraphStyle('p_hdr_style', parent=styles['Normal'], alignment=1, leading=12))
+
+class WCRCanvas(canvas.Canvas):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_page_decorations(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_page_decorations(self, page_count):
+        self.saveState()
+        # Bottom Divider line
+        self.setStrokeColor(colors.HexColor('#9333ea'))
+        self.setLineWidth(1.2)
+        self.line(1.2 * cm, 1.4 * cm, 21.0 * cm - 1.2 * cm, 1.4 * cm)
         
-        hdr_table = Table([[p_hdr]], colWidths=[18.6 * cm])
-        hdr_table.setStyle(TableStyle([
+        self.setFont("Helvetica-Bold", 7.5)
+        self.setFillColor(colors.HexColor('#2563eb'))
+        
+        line1 = "OFFICE :- SHOP NO – 1-2, FIRST FLOOR, BUILDING NO – 1, KAPAD TEXTILE MARKET ICHALKARANJI (MAH.) - 416115"
+        line2 = "PHONE : +91-9694060806 GIRIRAJ"
+        
+        self.drawString(1.2 * cm, 1.0 * cm, line1)
+        self.drawString(1.2 * cm, 0.65 * cm, line2)
+        
+        self.setFont("Helvetica", 8)
+        self.setFillColor(colors.HexColor('#475569'))
+        self.drawRightString(21.0 * cm - 1.2 * cm, 0.65 * cm, f"Page {self._pageNumber} of {page_count}")
+        self.restoreState()
+
+
+def generate_wcr_pdf(client: dict, company: dict) -> bytes:
+    buf = BytesIO()
+    pdf = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.2 * cm,
+        rightMargin=1.2 * cm,
+        topMargin=1.0 * cm,
+        bottomMargin=1.8 * cm
+    )
+    story = []
+
+    company_name = company.get('company_name') or 'GVP SOLAR ENERGY'
+    gst_no = company.get('gst_number') or company.get('gst') or '27AKMPD5407A1ZM'
+
+    # Styles
+    STYLE_TITLE = ParagraphStyle('wcr_title', parent=styles['Normal'], fontSize=13, fontName='Helvetica-Bold', textColor=colors.HexColor('#0f172a'), alignment=1, spaceBefore=4, spaceAfter=8)
+    STYLE_BODY_JUSTIFY = ParagraphStyle('wcr_body_j', parent=styles['Normal'], fontSize=9.5, fontName='Helvetica', textColor=colors.HexColor('#1e293b'), leading=14, alignment=4, spaceAfter=8)
+    STYLE_VAL = ParagraphStyle('c_val', parent=styles['Normal'], fontSize=8.5, fontName='Helvetica', textColor=colors.HexColor('#0f172a'))
+
+    # Header Builder
+    def _build_header():
+        logo_d = _build_gvp_logo_drawing(110, 30)
+        p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('wcr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
+        p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>GST NO – {gst_no}</font></b>", ParagraphStyle('wcr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
+        
+        t_hdr = Table([[logo_d, p_title, p_gst]], colWidths=[4.2 * cm, 8.8 * cm, 5.6 * cm])
+        t_hdr.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
             ('TOPPADDING', (0, 0), (-1, -1), 0),
-            ('LINEBELOW', (0, 0), (-1, -1), 1.2, colors.HexColor('#1d4ed8')),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
         ]))
-        return hdr_table
-
-    # 2. Footer Builder
-    def _build_footer(page_num: int):
-        ftr_text = (
-            f"<font size='8' color='#475569'>Office Address: {address} &nbsp;|&nbsp; <b>Phone: {phone}</b></font><br/>"
-            f"<font size='7.5' color='#94a3b8'>Page {page_num} of 3 &nbsp;|&nbsp; Official EPC Engineering Document &nbsp;|&nbsp; Confidential</font>"
-        )
-        p_ftr = Paragraph(ftr_text, STYLE_FOOTER)
-        ftr_table = Table([[p_ftr]], colWidths=[18.6 * cm])
-        ftr_table.setStyle(TableStyle([
-            ('LINEABOVE', (0, 0), (-1, -1), 0.8, colors.HexColor('#cbd5e1')),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
+        
+        # Solid Blue Divider Line
+        t_div = Table([[""]], colWidths=[18.6 * cm])
+        t_div.setStyle(TableStyle([
+            ('LINEABOVE', (0, 0), (-1, -1), 1.5, colors.HexColor('#1d4ed8')),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ]))
-        return ftr_table
+        return [t_hdr, Spacer(1, 0.1 * cm), t_div, Spacer(1, 0.2 * cm)]
 
-    # Data Mapping
-    client_name = client.get('full_name') or client.get('name') or 'Consumer Name'
-    consumer_num = client.get('consumer_number') or '—'
-    site_addr = f"{client.get('address','')}, {client.get('city','')}, {client.get('state','')} - {client.get('pincode','')}".strip(', -')
-    category = client.get('consumer_type') or 'Private Sector'
-    sanction_no = client.get('sanction_number') or 'INA'
-    sol_kw = str(client.get('system_kw') or '0')
-    sol_wp = str(client.get('panel_wattage') or '540')
-    num_panels = str(client.get('num_panels') or '0')
-    panel_make = client.get('panel_make') or 'GVP SOLAR'
-    almm_model = client.get('almm_model_number') or 'INA'
-    inverter_make = client.get('inverter_make') or 'GROWATT'
-    inverter_kw = str(client.get('inverter_capacity') or f"{sol_kw}KW")
-    inverter_sr = client.get('inverter_serial') or 'INA'
-    sol_id = client.get('sol_id') or client.get('client_code') or '00100'
-    date_str = datetime.now(timezone.utc).strftime('%d %b %Y')
-    doc_no = f"WCR-2026-{sol_id}"
+    # Data Extraction
+    client_name = (client.get('full_name') or client.get('name') or 'ASHOKKUMAR MANGILAL GANDHI').strip()
+    consumer_num = str(client.get('consumer_number') or '253030629014').strip()
+    client_addr = (client.get('address') or '256 KONDIGRE SHIROL').strip()
+    city = (client.get('city') or 'KOLHAPUR CIRCLE').strip()
+    pincode = str(client.get('pincode') or '416101').strip()
+    site_addr = f"{client_addr} {city}-{pincode}".strip()
+    
+    category = client.get('consumer_type') or 'COMMERCIAL CUSTOMER'
+    sanction_no = client.get('sanction_number') or '253030629014'
+    sol_kw = str(client.get('system_kw') or '7.5').strip()
+    sol_wp = str(client.get('panel_wattage') or '590').strip()
+    num_panels = str(client.get('num_panels') or '13').strip()
+    panel_make = client.get('panel_make') or 'INA'
+    almm_model = client.get('almm_model_number') or '590 WP TopCon BI-FACIAL'
+    inverter_make = client.get('inverter_make') or 'UTL'
+    inverter_kw = str(client.get('inverter_capacity') or '6.0 KW').strip()
+    inverter_sr = client.get('inverter_serial') or '202501002'
 
-    # --- PAGE 1: 28-row Observation Table ---
-    story.append(_build_header())
-    story.append(Spacer(1, 0.2 * cm))
+    # --- PAGE 1: 3-Column Inspection Table ---
+    for item in _build_header():
+        story.append(item)
 
-    story.append(Paragraph("<b>WORK COMPLETION REPORT FOR SOLAR POWER PLANT</b>", STYLE_TITLE))
-    story.append(Paragraph(f"<b>Document No:</b> {doc_no} &nbsp;|&nbsp; <b>Date:</b> {date_str} &nbsp;|&nbsp; <b>Rev:</b> 1.0 (Official EPC Report)", STYLE_META))
+    story.append(Paragraph("<b>Work Completion Report for Solar Power Plant</b>", STYLE_TITLE))
     story.append(Spacer(1, 0.1 * cm))
 
-    cell_hdr = lambda txt: Paragraph(f"<b><font size='9' color='#0f172a'>{txt}</font></b>", ParagraphStyle('c_hdr', parent=styles['Normal'], fontName='Helvetica-Bold'))
+    cell_hdr = lambda txt: Paragraph(f"<b><font size='9' color='#0f172a'>{txt}</font></b>", ParagraphStyle('c_hdr', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=1))
     cell_lbl = lambda txt: Paragraph(f"<b><font size='8.5' color='#1e293b'>{txt}</font></b>", ParagraphStyle('c_lbl', parent=styles['Normal'], fontName='Helvetica-Bold'))
-    cell_obs = lambda txt: Paragraph(f"<font size='8.5' color='#475569'>{txt}</font>", ParagraphStyle('c_obs', parent=styles['Normal']))
-    cell_val = lambda txt: Paragraph(f"<font size='8.5' color='#0f172a'>{txt}</font>", ParagraphStyle('c_val', parent=styles['Normal']))
+    cell_obs = lambda txt: Paragraph(f"<font size='8.5' color='#1e293b'>{txt}</font>", ParagraphStyle('c_obs', parent=styles['Normal']))
+    cell_val = lambda txt: Paragraph(f"<b><font size='8.5' color='#0f172a'>{txt}</font></b>", ParagraphStyle('c_val', parent=styles['Normal'], alignment=1))
+    cell_subhdr = lambda txt: Paragraph(f"<b><font size='9' color='#0f172a'>{txt}</font></b>", ParagraphStyle('c_subhdr', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=1))
 
     table_data = [
-        [cell_hdr("Sr.No"), cell_hdr("Component"), cell_hdr("Observation"), cell_hdr("Value / Details")],
-        [cell_obs("1"), cell_lbl("Name"), cell_obs("Observation"), cell_val(client_name)],
-        [cell_obs("2"), cell_lbl("Consumer Number"), cell_obs("Observation"), cell_val(consumer_num)],
-        [cell_obs("3"), cell_lbl("Site / Location Address"), cell_obs("Observation"), cell_val(site_addr)],
-        [cell_obs("4"), cell_lbl("Category"), cell_obs("Govt / Private Sector"), cell_val(category)],
-        [cell_obs("5"), cell_lbl("Sanction Number"), cell_obs("Observation"), cell_val(sanction_no)],
-        [cell_obs("6"), cell_lbl("Sanctioned Capacity"), cell_obs("Solar PV System (KW)"), cell_val(f"{sol_kw} KW")],
-        [cell_obs("7"), cell_lbl("Installed Capacity"), cell_obs("Solar PV System (KW)"), cell_val(f"{sol_kw} KW")],
-        [cell_obs("8"), cell_lbl("Make & Type of Modules"), cell_obs("Specification of Modules"), cell_val(panel_make)],
-        [cell_obs("9"), cell_lbl("ALMM Model Number"), cell_obs("Specification of Modules"), cell_val(almm_model)],
-        [cell_obs("10"), cell_lbl("Wattage per Module"), cell_obs("Specification of Modules"), cell_val(f"{sol_wp} Wp")],
-        [cell_obs("11"), cell_lbl("No. of Modules"), cell_obs("Specification of Modules"), cell_val(num_panels)],
-        [cell_obs("12"), cell_lbl("Total Capacity (KWP)"), cell_obs("Specification of Modules"), cell_val(f"{sol_kw} KWP")],
-        [cell_obs("13"), cell_lbl("Warranty Details"), cell_obs("Product + Performance"), cell_val("12+15 YEARS")],
-        [cell_obs("14"), cell_lbl("Make & Model of Inverter"), cell_obs("PCU"), cell_val(inverter_make)],
-        [cell_obs("15"), cell_lbl("Rating"), cell_obs("PCU"), cell_val(inverter_kw)],
-        [cell_obs("16"), cell_lbl("Type of Charge Controller"), cell_obs("MPPT"), cell_val("MPPT")],
-        [cell_obs("17"), cell_lbl("Capacity of Inverter"), cell_obs("PCU"), cell_val(inverter_kw)],
-        [cell_obs("18"), cell_lbl("SR Number"), cell_obs("PCU"), cell_val(inverter_sr)],
-        [cell_obs("19"), cell_lbl("Year of Manufacturing"), cell_obs("PCU"), cell_val("2025")],
-        [cell_obs("20"), cell_lbl("Separate Earthings"), cell_obs("Earthing & Protection"), cell_val("3 Earthings (< 5 Ohms)")],
-        [cell_obs("21"), cell_lbl("Certification"), cell_obs("Earthing & Protection"), cell_val("Certified as per IS 3043 / CEA Safety Guidelines")],
-        [cell_obs("22"), cell_lbl("Lightning Arrester"), cell_obs("Earthing & Protection"), cell_val("Yes")],
+        [cell_hdr("Sr.No"), cell_hdr("Component"), cell_hdr("Observation")],
+        [cell_obs("1"), cell_lbl("Name"), cell_val(client_name)],
+        [cell_obs("2"), cell_lbl("Consumer number"), cell_val(consumer_num)],
+        [cell_obs("3"), cell_lbl("Site/Location with Complete Address"), cell_val(site_addr)],
+        [cell_obs("4"), cell_lbl("Category: Govt/Private Sector"), cell_val(category)],
+        [cell_obs("5"), cell_lbl("Sanction number"), cell_val(sanction_no)],
+        [cell_obs("6"), cell_lbl("Sanctioned Capacity of solar PV system (KW) Installed"), cell_val(f"{sol_kw} KW")],
+        ["", cell_lbl("Capacity of solar PV system (KW)"), cell_val(f"{sol_kw} KW")],
+        [cell_subhdr("Specification of the Modules"), "", ""],
+        [cell_obs("7"), cell_lbl("Make & Type of modules"), cell_val(panel_make)],
+        ["", cell_lbl("ALMM Model Number"), cell_val(almm_model)],
+        ["", cell_lbl("Wattage per module"), cell_val(f"{sol_wp} WP")],
+        ["", cell_lbl("No. of Module"), cell_val(f"{num_panels} NOS")],
+        ["", cell_lbl("Total Capacity (KWP)"), cell_val(f"{sol_kw} KW")],
+        ["", cell_lbl("Warrantee Details (Product + Performance)"), cell_val("12+15 YEARS")],
+        [cell_subhdr("PCU"), "", ""],
+        [cell_obs("8"), cell_lbl("Make & Model number of Inverter"), cell_val(inverter_make)],
+        ["", cell_lbl("Rating"), cell_val(f"{inverter_kw}")],
+        ["", cell_lbl("Type of charge controller/ MPPT"), cell_val("MPPT")],
+        ["", cell_lbl("Capacity of Inverter"), cell_val(f"{inverter_kw}")],
+        ["", cell_lbl("SR Number"), cell_val(inverter_sr)],
+        ["", cell_lbl("Year of manufacturing"), cell_val("2025")],
+        [cell_subhdr("EARTHING & PROTACTION"), "", ""],
+        [cell_obs("9"), cell_lbl("No of Separate Earthings with earth Resistance"), cell_val("NON_TRACKING")],
+        ["", cell_lbl("It is certified that the Earth Resistance measure in presence of Licensed Electrical Contractor/Supervisor and found in order i.e. < 5 Ohms as per MNRE OM Dtd. 07.06.24 for CFA Component."), cell_val("")],
+        ["", cell_lbl("Lightening Arrester"), cell_val("Yes")],
     ]
 
-    t1 = Table(table_data, colWidths=[1.2 * cm, 4.8 * cm, 4.4 * cm, 8.2 * cm])
+    t1 = Table(table_data, colWidths=[1.0 * cm, 8.5 * cm, 9.1 * cm])
     t1.setStyle(TableStyle([
-        ('GRID', (0, 0), (-1, -1), 0.8, colors.HexColor('#cbd5e1')),
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
+        ('GRID', (0, 0), (-1, -1), 0.6, colors.HexColor('#64748b')),
+        ('SPAN', (0, 8), (2, 8)),
+        ('BACKGROUND', (0, 8), (2, 8), colors.HexColor('#f1f5f9')),
+        ('SPAN', (0, 15), (2, 15)),
+        ('BACKGROUND', (0, 15), (2, 15), colors.HexColor('#f1f5f9')),
+        ('SPAN', (0, 22), (2, 22)),
+        ('BACKGROUND', (0, 22), (2, 22), colors.HexColor('#f1f5f9')),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 5),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 2.5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
     ]))
     story.append(t1)
-    story.append(Spacer(1, 0.25 * cm))
-    story.append(_build_footer(1))
+    story.append(Spacer(1, 0.4 * cm))
+
+    # Signature Page 1
+    sign1 = Table([
+        [
+            Paragraph("<b>अोक गांधी</b>", ParagraphStyle('sig_m', parent=styles['Normal'], fontSize=11, fontName='Helvetica-Bold', alignment=0)),
+            Paragraph(f"<b>{company_name.upper()}</b><br/><font size='7.5' color='#64748b'>Proprietor &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Manager</font>", ParagraphStyle('sig_v', parent=styles['Normal'], alignment=2))
+        ]
+    ], colWidths=[9.3 * cm, 9.3 * cm])
+    sign1.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'BOTTOM'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    story.append(sign1)
     story.append(PageBreak())
 
     # --- PAGE 2: DECLARATION & UNDERTAKING ---
-    story.append(_build_header())
-    story.append(Spacer(1, 0.3 * cm))
-    story.append(Paragraph("<b>DECLARATION & STRUCTURAL STABILITY UNDERTAKING</b>", STYLE_TITLE))
-    story.append(Paragraph(f"<b>Document No:</b> {doc_no} &nbsp;|&nbsp; <b>Date:</b> {date_str} &nbsp;|&nbsp; <b>Page 2 of 3</b>", STYLE_META))
-    story.append(Spacer(1, 0.4 * cm))
+    for item in _build_header():
+        story.append(item)
 
+    story.append(Spacer(1, 0.3 * cm))
     p1_text = (
-        f"We <b>{company_name}</b> [<b>Vendor</b>] & <b>{client_name}</b> [<b>Consumer</b>] bearing Consumer Number "
-        f"<b>{consumer_num}</b> ensured structural stability of installed <b>Solar PV System</b> and obtained "
-        f"requisite permissions from the concerned authority. If in future, by virtue of any means due to "
-        f"collapsing or damage to the installed solar power plant, <b>MSEDCL</b> will not be held responsible for "
-        f"any loss to property or human life, if any."
+        f"We <b>{company_name}</b> [Vendor] & <b>{client_name}</b> [Consumer] bearing Consumer Number "
+        f"<b>{consumer_num}</b> Ensured structural stability of installed solar power plant and obtained "
+        f"requisite permissions from the concerned authority. If in future, by virtue of any means "
+        f"due to collapsing or damage to the installed solar power plant, MSEDCL will not be held "
+        f"responsible for any loss to property or human life, if any."
     )
     story.append(Paragraph(p1_text, STYLE_BODY_JUSTIFY))
+    story.append(Spacer(1, 0.2 * cm))
 
     p2_text = (
-        "This is to certify above installed <b>Solar PV System</b> is working properly with electrical safety & "
-        "<b>islanding switch</b>. In case of any presence of backup inverter, an arrangement should be made in such way "
-        "the backup inverter supply should never be synchronized with solar inverter to avoid any electrical accident "
-        "due to <b>back feeding</b>. We will be held responsible for non-working of islanding mechanism and back feed to the "
-        "de-energized grid."
+        "This is to Certify above Installed Solar PV System is working properly with electrical safety & "
+        "Islanding switch in case of any presence of backup inverter an arrangement should be made in "
+        "such way the backup inverter supply should never be synchronized with solar inverter to avoid "
+        "any electrical accident due to back feeding. We will be held responsible for non-working of "
+        "islanding mechanism and back feed to the de-energized grid."
     )
     story.append(Paragraph(p2_text, STYLE_BODY_JUSTIFY))
-    story.append(Spacer(1, 2.5 * cm))
+    story.append(Spacer(1, 1.5 * cm))
 
-    STYLE_VAL = ParagraphStyle('c_val', parent=styles['Normal'], fontSize=8.5, fontName='Helvetica', textColor=colors.HexColor('#0f172a'))
-
-    # Balanced Signatures
     sign2 = Table([
         [
-            Paragraph(f"<b>Authorized Signature [Vendor]</b><br/><br/><br/>______________________<br/>For <b>{company_name}</b>", STYLE_VAL),
-            Paragraph(f"<b>Consumer Signature</b><br/><br/><br/>______________________<br/><b>{client_name}</b>", STYLE_VAL)
+            Paragraph(f"<b>{company_name.upper()}</b><br/><br/><font size='8.5' color='#475569'>Proprietor &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Manager</font><br/><b>Signature [Vendor]</b>", STYLE_VAL),
+            Paragraph(f"<b>अोक गांधी</b><br/><br/><br/><b>Signature [Consumer]</b>", ParagraphStyle('sig_c2', parent=styles['Normal'], alignment=2))
         ]
     ], colWidths=[9.3 * cm, 9.3 * cm])
     sign2.setStyle(TableStyle([
@@ -690,37 +759,35 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
         ('RIGHTPADDING', (0, 0), (-1, -1), 0),
     ]))
     story.append(sign2)
-    story.append(Spacer(1, 2.0 * cm))
-    story.append(_build_footer(2))
     story.append(PageBreak())
 
     # --- PAGE 3: GUARANTEE CERTIFICATE UNDERTAKING ---
-    story.append(_build_header())
-    story.append(Spacer(1, 0.3 * cm))
-    story.append(Paragraph("<b>GUARANTEE CERTIFICATE UNDERTAKING (VENDOR)</b>", STYLE_TITLE))
-    story.append(Paragraph(f"<b>Document No:</b> {doc_no} &nbsp;|&nbsp; <b>Date:</b> {date_str} &nbsp;|&nbsp; <b>Page 3 of 3</b>", STYLE_META))
-    story.append(Spacer(1, 0.4 * cm))
+    for item in _build_header():
+        story.append(item)
+
+    story.append(Spacer(1, 0.2 * cm))
+    story.append(Paragraph("<b>Guarantee Certificate Undertaking to be submitted by VENDOR</b>", STYLE_TITLE))
+    story.append(Spacer(1, 0.2 * cm))
 
     body3_text = (
-        "The undersigned will provide services to the consumers for repairs/maintenance of the RTS plant "
-        "free of cost for <b>5 years</b> of the Comprehensive Maintenance Contract (<b>CMC</b>) period from the date of "
-        "commissioning of the plant. Non-performing/under-performing system components will be replaced/repaired "
-        "free of cost during the <b>CMC</b> period."
+        "The undersigned will provide services to the consumers for repairs/maintenance of the "
+        "RTS plant free of cost for 5 years of the comprehensive Maintenance Contract (CMC) period "
+        "from the date of commissioning of the plant. Nonperforming/under-performing system "
+        "components will be replaced/repaired free of cost in the CMC period"
     )
     story.append(Paragraph(body3_text, STYLE_BODY_JUSTIFY))
-    story.append(Spacer(1, 0.5 * cm))
+    story.append(Spacer(1, 0.3 * cm))
 
-    aadhaar_num = client.get('aadhaar') or client.get('aadhaar_number') or 'XXXX-XXXX-XXXX'
+    aadhaar_num = client.get('aadhaar') or client.get('aadhaar_number') or '6141 3962 3810'
 
-    # Centered Aadhaar Identity Box
+    # Aadhaar Identity Box
     aadhaar_box_data = [
         [Paragraph("<b>[ CONSUMER AADHAAR CARD / IDENTITY VERIFICATION ]</b>", ParagraphStyle('a_hdr', parent=styles['Normal'], alignment=1, fontSize=9, fontName='Helvetica-Bold', textColor=colors.HexColor('#1e3a8a')))],
         [Paragraph(
-            f"<b>Aadhaar Number:</b> {aadhaar_num}<br/>"
-            f"<b>Consumer Name:</b> {client_name}<br/>"
-            f"<b>Consumer Number:</b> {consumer_num}<br/>"
-            f"<b>Installation Site:</b> {site_addr}",
-            ParagraphStyle('a_body', parent=styles['Normal'], alignment=1, fontSize=8.5, leading=13, textColor=colors.HexColor('#1e293b'))
+            f"<b>Stamp & Seal</b><br/><br/>"
+            f"<b>Identity Details of Consumer: - ADHAR CARD</b><br/>"
+            f"<b>Aadhar Number: {aadhaar_num}</b>",
+            ParagraphStyle('a_body', parent=styles['Normal'], fontSize=8.5, leading=13, textColor=colors.HexColor('#1e293b'))
         )]
     ]
     aadhaar_table = Table(aadhaar_box_data, colWidths=[14 * cm])
@@ -728,16 +795,16 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
         ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#3b82f6')),
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#eff6ff')),
         ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#f8fafc')),
-        ('PADDING', (0, 0), (-1, -1), 10),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('PADDING', (0, 0), (-1, -1), 8),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
     ]))
     story.append(aadhaar_table)
-    story.append(Spacer(1, 2.0 * cm))
+    story.append(Spacer(1, 1.0 * cm))
 
     sign3 = Table([
         [
-            Paragraph(f"<b>Authorized Signature [Vendor]</b><br/><br/><br/>______________________<br/>For <b>{company_name}</b>", STYLE_VAL),
-            Paragraph("<b>Vendor Stamp & Seal</b><br/><br/><br/>[ OFFICIAL SEAL ]", STYLE_VAL)
+            Paragraph(f"<b>{company_name.upper()}</b><br/><br/><font size='8.5' color='#475569'>Proprietor &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Manager</font><br/><b>Signature [Vendor]</b>", STYLE_VAL),
+            Paragraph(f"<b>अोक गांधी</b><br/><br/><br/><b>Signature [Consumer]</b>", ParagraphStyle('sig_c3', parent=styles['Normal'], alignment=2))
         ]
     ], colWidths=[9.3 * cm, 9.3 * cm])
     sign3.setStyle(TableStyle([
@@ -746,10 +813,8 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
         ('RIGHTPADDING', (0, 0), (-1, -1), 0),
     ]))
     story.append(sign3)
-    story.append(Spacer(1, 1.8 * cm))
-    story.append(_build_footer(3))
 
-    pdf.build(story)
+    pdf.build(story, canvasmaker=WCRCanvas)
     return buf.getvalue()
 
 
