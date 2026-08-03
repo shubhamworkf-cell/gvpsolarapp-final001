@@ -1004,8 +1004,8 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         pagesize=A4,
         leftMargin=1.5 * cm,
         rightMargin=1.5 * cm,
-        topMargin=1.5 * cm,
-        bottomMargin=1.8 * cm
+        topMargin=1.2 * cm,
+        bottomMargin=1.2 * cm
     )
     story = []
 
@@ -1028,11 +1028,11 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     sub_div = client.get("sub_division") or "ICHALKARANJI B S/DN."
     division = client.get("division") or "Dist KOLHAPUR"
 
-    # Define Styles
-    style_h1 = ParagraphStyle('NMA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=18, alignment=1, spaceAfter=6)
-    style_h2 = ParagraphStyle('NMA_H2', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=12, leading=16, alignment=1, spaceAfter=12)
-    style_clause_h = ParagraphStyle('NMA_ClauseH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, leading=14, spaceBefore=8, spaceAfter=4)
-    style_body = ParagraphStyle('NMA_Body', parent=styles['Normal'], fontName='Helvetica', fontSize=9.5, leading=14, alignment=4, spaceAfter=6)
+    # Define Styles (Tightened spacing for exact 5-page reference layout match)
+    style_h1 = ParagraphStyle('NMA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=13, leading=16, alignment=1, spaceAfter=4)
+    style_h2 = ParagraphStyle('NMA_H2', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=11, leading=14, alignment=1, spaceAfter=8)
+    style_clause_h = ParagraphStyle('NMA_ClauseH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9.5, leading=13, spaceBefore=5, spaceAfter=2)
+    style_body = ParagraphStyle('NMA_Body', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, leading=11.5, alignment=4, spaceAfter=3)
     style_body_bold = ParagraphStyle('NMA_BodyBold', parent=style_body, fontName='Helvetica-Bold')
 
     # ==================== PAGE 1 ====================
@@ -1053,7 +1053,7 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
     ]))
     story.append(stamp_header)
-    story.append(Spacer(1, 1.0 * cm))
+    story.append(Spacer(1, 0.8 * cm))
 
     # Treasury Stamp Table / Stamp Vendor Details Box
     treasury_data = [
@@ -1267,32 +1267,32 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         "in respect of any grievance regarding billing which has not been redressed by the Licensee.",
         style_body
     ))
-    story.append(Spacer(1, 0.4 * cm))
+    story.append(Spacer(1, 0.3 * cm))
 
     witness_intro = (
         f"In the witness where of <b>{client_name}</b> for and on behalf of Eligible Consumer and Shri. "
         f"Additional Executive Engineer <b>{sub_div}/ MSEDCL</b>, for and on behalf of MSEDCL agree to this agreement."
     )
     story.append(Paragraph(witness_intro, style_body))
-    story.append(Spacer(1, 0.6 * cm))
+    story.append(Spacer(1, 0.4 * cm))
 
-    # Signature Table
+    # Signature Table (Aligned cleanly with consumer left, MSEDCL right, Witnesses aligned)
     sig_table_data = [
         [
-            Paragraph(f"<br/><br/>___________________________<br/><b>{client_name}</b><br/>for and on behalf of Eligible Consumer", style_body),
-            Paragraph(f"<br/><br/>Shri. ___________________________<br/>for and on behalf of MSEDCL", style_body)
+            Paragraph(f"<b>Signature of Eligible Consumer</b><br/><br/><br/>___________________________<br/><b>{client_name}</b><br/>Eligible Consumer", style_body),
+            Paragraph(f"<b>Signature of Licensee</b><br/><br/><br/>Shri. ___________________________<br/>Additional Executive Engineer<br/>for and on behalf of MSEDCL", style_body)
         ],
         [
             Paragraph("<br/><b>Witness 1:</b> ___________________________", style_body),
             Paragraph("<br/><b>Witness 1:</b> ___________________________", style_body)
         ],
         [
-            Paragraph("<br/><b>Witness 2:</b> ___________________________", style_body),
-            Paragraph("<br/><b>Witness 2:</b> ___________________________", style_body)
+            Paragraph("<b>Witness 2:</b> ___________________________", style_body),
+            Paragraph("<b>Witness 2:</b> ___________________________", style_body)
         ],
         [
             Paragraph(f"<br/><br/><b>{company_name}</b><br/>Proprietor / Authorized Manager", style_body),
-            Paragraph("<br/><br/>Official Stamp / Seal", style_body)
+            Paragraph("<br/><br/><b>Official Stamp / Seal</b>", style_body)
         ]
     ]
     t_sig = Table(sig_table_data, colWidths=[9.0 * cm, 9.0 * cm])
@@ -1300,8 +1300,8 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('LEFTPADDING', (0, 0), (-1, -1), 0),
         ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
     ]))
     story.append(t_sig)
 
