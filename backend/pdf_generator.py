@@ -6,7 +6,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether, Image as RLImage
 from reportlab.pdfgen import canvas
 from reportlab.graphics.shapes import Drawing, Rect, String, Line, Group, Circle, PolyLine
 
@@ -1093,9 +1093,8 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     story.append(Spacer(1, 0.3 * cm))
 
     story.append(Paragraph("<b>Both Parties hereby agree as follows</b>", style_body_bold))
-    story.append(PageBreak())
 
-    # ==================== PAGE 2 (ELIGIBILITY, TECHNICAL & SAFETY) ====================
+    # ==================== CONTINUOUS DYNAMIC FLOW (PAGES 2 - END) ====================
     story.append(Paragraph("<b>1. Eligibility:</b>", style_clause_h))
     story.append(Paragraph(
         "The Roof-top Solar PV System meets the applicable norms for being integrated into the Distribution Network, "
@@ -1157,9 +1156,7 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         "or the municipal or other authorities, before connecting the Roof-top Solar PV System to the distribution Network.",
         style_body
     ))
-    story.append(PageBreak())
 
-    # ==================== PAGE 3 (TERM, ACCESS, LIABILITIES & COMMERCIAL SETTLEMENT 8.1-8.3) ====================
     story.append(Paragraph("<b>4. Period of Agreement, and Termination:</b>", style_clause_h))
     story.append(Paragraph("This Agreement shall be for a period of 20 years, but may be terminated prematurely", style_body))
     story.append(Paragraph("(a) By mutual consent; or", style_body))
@@ -1218,9 +1215,6 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         "at the inter-connection point to the Licensee's Network for recording export and import of energy.",
         style_body
     ))
-    story.append(PageBreak())
-
-    # ==================== PAGE 4 (CURRENT PAGE 5 - SIGNATURE PAGE) ====================
     story.append(Paragraph(
         "8.4. The uni-directional and bi-directional or pair of meters shall be fixed in separate meter boxes in the same proximity.",
         style_body
@@ -1250,14 +1244,12 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         "in respect of any grievance regarding billing which has not been redressed by the Licensee.",
         style_body
     ))
-    story.append(Spacer(1, 0.4 * cm))
 
-    witness_intro = (
+    witness_intro = Paragraph(
         f"In the witness where of <b>{client_name}</b> for and on behalf of Eligible Consumer and Shri. "
-        f"Additional Executive Engineer <b>{sub_div}/ MSEDCL</b>, for and on behalf of MSEDCL agree to this agreement."
+        f"Additional Executive Engineer <b>{sub_div}/ MSEDCL</b>, for and on behalf of MSEDCL agree to this agreement.",
+        style_body
     )
-    story.append(Paragraph(witness_intro, style_body))
-    story.append(Spacer(1, 0.6 * cm))
 
     # Signature Table (Aligned cleanly with consumer left, MSEDCL right, Witnesses aligned)
     sig_table_data = [
@@ -1286,12 +1278,16 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         ('TOPPADDING', (0, 0), (-1, -1), 3),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
     ]))
-    story.append(t_sig)
+
+    sig_block = KeepTogether([
+        Spacer(1, 0.4 * cm),
+        witness_intro,
+        Spacer(1, 0.6 * cm),
+        t_sig
+    ])
+    story.append(sig_block)
 
     pdf.build(story, canvasmaker=NetMeterCanvas)
-    return buf.getvalue()
-
-
 def generate(doc_type: str, client: dict, company: dict) -> bytes:
     doc_type_clean = (doc_type or "").lower().strip()
     if doc_type_clean == "wcr":
