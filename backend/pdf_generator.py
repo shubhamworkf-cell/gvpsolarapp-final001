@@ -1052,11 +1052,11 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     sub_div = client.get("sub_division") or "ICHALKARANJI B S/DN."
     division = client.get("division") or "Dist KOLHAPUR"
 
-    # Define Styles (Refined font sizing & spacing for exact 5-page layout)
-    style_h1 = ParagraphStyle('NMA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=18, alignment=1, spaceBefore=8, spaceAfter=4)
-    style_h2 = ParagraphStyle('NMA_H2', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=12, leading=15, alignment=1, spaceAfter=10)
-    style_clause_h = ParagraphStyle('NMA_ClauseH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9.5, leading=13, spaceBefore=6, spaceAfter=3)
-    style_body = ParagraphStyle('NMA_Body', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, leading=11.5, alignment=4, spaceAfter=4)
+    # Define Styles (Refined font sizing & spacing for exact 5-page layout with compact vertical gaps)
+    style_h1 = ParagraphStyle('NMA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=17, alignment=1, spaceBefore=4, spaceAfter=3)
+    style_h2 = ParagraphStyle('NMA_H2', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=12, leading=15, alignment=1, spaceAfter=8)
+    style_clause_h = ParagraphStyle('NMA_ClauseH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9.5, leading=12.5, spaceBefore=4, spaceAfter=1.5)
+    style_body = ParagraphStyle('NMA_Body', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, leading=11.0, alignment=4, spaceBefore=0, spaceAfter=2)
     style_body_bold = ParagraphStyle('NMA_BodyBold', parent=style_body, fontName='Helvetica-Bold')
 
     # ==================== PAGE 1 (AGREEMENT PREAMBLE) ====================
