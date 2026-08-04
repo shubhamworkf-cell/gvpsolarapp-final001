@@ -324,7 +324,9 @@ export default function DocumentTemplates() {
                         if (!activeClient?.id) return;
                         try {
                           await api.patch(`/clients/${activeClient.id}`, { panel_brand: val, panel_make: val });
-                          queryClient.invalidateQueries(["document-engine-clients-list"]);
+                          queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
+                          queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", activeClient.id] });
+                          queryClient.invalidateQueries({ queryKey: ["client-data"] });
                           toast.success(`Panel Brand updated to ${val}`);
                         } catch (err) {
                           toast.error(formatApiError(err));
@@ -347,7 +349,9 @@ export default function DocumentTemplates() {
                         if (!activeClient?.id) return;
                         try {
                           await api.patch(`/clients/${activeClient.id}`, { panel_technology: val });
-                          queryClient.invalidateQueries(["document-engine-clients-list"]);
+                          queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
+                          queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", activeClient.id] });
+                          queryClient.invalidateQueries({ queryKey: ["client-data"] });
                           toast.success(`Panel Technology updated to ${val}`);
                         } catch (err) {
                           toast.error(formatApiError(err));
@@ -370,7 +374,9 @@ export default function DocumentTemplates() {
                         if (!activeClient?.id) return;
                         try {
                           await api.patch(`/clients/${activeClient.id}`, { consumer_type: val });
-                          queryClient.invalidateQueries(["document-engine-clients-list"]);
+                          queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
+                          queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", activeClient.id] });
+                          queryClient.invalidateQueries({ queryKey: ["client-data"] });
                           toast.success(`Consumer Category updated to ${val}`);
                         } catch (err) {
                           toast.error(formatApiError(err));

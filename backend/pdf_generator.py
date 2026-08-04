@@ -517,33 +517,6 @@ def generate_document(doc_type: str, data: dict, company: dict) -> bytes:
     return buf.getvalue()
 
 
-def generate_wcr_pdf(client: dict, company: dict) -> bytes:
-    buf = BytesIO()
-    pdf = SimpleDocTemplate(
-        buf,
-        pagesize=A4,
-        leftMargin=1.2 * cm,
-        rightMargin=1.2 * cm,
-        topMargin=1.0 * cm,
-        bottomMargin=1.0 * cm
-    )
-    story = []
-
-    # Palette & Company Specs
-    company_name = company.get('company_name', 'GVP SOLAR ENERGY')
-    gst_no = company.get('gst_number') or company.get('gst') or '27AAAAA0000A1Z5'
-    address = company.get('address') or 'Office Address, Maharashtra'
-    phone = company.get('mobile') or company.get('phone') or '+91 98765 43210'
-    email = company.get('email') or 'info@gvpsolar.com'
-
-    # Styles
-def _build_gvp_logo_drawing(w=110, h=30):
-    d = Drawing(w, h)
-    d.add(String(0, 10, "GVP", fontName="Helvetica-Bold", fontSize=22, fillColor=colors.HexColor("#2563eb")))
-    d.add(Circle(30, 24, 6, fillColor=colors.HexColor("#f59e0b"), strokeColor=colors.HexColor("#d97706"), strokeWidth=0.8))
-    d.add(String(0, 1, "SOLAR ENERGY FOR BETTER TOMORROW", fontName="Helvetica-Bold", fontSize=4.5, fillColor=colors.HexColor("#d97706")))
-    return d
-
 
 class WCRCanvas(canvas.Canvas):
     def __init__(self, *args, **kwargs):

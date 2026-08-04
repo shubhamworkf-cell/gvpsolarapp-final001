@@ -179,12 +179,18 @@ export default function ClientDataDetail() {
       pincode: c.pincode || "",
       aadhaar: c.aadhaar || "",
       system_kw: c.system_kw || 0,
-      panel_make: c.panel_make || "",
+      panel_make: c.panel_make || c.panel_brand || "",
+      panel_brand: c.panel_brand || c.panel_make || "",
+      panel_technology: c.panel_technology || "",
       panel_wattage: c.panel_wattage || 0,
       num_panels: c.num_panels || 0,
       inverter_make: c.inverter_make || "",
       inverter_capacity: c.inverter_capacity || "",
       inverter_serial: c.inverter_serial || "",
+      inverter_model: c.inverter_model || "",
+      inverter_year: c.inverter_year || "",
+      sanction_number: c.sanction_number || "",
+      consumer_type: c.consumer_type || "",
       phase_type: c.phase_type || "Single Phase",
       subsidy_eligible: c.subsidy_eligible ?? false,
       status: c.status || "Lead",
@@ -201,11 +207,15 @@ export default function ClientDataDetail() {
         panel_wattage: Number(editForm.panel_wattage) || 0,
         num_panels: Number(editForm.num_panels) || 0,
       };
-      await api.put(`/clients/${id}`, payload);
+      // Use PATCH to avoid overwriting unrelated onboarding fields
+      await api.patch(`/clients/${id}`, payload);
       queryClient.invalidateQueries({ queryKey: ["client-data"] });
+      queryClient.invalidateQueries({ queryKey: ["client-data", id] });
       queryClient.invalidateQueries({ queryKey: ["clients"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
+      queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", id] });
       toast.success("Client details updated successfully");
       setEditOpen(false);
       setEditForm(null);
@@ -547,12 +557,45 @@ export default function ClientDataDetail() {
                 <Input value={editForm.panel_make} onChange={(e) => setEditForm({ ...editForm, panel_make: e.target.value })} />
               </div>
               <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Panel Technology</Label>
+                <Select value={editForm.panel_technology || "_none"} onValueChange={(val) => setEditForm({ ...editForm, panel_technology: val === "_none" ? "" : val })}>
+                  <SelectTrigger><SelectValue placeholder="Select Technology" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">— Not Set —</SelectItem>
+                    <SelectItem value="TopCon Bifacial">TopCon Bifacial</SelectItem>
+                    <SelectItem value="TopCon Mono">TopCon Mono</SelectItem>
+                    <SelectItem value="Mono PERC">Mono PERC</SelectItem>
+                    <SelectItem value="Polycrystalline">Polycrystalline</SelectItem>
+                    <SelectItem value="N-Type">N-Type</SelectItem>
+                    <SelectItem value="P-Type">P-Type</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
                 <Label className="text-xs font-semibold text-slate-600">Panel Wattage (Wp)</Label>
                 <Input type="number" value={editForm.panel_wattage} onChange={(e) => setEditForm({ ...editForm, panel_wattage: e.target.value })} />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-semibold text-slate-600">Number of Panels</Label>
                 <Input type="number" value={editForm.num_panels} onChange={(e) => setEditForm({ ...editForm, num_panels: e.target.value })} />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Consumer Category</Label>
+                <Select value={editForm.consumer_type || "_none"} onValueChange={(val) => setEditForm({ ...editForm, consumer_type: val === "_none" ? "" : val })}>
+                  <SelectTrigger><SelectValue placeholder="Select Category" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">— Not Set —</SelectItem>
+                    <SelectItem value="Residential Customer">Residential Customer</SelectItem>
+                    <SelectItem value="Commercial Customer">Commercial Customer</SelectItem>
+                    <SelectItem value="Domestic Customer">Domestic Customer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Sanction Number</Label>
+                <Input value={editForm.sanction_number} onChange={(e) => setEditForm({ ...editForm, sanction_number: e.target.value })} />
               </div>
 
               <div className="space-y-1">
@@ -566,6 +609,10 @@ export default function ClientDataDetail() {
               <div className="space-y-1">
                 <Label className="text-xs font-semibold text-slate-600">Inverter Serial Number</Label>
                 <Input value={editForm.inverter_serial} onChange={(e) => setEditForm({ ...editForm, inverter_serial: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Year of Manufacturing</Label>
+                <Input value={editForm.inverter_year} onChange={(e) => setEditForm({ ...editForm, inverter_year: e.target.value })} placeholder="e.g. 2025" />
               </div>
 
               <div className="space-y-1">
