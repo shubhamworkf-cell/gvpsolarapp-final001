@@ -648,7 +648,8 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     num_panels_str = f"{num_panels} NOS" if num_panels else ""
     panel_make = (client.get('panel_brand') or client.get('panel_make') or '').strip()
     panel_tech = (client.get('panel_technology') or '').strip()
-    almm_model = str(client.get('almm_model_number') or (f"{sol_wp_str} {panel_tech}".strip() if sol_wp_str or panel_tech else '')).strip()
+    sol_wp_tech_str = f"{sol_wp_str} {panel_tech}".strip() if sol_wp_str else ""
+    almm_model = str(client.get('almm_model_number') or sol_wp_tech_str).strip()
 
     inverter_make = (client.get('inverter_make') or '').strip()
     inverter_kw = str(client.get('inverter_capacity') or '').strip()
@@ -681,7 +682,7 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
         [cell_subhdr("Specification of the Modules"), "", ""],
         [cell_obs("7"), cell_lbl("Make & Type of modules"), cell_val(panel_make)],
         ["", cell_lbl("ALMM Model Number"), cell_val(almm_model)],
-        ["", cell_lbl("Wattage per module"), cell_val(sol_wp_str)],
+        ["", cell_lbl("Wattage per module"), cell_val(sol_wp_tech_str if sol_wp_tech_str else sol_wp_str)],
         ["", cell_lbl("No. of Module"), cell_val(num_panels_str)],
         ["", cell_lbl("Total Capacity (KWP)"), cell_val(sol_kw_str)],
         ["", cell_lbl("Warrantee Details (Product + Performance)"), cell_val("12+15 YEARS" if sol_kw else "")],
