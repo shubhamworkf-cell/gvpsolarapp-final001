@@ -53,6 +53,7 @@ export default function ClientDetail() {
       mobile: client?.mobile || "",
       alt_mobile: client?.alt_mobile || "",
       consumer_number: client?.consumer_number || "",
+      section_number: client?.section_number || client?.section_no || "",
       address: client?.address || "",
       city: client?.city || "",
       state: client?.state || "",

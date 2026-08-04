@@ -1824,6 +1824,8 @@ class ClientIn(BaseModel):
     mobile: str
     alt_mobile: Optional[str] = ""
     consumer_number: Optional[str] = ""
+    section_number: Optional[str] = ""
+    section_no: Optional[str] = ""
     address: Optional[str] = ""
     city: Optional[str] = ""
     state: Optional[str] = ""
@@ -1844,6 +1846,7 @@ class ClientIn(BaseModel):
     inverter_year: Optional[str] = ""
     sanction_number: Optional[str] = ""
     consumer_type: Optional[str] = ""
+    consumer_category: Optional[str] = ""
     phase_type: Optional[str] = "Single Phase"
     subsidy_eligible: Optional[bool] = False
     status: Optional[str] = "Lead"
@@ -3125,23 +3128,50 @@ async def get_client(client_id: str, user=Depends(get_current_user)):
     c["high_value_assets"] = [a for a in _load_local_assets() if a.get("client_id") == client_id and a.get("company_id") == user["company_id"]]
     return c
 
+def _normalize_client_payload(payload: dict) -> dict:
+    if "panel_brand" in payload or "panel_make" in payload:
+        brand_val = payload.get("panel_brand") or payload.get("panel_make") or ""
+        payload["panel_brand"] = brand_val
+        payload["panel_make"] = brand_val
+    if "inverter_make" in payload or "inverter_brand" in payload:
+        inv_val = payload.get("inverter_make") or payload.get("inverter_brand") or ""
+        payload["inverter_make"] = inv_val
+        payload["inverter_brand"] = inv_val
+    if "section_number" in payload or "section_no" in payload:
+        sec_val = payload.get("section_number") or payload.get("section_no") or ""
+        payload["section_number"] = sec_val
+        payload["section_no"] = sec_val
+    if "consumer_type" in payload or "consumer_category" in payload or "category" in payload:
+        cat_val = payload.get("consumer_type") or payload.get("consumer_category") or payload.get("category") or ""
+        payload["consumer_type"] = cat_val
+        payload["consumer_category"] = cat_val
+        payload["category"] = cat_val
+    if "inverter_serial" in payload or "inverter_sr" in payload:
+        sr_val = payload.get("inverter_serial") or payload.get("inverter_sr") or ""
+        payload["inverter_serial"] = sr_val
+        payload["inverter_sr"] = sr_val
+    if "inverter_year" in payload or "manufacturing_year" in payload:
+        yr_val = payload.get("inverter_year") or payload.get("manufacturing_year") or ""
+        payload["inverter_year"] = yr_val
+        payload["manufacturing_year"] = yr_val
+    if "aadhaar" in payload or "aadhaar_number" in payload:
+        a_val = payload.get("aadhaar") or payload.get("aadhaar_number") or ""
+        payload["aadhaar"] = a_val
+        payload["aadhaar_number"] = a_val
+    return payload
+
 @api_router.put("/clients/{client_id}")
 async def update_client(client_id: str, data: ClientIn, user=Depends(get_current_user)):
     if not has_perm(user, "clients", "edit"):
         raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
-    update = data.model_dump()
+    update = _normalize_client_payload(data.model_dump())
     existing = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
     if existing:
-        # Preserve existing onboarding fields if PUT payload has empty string defaults
-        for k in ["panel_brand", "panel_technology", "consumer_type", "inverter_year", "sanction_number", "inverter_model", "panel_make", "inverter_make", "inverter_capacity", "inverter_serial"]:
-            if not update.get(k) and existing.get(k):
-                update[k] = existing.get(k)
         if not update.get("stages"):
             update["stages"] = existing.get("stages") or {s: False for s in DEFAULT_STAGES}
     else:
         if not update.get("stages"):
             update.pop("stages", None)
-    # Auto-set Onboarding=True for approved/active statuses
     if update.get("stages"):
         if data.status in ["Approved", "Installation Pending", "Installation Complete", "Handover Complete"]:
             update["stages"]["Onboarding"] = True
@@ -3150,11 +3180,12 @@ async def update_client(client_id: str, data: ClientIn, user=Depends(get_current
     update["updated_at"] = now_iso()
     res = await db.clients.update_one({"id": client_id, "company_id": user["company_id"]}, {"$set": update})
     if res.matched_count == 0:
-        res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}, {"client_code": client_id}], "company_id": user["company_id"]}, {"$set": update})
+        res = await db.clients.update_one({"sol_id": client_id, "company_id": user["company_id"]}, {"$set": update})
         if res.matched_count == 0:
-            res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}, {"client_code": client_id}]}, {"$set": update})
+            res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"$set": update})
             if res.matched_count == 0:
                 raise HTTPException(status_code=404, detail="Not found")
+    await LocalFileCollection("clients").update_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"$set": update})
     await log_activity(user["company_id"], user["id"], user["name"], "Updated Client", data.full_name)
     client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
     if not client_doc:
@@ -3166,14 +3197,16 @@ async def patch_client(client_id: str, payload: Dict[str, Any], user=Depends(get
     if not has_perm(user, "clients", "edit"):
         raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
     payload.pop("_id", None)
+    payload = _normalize_client_payload(payload)
     payload["updated_at"] = now_iso()
     res = await db.clients.update_one({"id": client_id, "company_id": user["company_id"]}, {"$set": payload})
     if res.matched_count == 0:
-        res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}, {"client_code": client_id}], "company_id": user["company_id"]}, {"$set": payload})
+        res = await db.clients.update_one({"sol_id": client_id, "company_id": user["company_id"]}, {"$set": payload})
         if res.matched_count == 0:
-            res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}, {"client_code": client_id}]}, {"$set": payload})
+            res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"$set": payload})
             if res.matched_count == 0:
                 raise HTTPException(status_code=404, detail="Client not found")
+    await LocalFileCollection("clients").update_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"$set": payload})
     client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
     if not client_doc:
         client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
@@ -8107,7 +8140,6 @@ async def get_client_data_detail(
     or_conds: List[Dict[str, Any]] = [
         {"id": client_id},
         {"sol_id": client_id},
-        {"client_code": client_id},
         {"consumer_number": client_id}
     ]
     if len(client_id) == 24:

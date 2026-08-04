@@ -174,6 +174,7 @@ export default function ClientDataDetail() {
       mobile: c.mobile || "",
       alt_mobile: c.alt_mobile || "",
       consumer_number: c.consumer_number || "",
+      section_number: c.section_number || c.section_no || "",
       address: c.address || "",
       city: c.city || "",
       state: c.state || "",
@@ -211,6 +212,8 @@ export default function ClientDataDetail() {
       // Use PATCH to avoid overwriting unrelated onboarding fields
       await api.patch(`/clients/${id}`, payload);
       invalidateAllClientQueries(queryClient, id);
+      queryClient.invalidateQueries({ queryKey: queryKeys.clientData.tab(id, tab) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(id) });
       toast.success("Client details updated successfully");
       setEditOpen(false);
       setEditForm(null);
@@ -520,6 +523,10 @@ export default function ClientDataDetail() {
               <div className="space-y-1">
                 <Label className="text-xs font-semibold text-slate-600">Consumer Number</Label>
                 <Input value={editForm.consumer_number} onChange={(e) => setEditForm({ ...editForm, consumer_number: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">Section Number</Label>
+                <Input value={editForm.section_number || ""} onChange={(e) => setEditForm({ ...editForm, section_number: e.target.value })} placeholder="e.g. SEC-001" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-semibold text-slate-600">Aadhaar Number</Label>
