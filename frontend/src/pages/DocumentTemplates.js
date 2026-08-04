@@ -271,7 +271,7 @@ export default function DocumentTemplates() {
                     </div>
                     <div><span className="text-slate-500">Name:</span> <span className="font-medium text-slate-900">{activeClient?.full_name || "—"}</span></div>
                     <div><span className="text-slate-500">Mobile:</span> <span className="font-medium text-slate-900">{activeClient?.mobile || "—"}</span></div>
-                    <div><span className="text-slate-500">Consumer Type:</span> <span className="font-medium text-slate-900">{activeClient?.consumer_type || "Private Sector"}</span></div>
+                    <div><span className="text-slate-500">Consumer Type:</span> <span className="font-medium text-slate-900">{activeClient?.consumer_type || "—"}</span></div>
                     <div><span className="text-slate-500">Subsidy:</span> <span className="font-medium text-slate-900">{activeClient?.subsidy_eligible ? "Eligible" : "Standard"}</span></div>
                     <div><span className="text-slate-500">Aadhaar:</span> <span className="font-medium text-slate-900">{activeClient?.aadhaar || activeClient?.aadhaar_number || "—"}</span></div>
                   </div>
@@ -281,10 +281,10 @@ export default function DocumentTemplates() {
                     <div className="font-semibold text-slate-700 text-xs border-b pb-1 flex items-center gap-1">
                       <Zap className="w-3.5 h-3.5 text-amber-600" /> Onboarding & System
                     </div>
-                    <div><span className="text-slate-500">Capacity:</span> <span className="font-medium text-slate-900">{activeClient?.system_kw || "0"} kW ({activeClient?.panel_wattage || "540"}Wp)</span></div>
-                    <div><span className="text-slate-500">Phase:</span> <span className="font-medium text-slate-900">{activeClient?.phase_type || "3 Phase"}</span></div>
-                    <div><span className="text-slate-500">Panels:</span> <span className="font-medium text-slate-900">{activeClient?.panel_make || "GVP SOLAR"} ({activeClient?.num_panels || 0} Nos)</span></div>
-                    <div><span className="text-slate-500">Inverter:</span> <span className="font-medium text-slate-900">{activeClient?.inverter_make || "GROWATT"} ({activeClient?.inverter_capacity || "—"})</span></div>
+                    <div><span className="text-slate-500">Capacity:</span> <span className="font-medium text-slate-900">{activeClient?.system_kw || "0"} kW {activeClient?.panel_wattage ? `(${activeClient.panel_wattage}Wp)` : ""}</span></div>
+                    <div><span className="text-slate-500">Phase:</span> <span className="font-medium text-slate-900">{activeClient?.phase_type || "—"}</span></div>
+                    <div><span className="text-slate-500">Panels:</span> <span className="font-medium text-slate-900">{activeClient?.panel_brand || activeClient?.panel_make || "—"} ({activeClient?.num_panels || 0} Nos)</span></div>
+                    <div><span className="text-slate-500">Inverter:</span> <span className="font-medium text-slate-900">{activeClient?.inverter_make || "—"} ({activeClient?.inverter_capacity || "—"})</span></div>
                     <div><span className="text-slate-500">Inv Serial:</span> <span className="font-medium text-slate-900">{activeClient?.inverter_serial || "—"}</span></div>
                   </div>
 
@@ -318,7 +318,7 @@ export default function DocumentTemplates() {
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Panel Brand</label>
                     <select
                       className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
-                      value={activeClient?.panel_brand || activeClient?.panel_make || "INA"}
+                      value={activeClient?.panel_brand || activeClient?.panel_make || ""}
                       onChange={async (e) => {
                         const val = e.target.value;
                         if (!activeClient?.id) return;
@@ -327,12 +327,13 @@ export default function DocumentTemplates() {
                           queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
                           queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", activeClient.id] });
                           queryClient.invalidateQueries({ queryKey: ["client-data"] });
-                          toast.success(`Panel Brand updated to ${val}`);
+                          toast.success(`Panel Brand updated to ${val || "blank"}`);
                         } catch (err) {
                           toast.error(formatApiError(err));
                         }
                       }}
                     >
+                      <option value="">-- Select Panel Brand --</option>
                       {["INA", "Waaree", "Adani", "Vikram", "Tata", "Rayzon", "RenewSys", "Goldi", "Emmvee", "Premier", "First Solar", "Other"].map((b) => (
                         <option key={b} value={b}>{b}</option>
                       ))}
@@ -343,7 +344,7 @@ export default function DocumentTemplates() {
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Panel Technology</label>
                     <select
                       className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
-                      value={activeClient?.panel_technology || "TopCon Bifacial"}
+                      value={activeClient?.panel_technology || ""}
                       onChange={async (e) => {
                         const val = e.target.value;
                         if (!activeClient?.id) return;
@@ -352,12 +353,13 @@ export default function DocumentTemplates() {
                           queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
                           queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", activeClient.id] });
                           queryClient.invalidateQueries({ queryKey: ["client-data"] });
-                          toast.success(`Panel Technology updated to ${val}`);
+                          toast.success(`Panel Technology updated to ${val || "blank"}`);
                         } catch (err) {
                           toast.error(formatApiError(err));
                         }
                       }}
                     >
+                      <option value="">-- Select Panel Technology --</option>
                       {["TopCon Bifacial", "TopCon Mono", "Mono PERC", "Polycrystalline", "N-Type", "P-Type", "Other"].map((t) => (
                         <option key={t} value={t}>{t}</option>
                       ))}
@@ -368,7 +370,7 @@ export default function DocumentTemplates() {
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Consumer Category</label>
                     <select
                       className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
-                      value={activeClient?.consumer_type || "Commercial Customer"}
+                      value={activeClient?.consumer_type || ""}
                       onChange={async (e) => {
                         const val = e.target.value;
                         if (!activeClient?.id) return;
@@ -377,12 +379,13 @@ export default function DocumentTemplates() {
                           queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
                           queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", activeClient.id] });
                           queryClient.invalidateQueries({ queryKey: ["client-data"] });
-                          toast.success(`Consumer Category updated to ${val}`);
+                          toast.success(`Consumer Category updated to ${val || "blank"}`);
                         } catch (err) {
                           toast.error(formatApiError(err));
                         }
                       }}
                     >
+                      <option value="">-- Select Consumer Category --</option>
                       {["Commercial Customer", "Residential Customer", "Domestic Customer"].map((c) => (
                         <option key={c} value={c}>{c}</option>
                       ))}

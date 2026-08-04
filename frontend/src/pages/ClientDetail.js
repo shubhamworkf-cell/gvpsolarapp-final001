@@ -59,12 +59,18 @@ export default function ClientDetail() {
       pincode: client?.pincode || "",
       aadhaar: client?.aadhaar || "",
       system_kw: client?.system_kw || 0,
-      panel_make: client?.panel_make || "",
+      panel_make: client?.panel_make || client?.panel_brand || "",
+      panel_brand: client?.panel_brand || client?.panel_make || "",
+      panel_technology: client?.panel_technology || "",
       panel_wattage: client?.panel_wattage || 0,
       num_panels: client?.num_panels || 0,
       inverter_make: client?.inverter_make || "",
       inverter_capacity: client?.inverter_capacity || "",
       inverter_serial: client?.inverter_serial || "",
+      inverter_model: client?.inverter_model || "",
+      inverter_year: client?.inverter_year || "",
+      sanction_number: client?.sanction_number || "",
+      consumer_type: client?.consumer_type || "",
       phase_type: client?.phase_type || "Single Phase",
       subsidy_eligible: client?.subsidy_eligible ?? false,
       status: client?.status || "Lead",
@@ -137,7 +143,7 @@ export default function ClientDetail() {
         num_panels: Number(editData.num_panels) || 0,
       };
       delete payload.id; delete payload.sol_id; delete payload.created_at; delete payload.updated_at; delete payload.notes; delete payload.progress; delete payload.company_id; delete payload.created_by; delete payload.high_value_assets;
-      await api.put(`/clients/${id}`, payload);
+      await api.patch(`/clients/${id}`, payload);
       toast.success("Client updated successfully");
       setEditMode(false);
       setEditData(null);
@@ -280,9 +286,12 @@ export default function ClientDetail() {
               <Row label="Address">{client.address || "—"}, {client.city}, {client.state} {client.pincode}</Row>
               <Row label="Alternate Mobile">{client.alt_mobile || "—"}</Row>
               <Row label="Aadhaar">{client.aadhaar || "—"}</Row>
-              <Row label="Panel">{client.panel_make ? `${client.panel_make} · ${client.panel_wattage}W × ${client.num_panels}` : "—"}</Row>
+              <Row label="Consumer Category">{client.consumer_type || "—"}</Row>
+              <Row label="Sanction Number">{client.sanction_number || "—"}</Row>
+              <Row label="Panel">{client.panel_make || client.panel_brand ? `${client.panel_brand || client.panel_make} ${client.panel_technology || ''} · ${client.panel_wattage}W × ${client.num_panels}`.trim() : "—"}</Row>
               <Row label="Inverter">{client.inverter_make ? `${client.inverter_make} · ${client.inverter_capacity}` : "—"}</Row>
               <Row label="Inverter Serial">{client.inverter_serial || "—"}</Row>
+              <Row label="Year of Manufacturing">{client.inverter_year || "—"}</Row>
             </div>
 
             {editMode && editData && (
@@ -291,18 +300,22 @@ export default function ClientDetail() {
                 <EF label="Mobile" v={editData.mobile} k="mobile" set={setEditData} />
                 <EF label="Alternate Mobile" v={editData.alt_mobile} k="alt_mobile" set={setEditData} />
                 <EF label="Consumer #" v={editData.consumer_number} k="consumer_number" set={setEditData} />
+                <EF label="Consumer Category" v={editData.consumer_type} k="consumer_type" set={setEditData} />
+                <EF label="Sanction Number" v={editData.sanction_number} k="sanction_number" set={setEditData} />
                 <EF label="Aadhaar #" v={editData.aadhaar} k="aadhaar" set={setEditData} />
                 <EF label="System KW" v={editData.system_kw} k="system_kw" type="number" set={setEditData} />
                 <EF label="Address" v={editData.address} k="address" set={setEditData} full />
                 <EF label="City" v={editData.city} k="city" set={setEditData} />
                 <EF label="State" v={editData.state} k="state" set={setEditData} />
                 <EF label="Pincode" v={editData.pincode} k="pincode" set={setEditData} />
-                <EF label="Panel Make" v={editData.panel_make} k="panel_make" set={setEditData} />
+                <EF label="Panel Make / Brand" v={editData.panel_make} k="panel_make" set={setEditData} />
+                <EF label="Panel Technology" v={editData.panel_technology} k="panel_technology" set={setEditData} />
                 <EF label="Panel Wattage (Wp)" v={editData.panel_wattage} k="panel_wattage" type="number" set={setEditData} />
                 <EF label="Number of Panels" v={editData.num_panels} k="num_panels" type="number" set={setEditData} />
                 <EF label="Inverter Make" v={editData.inverter_make} k="inverter_make" set={setEditData} />
                 <EF label="Inverter Capacity" v={editData.inverter_capacity} k="inverter_capacity" set={setEditData} />
                 <EF label="Inverter Serial" v={editData.inverter_serial} k="inverter_serial" set={setEditData} />
+                <EF label="Year of Manufacturing" v={editData.inverter_year} k="inverter_year" set={setEditData} />
               </div>
             )}
 

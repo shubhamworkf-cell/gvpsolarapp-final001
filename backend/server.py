@@ -3117,12 +3117,16 @@ async def update_client(client_id: str, data: ClientIn, user=Depends(get_current
     if not has_perm(user, "clients", "edit"):
         raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
     update = data.model_dump()
-    # Never overwrite existing stages with None — fetch current stages from DB and merge
-    if not update.get("stages"):
-        existing = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
-        if existing:
+    existing = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
+    if existing:
+        # Preserve existing onboarding fields if PUT payload has empty string defaults
+        for k in ["panel_brand", "panel_technology", "consumer_type", "inverter_year", "sanction_number", "inverter_model", "panel_make", "inverter_make", "inverter_capacity", "inverter_serial"]:
+            if not update.get(k) and existing.get(k):
+                update[k] = existing.get(k)
+        if not update.get("stages"):
             update["stages"] = existing.get("stages") or {s: False for s in DEFAULT_STAGES}
-        else:
+    else:
+        if not update.get("stages"):
             update.pop("stages", None)
     # Auto-set Onboarding=True for approved/active statuses
     if update.get("stages"):

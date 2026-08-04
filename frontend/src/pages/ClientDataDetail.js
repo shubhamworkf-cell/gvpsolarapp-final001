@@ -758,6 +758,8 @@ function BasicInfoSection({ client: c }) {
           <InfoRow label="Mobile" value={c.mobile} />
           <InfoRow label="Alternate Mobile" value={c.alt_mobile} />
           <InfoRow label="Consumer Number" value={c.consumer_number} />
+          <InfoRow label="Consumer Category" value={c.consumer_type} />
+          <InfoRow label="Sanction Number" value={c.sanction_number} />
           <InfoRow label="Customer Type" value={c.phase_type === "Three Phase" ? "HT (Three Phase)" : "LT (Single Phase)"} />
           <InfoRow label="Installation Date" value={c.install_date ? dayjs(c.install_date).format("DD MMM YYYY") : dayjs(c.updated_at).format("DD MMM YYYY")} />
         </CardContent>
@@ -766,12 +768,14 @@ function BasicInfoSection({ client: c }) {
         <CardContent className="p-5">
           <div className="text-sm font-semibold text-slate-900 mb-2" style={{ fontFamily: "Outfit" }}>Solar System</div>
           <InfoRow label="Capacity" value={c.system_kw ? `${c.system_kw} kW` : ""} />
-          <InfoRow label="Panel Brand" value={c.panel_make} />
+          <InfoRow label="Panel Brand" value={c.panel_brand || c.panel_make} />
+          <InfoRow label="Panel Technology" value={c.panel_technology} />
           <InfoRow label="Panel Wp" value={c.panel_wattage ? `${c.panel_wattage} Wp` : ""} />
           <InfoRow label="Number of Panels" value={c.num_panels} />
           <InfoRow label="Inverter Brand" value={c.inverter_make} />
           <InfoRow label="Inverter Capacity" value={c.inverter_capacity} />
           <InfoRow label="Inverter Serial" value={c.inverter_serial} />
+          <InfoRow label="Year of Manufacturing" value={c.inverter_year} />
         </CardContent>
       </Card>
 

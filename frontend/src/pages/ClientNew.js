@@ -17,8 +17,9 @@ export default function ClientNew() {
   const [tab, setTab] = useState("client");
   const [form, setForm] = useState({
     full_name: "", mobile: "", alt_mobile: "", consumer_number: "", address: "", city: "", state: "", pincode: "", aadhaar: "",
-    system_kw: 0, panel_make: "", panel_wattage: 0, num_panels: 0, inverter_make: "", inverter_capacity: "", inverter_serial: "",
-    phase_type: "Single Phase", subsidy_eligible: false, status: "Lead", documents: [],
+    system_kw: 0, panel_make: "", panel_brand: "", panel_technology: "", panel_wattage: 0, num_panels: 0,
+    inverter_make: "", inverter_capacity: "", inverter_model: "", inverter_serial: "", inverter_year: "",
+    sanction_number: "", consumer_type: "", phase_type: "Single Phase", subsidy_eligible: false, status: "Lead", documents: [],
   });
   const createClient = useCreateClient();
   const saving = createClient.isPending;
@@ -80,6 +81,17 @@ export default function ClientNew() {
               <F label="City"><Input value={form.city} onChange={set("city")} /></F>
               <F label="State"><Input value={form.state} onChange={set("state")} /></F>
               <F label="Pincode"><Input value={form.pincode} onChange={set("pincode")} /></F>
+              <F label="Consumer Category">
+                <Select value={form.consumer_type} onValueChange={(v) => setForm({ ...form, consumer_type: v })}>
+                  <SelectTrigger><SelectValue placeholder="Select Category" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Residential Customer">Residential Customer</SelectItem>
+                    <SelectItem value="Commercial Customer">Commercial Customer</SelectItem>
+                    <SelectItem value="Domestic Customer">Domestic Customer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </F>
+              <F label="Sanction Number"><Input value={form.sanction_number} onChange={set("sanction_number")} /></F>
               <F label="Aadhaar (Optional)"><Input value={form.aadhaar} onChange={set("aadhaar")} /></F>
             </CardContent>
           </Card>
@@ -89,12 +101,27 @@ export default function ClientNew() {
           <Card className="border-slate-200">
             <CardContent className="p-6 grid md:grid-cols-2 gap-5">
               <F label="System Size (KW)"><Input type="number" step="0.01" value={form.system_kw} onChange={set("system_kw")} data-testid="system-kw" /></F>
-              <F label="Panel Make"><Input value={form.panel_make} onChange={set("panel_make")} /></F>
+              <F label="Panel Make / Brand"><Input value={form.panel_make} onChange={(e) => setForm({ ...form, panel_make: e.target.value, panel_brand: e.target.value })} /></F>
+              <F label="Panel Technology">
+                <Select value={form.panel_technology} onValueChange={(v) => setForm({ ...form, panel_technology: v })}>
+                  <SelectTrigger><SelectValue placeholder="Select Technology" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="TopCon Bifacial">TopCon Bifacial</SelectItem>
+                    <SelectItem value="TopCon Mono">TopCon Mono</SelectItem>
+                    <SelectItem value="Mono PERC">Mono PERC</SelectItem>
+                    <SelectItem value="Polycrystalline">Polycrystalline</SelectItem>
+                    <SelectItem value="N-Type">N-Type</SelectItem>
+                    <SelectItem value="P-Type">P-Type</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </F>
               <F label="Panel Wattage (W)"><Input type="number" value={form.panel_wattage} onChange={set("panel_wattage")} /></F>
               <F label="Number of Panels"><Input type="number" value={form.num_panels} onChange={set("num_panels")} /></F>
               <F label="Inverter Make"><Input value={form.inverter_make} onChange={set("inverter_make")} /></F>
               <F label="Inverter Capacity"><Input value={form.inverter_capacity} onChange={set("inverter_capacity")} /></F>
               <F label="Inverter Serial #"><Input value={form.inverter_serial} onChange={set("inverter_serial")} /></F>
+              <F label="Year of Manufacturing"><Input value={form.inverter_year} onChange={set("inverter_year")} placeholder="e.g. 2025" /></F>
               <F label="Phase Type">
                 <Select value={form.phase_type} onValueChange={(v) => setForm({ ...form, phase_type: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
