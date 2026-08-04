@@ -585,6 +585,26 @@ class WCRCanvas(canvas.Canvas):
 
 
 def generate_wcr_pdf(client: dict, company: dict) -> bytes:
+    # 1. Validation Check
+    missing_fields = []
+    if not (client.get("full_name") or client.get("name")):
+        missing_fields.append("Consumer Name")
+    if not client.get("consumer_number"):
+        missing_fields.append("Consumer Number")
+    if not (client.get("system_kw") or client.get("capacity")):
+        missing_fields.append("Solar System Capacity")
+    if not company.get("company_name"):
+        missing_fields.append("Company Name")
+    if not (company.get("gst_number") or company.get("gst")):
+        missing_fields.append("Company GST Number")
+        
+    if missing_fields:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required data for WCR: {', '.join(missing_fields)}. Please update client/company details before generating."
+        )
+
     buf = BytesIO()
     pdf = SimpleDocTemplate(
         buf,
@@ -606,7 +626,15 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
 
     # Header Builder
     def _build_header():
-        logo_d = _build_gvp_logo_drawing(110, 30)
+        logo_bytes = company.get("logo_bytes")
+        if logo_bytes:
+            try:
+                logo_d = RLImage(BytesIO(logo_bytes), width=4.0 * cm, height=1.2 * cm)
+            except Exception:
+                logo_d = _build_gvp_logo_drawing(110, 30)
+        else:
+            logo_d = _build_gvp_logo_drawing(110, 30)
+
         p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('wcr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
         p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>GST NO – {gst_no}</font></b>", ParagraphStyle('wcr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
         
@@ -636,16 +664,29 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     pincode = str(client.get('pincode') or '416101').strip()
     site_addr = f"{client_addr} {city}-{pincode}".strip()
     
-    category = client.get('consumer_type') or 'COMMERCIAL CUSTOMER'
-    sanction_no = client.get('sanction_number') or '253030629014'
-    sol_kw = str(client.get('system_kw') or '7.5').strip()
+    raw_cat = (client.get('consumer_type') or client.get('category') or 'COMMERCIAL CUSTOMER').strip()
+    if 'commercial' in raw_cat.lower():
+        category = 'COMMERCIAL CUSTOMER'
+    elif 'residential' in raw_cat.lower():
+        category = 'RESIDENTIAL CUSTOMER'
+    elif 'domestic' in raw_cat.lower():
+        category = 'DOMESTIC CUSTOMER'
+    else:
+        category = raw_cat.upper()
+
+    sanction_no = client.get('sanction_number') or consumer_num
+    sol_kw = str(client.get('system_kw') or client.get('capacity') or '7.5').strip()
     sol_wp = str(client.get('panel_wattage') or '590').strip()
     num_panels = str(client.get('num_panels') or '13').strip()
-    panel_make = client.get('panel_make') or 'INA'
-    almm_model = client.get('almm_model_number') or '590 WP TopCon BI-FACIAL'
-    inverter_make = client.get('inverter_make') or 'UTL'
-    inverter_kw = str(client.get('inverter_capacity') or '6.0 KW').strip()
-    inverter_sr = client.get('inverter_serial') or '202501002'
+    panel_make = (client.get('panel_brand') or client.get('panel_make') or 'INA').strip()
+    panel_tech = (client.get('panel_technology') or 'TopCon BI-FACIAL').strip()
+    almm_model = client.get('almm_model_number') or f"{sol_wp} WP {panel_tech}"
+
+    inverter_make = (client.get('inverter_make') or 'UTL').strip()
+    inverter_kw = str(client.get('inverter_capacity') or f"{sol_kw} KW").strip()
+    if not inverter_kw.upper().endswith("KW"):
+        inverter_kw = f"{inverter_kw} KW"
+    inverter_sr = (client.get('inverter_serial') or client.get('inverter_sr') or '202501002').strip()
 
     # --- PAGE 1: 3-Column Inspection Table ---
     for item in _build_header():

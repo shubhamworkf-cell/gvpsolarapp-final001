@@ -301,6 +301,80 @@ export default function DocumentTemplates() {
                 </CardContent>
               </Card>
 
+              {/* Global Panel Brand & Technology Settings */}
+              <Card className="shadow-sm border-blue-200 bg-blue-50/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-blue-600" />
+                    Global Panel Brand, Technology & Category Settings
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Selections automatically update WCR, SLDR, Annexure, and all generated documents for this client.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Panel Brand</label>
+                    <select
+                      className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                      value={activeClient?.panel_brand || activeClient?.panel_make || "INA"}
+                      onChange={async (e) => {
+                        const val = e.target.value;
+                        if (!activeClient?.id) return;
+                        try {
+                          await api.patch(`/clients/${activeClient.id}`, { panel_brand: val, panel_make: val });
+                          toast.success(`Panel Brand updated to ${val}`);
+                        } catch (_) {}
+                      }}
+                    >
+                      {["INA", "Waaree", "Adani", "Vikram", "Tata", "Rayzon", "RenewSys", "Goldi", "Emmvee", "Premier", "First Solar", "Other"].map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Panel Technology</label>
+                    <select
+                      className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                      value={activeClient?.panel_technology || "TopCon Bifacial"}
+                      onChange={async (e) => {
+                        const val = e.target.value;
+                        if (!activeClient?.id) return;
+                        try {
+                          await api.patch(`/clients/${activeClient.id}`, { panel_technology: val });
+                          toast.success(`Panel Technology updated to ${val}`);
+                        } catch (_) {}
+                      }}
+                    >
+                      {["TopCon Bifacial", "TopCon Mono", "Mono PERC", "Polycrystalline", "N-Type", "P-Type", "Other"].map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Consumer Category</label>
+                    <select
+                      className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                      value={activeClient?.consumer_type || "Commercial Customer"}
+                      onChange={async (e) => {
+                        const val = e.target.value;
+                        if (!activeClient?.id) return;
+                        try {
+                          await api.patch(`/clients/${activeClient.id}`, { consumer_type: val });
+                          toast.success(`Consumer Category updated to ${val}`);
+                        } catch (_) {}
+                      }}
+                    >
+                      {["Commercial Customer", "Residential Customer", "Domestic Customer"].map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                </CardContent>
+              </Card>
+
               {/* Generate Documents Cards Grid */}
               <Card className="shadow-sm">
                 <CardHeader className="pb-3">
