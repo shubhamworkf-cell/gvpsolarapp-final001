@@ -3150,9 +3150,16 @@ async def update_client(client_id: str, data: ClientIn, user=Depends(get_current
     update["updated_at"] = now_iso()
     res = await db.clients.update_one({"id": client_id, "company_id": user["company_id"]}, {"$set": update})
     if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Not found")
+        res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}, {"client_code": client_id}], "company_id": user["company_id"]}, {"$set": update})
+        if res.matched_count == 0:
+            res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}, {"client_code": client_id}]}, {"$set": update})
+            if res.matched_count == 0:
+                raise HTTPException(status_code=404, detail="Not found")
     await log_activity(user["company_id"], user["id"], user["name"], "Updated Client", data.full_name)
-    return await db.clients.find_one({"id": client_id}, {"_id": 0})
+    client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
+    if not client_doc:
+        client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
+    return client_doc
 
 @api_router.patch("/clients/{client_id}")
 async def patch_client(client_id: str, payload: Dict[str, Any], user=Depends(get_current_user)):
@@ -3162,9 +3169,11 @@ async def patch_client(client_id: str, payload: Dict[str, Any], user=Depends(get
     payload["updated_at"] = now_iso()
     res = await db.clients.update_one({"id": client_id, "company_id": user["company_id"]}, {"$set": payload})
     if res.matched_count == 0:
-        res = await db.clients.update_one({"$or": [{"sol_id": client_id}, {"client_code": client_id}], "company_id": user["company_id"]}, {"$set": payload})
+        res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}, {"client_code": client_id}], "company_id": user["company_id"]}, {"$set": payload})
         if res.matched_count == 0:
-            raise HTTPException(status_code=404, detail="Client not found")
+            res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}, {"client_code": client_id}]}, {"$set": payload})
+            if res.matched_count == 0:
+                raise HTTPException(status_code=404, detail="Client not found")
     client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
     if not client_doc:
         client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
