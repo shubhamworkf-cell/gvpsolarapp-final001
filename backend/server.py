@@ -3677,6 +3677,9 @@ async def generate_document(client_id: str, payload: Dict[str, Any], user=Depend
                     except Exception as e:
                         logger.error(f"Error fetching company logo: {e}")
 
+    if client_doc:
+        client_doc = _enrich_client_doc(client_doc)
+
     doc_data = payload.get("doc_data") or {}
     if doc_type in ("quotation", "tax_invoice", "delivery_bill"):
         if not doc_data.get("client"):
@@ -3855,6 +3858,7 @@ async def download_direct_document(payload: Dict[str, Any], user=Depends(get_cur
     if not client_doc:
         raise HTTPException(status_code=404, detail="Client not found")
 
+    client_doc = _enrich_client_doc(client_doc)
     pdf_bytes = pdf_generator.generate(doc_type, client_doc, company_doc)
     client_name = client_doc.get("full_name") or "Client"
     safe_name = "".join(c for c in client_name if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")

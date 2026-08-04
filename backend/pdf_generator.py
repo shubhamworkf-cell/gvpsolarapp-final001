@@ -630,6 +630,9 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
         return [t_hdr, Spacer(1, 0.1 * cm), t_div, Spacer(1, 0.2 * cm)]
 
     # Real-Time Data Extraction (No Hardcoded Fallbacks or Placeholders)
+    stages_dict = dict(client.get("stages") or {})
+    ob_dict = dict(stages_dict.get("onboarding_data") or {})
+
     client_name = (client.get('full_name') or client.get('name') or '').strip()
     consumer_num = str(client.get('consumer_number') or '').strip()
     client_addr = (client.get('address') or '').strip()
@@ -637,17 +640,17 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     pincode = str(client.get('pincode') or '').strip()
     site_addr = f"{client_addr}{', ' + city if city else ''}{' - ' + pincode if pincode else ''}".strip(', -')
     
-    category = (client.get('consumer_type') or client.get('consumer_category') or client.get('category') or '').strip()
-    section_no = str(client.get('section_number') or client.get('section_no') or '').strip()
+    category = (client.get('consumer_type') or client.get('consumer_category') or client.get('category') or ob_dict.get('consumer_type') or ob_dict.get('consumer_category') or ob_dict.get('category') or '').strip()
+    section_no = str(client.get('section_number') or client.get('section_no') or ob_dict.get('section_number') or ob_dict.get('section_no') or '').strip()
 
     sol_kw = str(client.get('system_kw') or client.get('capacity') or '').strip()
     sol_kw_str = f"{sol_kw} KW" if sol_kw else ""
-    sol_wp = str(client.get('panel_wattage') or client.get('panel_wp') or '').strip()
+    sol_wp = str(client.get('panel_wattage') or client.get('panel_wp') or ob_dict.get('panel_wattage') or '').strip()
     sol_wp_str = f"{sol_wp} WP" if sol_wp else ""
-    num_panels = str(client.get('num_panels') or client.get('panel_quantity') or '').strip()
+    num_panels = str(client.get('num_panels') or client.get('panel_quantity') or ob_dict.get('num_panels') or '').strip()
     num_panels_str = f"{num_panels} NOS" if num_panels else ""
-    panel_make = (client.get('panel_brand') or client.get('panel_make') or '').strip()
-    panel_tech = (client.get('panel_technology') or client.get('panel_tech') or '').strip()
+    panel_make = (client.get('panel_brand') or client.get('panel_make') or ob_dict.get('panel_brand') or ob_dict.get('panel_make') or '').strip()
+    panel_tech = (client.get('panel_technology') or client.get('panel_tech') or ob_dict.get('panel_technology') or ob_dict.get('panel_tech') or '').strip()
 
     if sol_wp_str and panel_tech:
         sol_wp_tech_str = f"{sol_wp_str} / {panel_tech}"
@@ -658,17 +661,17 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
 
     almm_model = str(client.get('almm_model_number') or sol_wp_tech_str).strip()
 
-    inverter_brand = (client.get('inverter_brand') or client.get('inverter_make') or '').strip()
-    inverter_model = (client.get('inverter_model') or '').strip()
+    inverter_brand = (client.get('inverter_brand') or client.get('inverter_make') or ob_dict.get('inverter_brand') or ob_dict.get('inverter_make') or '').strip()
+    inverter_model = (client.get('inverter_model') or ob_dict.get('inverter_model') or '').strip()
     if inverter_brand and inverter_model and inverter_model.lower() not in inverter_brand.lower():
         inverter_make = f"{inverter_brand} {inverter_model}"
     else:
         inverter_make = inverter_brand or inverter_model
 
-    inverter_kw = str(client.get('inverter_capacity') or '').strip()
+    inverter_kw = str(client.get('inverter_capacity') or ob_dict.get('inverter_capacity') or '').strip()
     inverter_kw_str = f"{inverter_kw}" if "KW" in inverter_kw.upper() else (f"{inverter_kw} KW" if inverter_kw else "")
-    inverter_sr = str(client.get('inverter_serial') or client.get('inverter_sr') or '').strip()
-    inverter_year = str(client.get('inverter_year') or client.get('manufacturing_year') or client.get('year_of_manufacture') or '').strip()
+    inverter_sr = str(client.get('inverter_serial') or client.get('inverter_sr') or ob_dict.get('inverter_serial') or ob_dict.get('inverter_sr') or '').strip()
+    inverter_year = str(client.get('inverter_year') or client.get('manufacturing_year') or client.get('year_of_manufacture') or ob_dict.get('inverter_year') or ob_dict.get('manufacturing_year') or ob_dict.get('year_of_manufacture') or '').strip()
 
     # --- PAGE 1: 3-Column Inspection Table ---
     for item in _build_header():
