@@ -626,6 +626,11 @@ def _prepare_client_supabase_payload(payload: dict) -> dict:
         extra_onboarding["aadhaar_name"] = payload["aadhaar_name"]
     if "aadhaar_image" in payload and payload["aadhaar_image"]:
         extra_onboarding["aadhaar_image"] = payload["aadhaar_image"]
+    # BU Number and BU Text — new onboarding fields (stored in stages.onboarding_data, no schema change)
+    if "bu_number" in payload and payload["bu_number"] is not None:
+        extra_onboarding["bu_number"] = payload["bu_number"]
+    if "bu_text" in payload and payload["bu_text"] is not None:
+        extra_onboarding["bu_text"] = payload["bu_text"]
 
     for k, v in payload.items():
         if k in VALID_CLIENT_COLUMNS:
@@ -661,6 +666,9 @@ def _enrich_client_doc(c: dict) -> dict:
     c["sanction_number"] = ob.get("sanction_number") or c.get("sanction_number") or ""
     c["inverter_serial"] = c.get("inverter_serial") or ob.get("inverter_serial") or ob.get("inverter_sr") or ""
     c["inverter_sr"] = c["inverter_serial"]
+    # BU Number and BU Text (new onboarding fields)
+    c["bu_number"] = ob.get("bu_number") or c.get("bu_number") or ""
+    c["bu_text"]   = ob.get("bu_text")   or c.get("bu_text")   or ""
     return c
 
 class CollectionAdapter:
@@ -3685,8 +3693,13 @@ async def generate_document(client_id: str, payload: Dict[str, Any], user=Depend
         if not doc_data.get("client"):
             doc_data["client"] = client_doc
         pdf_bytes = pdf_generator.generate_document(doc_type, doc_data, company_doc)
+        gen_content_type = "application/pdf"
+    elif doc_type == "annexure":
+        import annexure_generator as _annex_gen
+        pdf_bytes, gen_content_type = _annex_gen.generate_annexure(client_doc, company_doc or {})
     else:
         pdf_bytes = pdf_generator.generate(doc_type, client_doc, company_doc or {})
+        gen_content_type = "application/pdf"
 
     # Extract document number and clean up duplicates
     doc_number = None
@@ -3700,15 +3713,20 @@ async def generate_document(client_id: str, payload: Dict[str, Any], user=Depend
     if doc_number:
         await _cleanup_duplicate_document(user["company_id"], doc_type, doc_number)
 
+    # Determine file extension from content type
+    _is_pdf = gen_content_type == "application/pdf"
+    _ext = ".pdf" if _is_pdf else ".docx"
     filename = _generate_meaningful_filename(doc_type, doc_data, client_doc)
+    if not _is_pdf and filename.endswith(".pdf"):
+        filename = filename[:-4] + _ext
     file_id = str(uuid.uuid4())
-    storage_path = f"{APP_NAME}/{user['company_id']}/generated/{file_id}.pdf"
-    result = put_object(storage_path, pdf_bytes, "application/pdf")
+    storage_path = f"{APP_NAME}/{user['company_id']}/generated/{file_id}{_ext}"
+    result = put_object(storage_path, pdf_bytes, gen_content_type)
     
     await db.files.insert_one({
         "id": file_id, "company_id": user["company_id"], "uploader_id": user["id"],
         "storage_path": result["path"], "original_filename": filename,
-        "content_type": "application/pdf", "size": result.get("size", len(pdf_bytes)),
+        "content_type": gen_content_type, "size": result.get("size", len(pdf_bytes)),
         "category": "generated", "is_deleted": False, "created_at": now_iso(),
         "doc_type": doc_type,
         "document_number": doc_number,
@@ -3718,7 +3736,7 @@ async def generate_document(client_id: str, payload: Dict[str, Any], user=Depend
     })
     
     docs = list(client_doc.get("documents") or [])
-    docs.append({"id": file_id, "filename": filename, "label": _document_label(doc_type), "content_type": "application/pdf", "created_at": now_iso()})
+    docs.append({"id": file_id, "filename": filename, "label": _document_label(doc_type), "content_type": gen_content_type, "created_at": now_iso()})
     stages = {**(client_doc.get("stages") or {}), "Document Making": True, "Onboarding": True}
     await db.clients.update_one(
         {"id": client_id, "company_id": user["company_id"]},
@@ -3767,10 +3785,18 @@ async def generate_public_document(payload: Dict[str, Any], user=Depends(get_cur
         if client_doc and not doc_data.get("client"):
             doc_data["client"] = client_doc
         pdf_bytes = pdf_generator.generate_document(doc_type, doc_data, company_doc)
+        gen_content_type = "application/pdf"
+    elif doc_type == "annexure":
+        import annexure_generator as _annex_gen
+        if not client_doc:
+            raise HTTPException(status_code=400, detail="client_id is required for this document type")
+        client_doc = _enrich_client_doc(client_doc)
+        pdf_bytes, gen_content_type = _annex_gen.generate_annexure(client_doc, company_doc or {})
     else:
         if not client_doc:
             raise HTTPException(status_code=400, detail="client_id is required for this document type")
         pdf_bytes = pdf_generator.generate(doc_type, client_doc, company_doc or {})
+        gen_content_type = "application/pdf"
 
     # Extract document number and clean up duplicates
     doc_number = None
@@ -3784,10 +3810,14 @@ async def generate_public_document(payload: Dict[str, Any], user=Depends(get_cur
     if doc_number:
         await _cleanup_duplicate_document(user["company_id"], doc_type, doc_number)
 
+    _is_pdf = gen_content_type == "application/pdf"
+    _ext = ".pdf" if _is_pdf else ".docx"
     filename = _generate_meaningful_filename(doc_type, doc_data, client_doc)
+    if not _is_pdf and filename.endswith(".pdf"):
+        filename = filename[:-4] + _ext
     file_id = str(uuid.uuid4())
-    storage_path = f"{APP_NAME}/{user['company_id']}/generated/{file_id}.pdf"
-    result = put_object(storage_path, pdf_bytes, "application/pdf")
+    storage_path = f"{APP_NAME}/{user['company_id']}/generated/{file_id}{_ext}"
+    result = put_object(storage_path, pdf_bytes, gen_content_type)
     
     client_name = "Client"
     if client_doc:
@@ -3798,7 +3828,7 @@ async def generate_public_document(payload: Dict[str, Any], user=Depends(get_cur
     await db.files.insert_one({
         "id": file_id, "company_id": user["company_id"], "uploader_id": user["id"],
         "storage_path": result["path"], "original_filename": filename,
-        "content_type": "application/pdf", "size": result.get("size", len(pdf_bytes)),
+        "content_type": gen_content_type, "size": result.get("size", len(pdf_bytes)),
         "category": "generated", "is_deleted": False, "created_at": now_iso(),
         "doc_type": doc_type,
         "document_number": doc_number,
@@ -3809,7 +3839,7 @@ async def generate_public_document(payload: Dict[str, Any], user=Depends(get_cur
     
     if client_doc:
         docs = list(client_doc.get("documents") or [])
-        docs.append({"id": file_id, "filename": filename, "label": _document_label(doc_type), "content_type": "application/pdf", "created_at": now_iso()})
+        docs.append({"id": file_id, "filename": filename, "label": _document_label(doc_type), "content_type": gen_content_type, "created_at": now_iso()})
         stages = {**(client_doc.get("stages") or {}), "Document Making": True, "Onboarding": True}
         await db.clients.update_one(
             {"id": client_id, "company_id": user["company_id"]},

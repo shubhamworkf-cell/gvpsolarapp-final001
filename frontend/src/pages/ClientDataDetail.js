@@ -192,6 +192,8 @@ export default function ClientDataDetail() {
       inverter_model: c.inverter_model || "",
       inverter_year: c.inverter_year || "",
       sanction_number: c.sanction_number || "",
+      bu_number: c.bu_number || "",
+      bu_text: c.bu_text || "",
       consumer_type: c.consumer_type || "",
       phase_type: c.phase_type || "Single Phase",
       subsidy_eligible: c.subsidy_eligible ?? false,
@@ -599,6 +601,14 @@ export default function ClientDataDetail() {
                 <Label className="text-xs font-semibold text-slate-600">Sanction Number</Label>
                 <Input value={editForm.sanction_number} onChange={(e) => setEditForm({ ...editForm, sanction_number: e.target.value })} />
               </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">BU Number</Label>
+                <Input value={editForm.bu_number || ""} onChange={(e) => setEditForm({ ...editForm, bu_number: e.target.value })} placeholder="e.g. 12345" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-slate-600">BU Text (Sub-Division)</Label>
+                <Input value={editForm.bu_text || ""} onChange={(e) => setEditForm({ ...editForm, bu_text: e.target.value })} placeholder="e.g. Sangli Sub-Division" />
+              </div>
 
               <div className="space-y-1">
                 <Label className="text-xs font-semibold text-slate-600">Inverter Make / Brand</Label>
@@ -762,6 +772,8 @@ function BasicInfoSection({ client: c }) {
           <InfoRow label="Consumer Number" value={c.consumer_number} />
           <InfoRow label="Consumer Category" value={c.consumer_type} />
           <InfoRow label="Sanction Number" value={c.sanction_number} />
+          <InfoRow label="BU Number" value={c.bu_number} />
+          <InfoRow label="BU Text (Sub-Division)" value={c.bu_text} />
           <InfoRow label="Customer Type" value={c.phase_type === "Three Phase" ? "HT (Three Phase)" : "LT (Single Phase)"} />
           <InfoRow label="Installation Date" value={c.install_date ? dayjs(c.install_date).format("DD MMM YYYY") : dayjs(c.updated_at).format("DD MMM YYYY")} />
         </CardContent>

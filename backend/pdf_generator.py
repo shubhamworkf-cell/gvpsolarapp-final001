@@ -1141,8 +1141,11 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         date_str = date_str[:10]
         
     company_name = company.get("company_name") or ""
-    bu_no = client.get("bu_number") or ""
-    sub_div = client.get("sub_division") or ""
+    # BU Number and BU Text from onboarding (enriched via _enrich_client_doc before this call)
+    bu_no = client.get("bu_number") or client.get("bu_no") or ""
+    bu_text = client.get("bu_text") or ""
+    # sub_div: use bu_text if available, else fall back to sub_division field (leave blank if both empty)
+    sub_div = bu_text or client.get("sub_division") or ""
     division = client.get("division") or ""
 
     # Define Styles (Refined font sizing & spacing for exact 5-page layout with compact vertical gaps)
@@ -1631,6 +1634,14 @@ def generate(doc_type: str, client: dict, company: dict) -> bytes:
         return generate_net_meter_agreement_pdf(client, company)
     if doc_type_clean in ("vendor_agreement", "vendor"):
         return generate_vendor_agreement_pdf(client, company)
+    if doc_type_clean == "annexure":
+        try:
+            import annexure_generator
+            pdf_bytes, content_type = annexure_generator.generate_annexure(client, company)
+            return pdf_bytes
+        except Exception as _e:
+            import logging as _logging
+            _logging.getLogger(__name__).error(f"DOCX-based Annexure generation failed, using ReportLab fallback: {_e}")
 
     buf = BytesIO()
     pdf = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5*cm, rightMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)

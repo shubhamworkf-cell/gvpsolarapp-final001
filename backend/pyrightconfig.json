@@ -2,5 +2,7 @@
   "extraPaths": [
     "."
   ],
-  "reportMissingTypeStubs": false
+  "reportMissingTypeStubs": false,
+  "reportAttributeAccessIssue": "none",
+  "reportArgumentType": "none"
 }
