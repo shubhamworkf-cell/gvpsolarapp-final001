@@ -125,18 +125,23 @@ export default function DocumentTemplates() {
         { responseType: "blob" }
       );
 
-      const blob = new Blob([response.data], { type: "application/pdf" });
+      const blob = response.data;
+      const contentType = blob.type || response.headers?.["content-type"] || "";
+      const isDocx = contentType.includes("wordprocessingml") || contentType.includes("docx") || contentType.includes("document");
+      const ext = isDocx ? ".docx" : ".pdf";
+
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       const clientName = (activeClient?.full_name || activeClient?.name || "Client").replace(/[^a-zA-Z0-9_-]/g, "_");
       link.href = url;
-      link.setAttribute("download", `${docType.toUpperCase()}_${clientName}.pdf`);
+      link.setAttribute("download", `${docType.toUpperCase()}_${clientName}${ext}`);
       document.body.appendChild(link);
       link.click();
       link.parentNode.removeChild(link);
       window.URL.revokeObjectURL(url);
 
-      toast.success(`${docLabel} downloaded successfully!`, { id: toastId });
+      const formatLabel = isDocx ? `${docLabel} (DOCX)` : `${docLabel} (PDF)`;
+      toast.success(`${formatLabel} downloaded successfully!`, { id: toastId });
     } catch (err) {
       toast.error(formatApiError(err) || `Failed to generate ${docLabel}`, { id: toastId });
     } finally {

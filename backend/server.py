@@ -3889,14 +3889,20 @@ async def download_direct_document(payload: Dict[str, Any], user=Depends(get_cur
         raise HTTPException(status_code=404, detail="Client not found")
 
     client_doc = _enrich_client_doc(client_doc)
-    pdf_bytes = pdf_generator.generate(doc_type, client_doc, company_doc)
+    doc_bytes = pdf_generator.generate(doc_type, client_doc, company_doc)
+    
+    # Detect if doc_bytes is DOCX (starts with PK) or PDF (starts with %PDF)
+    is_docx = doc_bytes[:2] == b"PK"
+    media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if is_docx else "application/pdf"
+    ext = ".docx" if is_docx else ".pdf"
+
     client_name = client_doc.get("full_name") or "Client"
     safe_name = "".join(c for c in client_name if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
-    filename = f"{doc_type.upper()}_{safe_name}.pdf"
+    filename = f"{doc_type.upper()}_{safe_name}{ext}"
 
     return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
+        content=doc_bytes,
+        media_type=media_type,
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Access-Control-Expose-Headers": "Content-Disposition"

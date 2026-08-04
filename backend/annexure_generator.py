@@ -276,6 +276,67 @@ def _convert_docx_to_pdf(docx_bytes: bytes) -> Optional[bytes]:
             return None
 
 
+def _convert_via_docx2pdf(docx_bytes: bytes) -> Optional[bytes]:
+    """Try converting using the docx2pdf package (uses MS Word on macOS, LibreOffice on Linux)."""
+    try:
+        import docx2pdf  # type: ignore[import]
+    except ImportError:
+        return None
+    with tempfile.TemporaryDirectory() as tmpdir:
+        in_path = os.path.join(tmpdir, "annexure.docx")
+        out_path = os.path.join(tmpdir, "annexure.pdf")
+        with open(in_path, "wb") as f:
+            f.write(docx_bytes)
+        try:
+            docx2pdf.convert(in_path, out_path)
+            if os.path.exists(out_path):
+                with open(out_path, "rb") as f:
+                    return f.read()
+        except Exception as e:
+            logger.warning(f"docx2pdf conversion failed: {e}")
+    return None
+
+
+def _convert_via_unoconv(docx_bytes: bytes) -> Optional[bytes]:
+    """Try converting using unoconv if installed."""
+    unoconv = shutil.which("unoconv")
+    if not unoconv:
+        return None
+    with tempfile.TemporaryDirectory() as tmpdir:
+        in_path = os.path.join(tmpdir, "annexure.docx")
+        out_path = os.path.join(tmpdir, "annexure.pdf")
+        with open(in_path, "wb") as f:
+            f.write(docx_bytes)
+        try:
+            result = subprocess.run(
+                [unoconv, "-f", "pdf", "-o", out_path, in_path],
+                capture_output=True, timeout=60,
+            )
+            if os.path.exists(out_path):
+                with open(out_path, "rb") as f:
+                    return f.read()
+        except Exception as e:
+            logger.warning(f"unoconv conversion failed: {e}")
+    return None
+
+
+def _docx_to_pdf(docx_bytes: bytes) -> Optional[bytes]:
+    """Try all available DOCX → PDF conversion methods in order."""
+    # 1. LibreOffice headless (best on Linux servers)
+    result = _convert_docx_to_pdf(docx_bytes)
+    if result:
+        return result
+    # 2. docx2pdf package (uses MS Word on macOS, or LibreOffice on Linux via subprocess)
+    result = _convert_via_docx2pdf(docx_bytes)
+    if result:
+        return result
+    # 3. unoconv
+    result = _convert_via_unoconv(docx_bytes)
+    if result:
+        return result
+    return None
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def generate_annexure(client: dict, company: dict) -> Tuple[bytes, str]:
@@ -293,7 +354,7 @@ def generate_annexure(client: dict, company: dict) -> Tuple[bytes, str]:
 
     filled_docx = _fill_template(template_bytes, replacements)
 
-    pdf_bytes = _convert_docx_to_pdf(filled_docx)
+    pdf_bytes = _docx_to_pdf(filled_docx)
     if pdf_bytes:
         return pdf_bytes, "application/pdf"
     else:

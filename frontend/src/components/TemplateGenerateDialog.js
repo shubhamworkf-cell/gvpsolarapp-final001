@@ -18,16 +18,21 @@ export default function TemplateGenerateDialog({ open, onOpenChange, clientId })
         { client_id: clientId, doc_type: docType },
         { responseType: "blob" }
       );
-      const blob = new Blob([response.data], { type: "application/pdf" });
+      const blob = response.data;
+      const contentType = blob.type || response.headers?.["content-type"] || "";
+      const isDocx = contentType.includes("wordprocessingml") || contentType.includes("docx") || contentType.includes("document");
+      const ext = isDocx ? ".docx" : ".pdf";
+
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `${docType.toUpperCase()}_Document.pdf`);
+      link.setAttribute("download", `${docType.toUpperCase()}_Document${ext}`);
       document.body.appendChild(link);
       link.click();
       link.parentNode.removeChild(link);
       window.URL.revokeObjectURL(url);
-      toast.success(`${docLabel} downloaded!`, { id: toastId });
+      const formatLabel = isDocx ? `${docLabel} (DOCX)` : `${docLabel} (PDF)`;
+      toast.success(`${formatLabel} downloaded!`, { id: toastId });
       onOpenChange(false);
     } catch (e) {
       toast.error(formatApiError(e) || "Generation failed", { id: toastId });
