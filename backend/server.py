@@ -1816,13 +1816,21 @@ class ClientIn(BaseModel):
     state: Optional[str] = ""
     pincode: Optional[str] = ""
     aadhaar: Optional[str] = ""
+    aadhaar_name: Optional[str] = ""
+    aadhaar_image: Optional[str] = ""
     system_kw: Optional[float] = 0
     panel_make: Optional[str] = ""
+    panel_brand: Optional[str] = ""
+    panel_technology: Optional[str] = ""
     panel_wattage: Optional[float] = 0
     num_panels: Optional[int] = 0
     inverter_make: Optional[str] = ""
     inverter_capacity: Optional[str] = ""
+    inverter_model: Optional[str] = ""
     inverter_serial: Optional[str] = ""
+    inverter_year: Optional[str] = ""
+    sanction_number: Optional[str] = ""
+    consumer_type: Optional[str] = ""
     phase_type: Optional[str] = "Single Phase"
     subsidy_eligible: Optional[bool] = False
     status: Optional[str] = "Lead"
@@ -3128,6 +3136,20 @@ async def update_client(client_id: str, data: ClientIn, user=Depends(get_current
         raise HTTPException(status_code=404, detail="Not found")
     await log_activity(user["company_id"], user["id"], user["name"], "Updated Client", data.full_name)
     return await db.clients.find_one({"id": client_id}, {"_id": 0})
+
+@api_router.patch("/clients/{client_id}")
+async def patch_client(client_id: str, payload: Dict[str, Any], user=Depends(get_current_user)):
+    if not has_perm(user, "clients", "edit"):
+        raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
+    payload.pop("_id", None)
+    payload["updated_at"] = now_iso()
+    res = await db.clients.update_one({"id": client_id, "company_id": user["company_id"]}, {"$set": payload})
+    if res.matched_count == 0:
+        res = await db.clients.update_one({"$or": [{"sol_id": client_id}, {"client_code": client_id}], "company_id": user["company_id"]}, {"$set": payload})
+        if res.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Client not found")
+    client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
+    return client_doc
 
 @api_router.patch("/clients/{client_id}/stages")
 async def update_stages(client_id: str, data: StageUpdate, user=Depends(get_current_user)):

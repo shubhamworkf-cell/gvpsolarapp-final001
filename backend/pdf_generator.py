@@ -631,9 +631,9 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
             try:
                 logo_d = RLImage(BytesIO(logo_bytes), width=4.0 * cm, height=1.2 * cm)
             except Exception:
-                logo_d = _build_gvp_logo_drawing(110, 30)
+                logo_d = Spacer(4.0 * cm, 1.2 * cm)
         else:
-            logo_d = _build_gvp_logo_drawing(110, 30)
+            logo_d = Spacer(4.0 * cm, 1.2 * cm)
 
         p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('wcr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
         p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>GST NO – {gst_no}</font></b>", ParagraphStyle('wcr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
@@ -656,37 +656,32 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
         ]))
         return [t_hdr, Spacer(1, 0.1 * cm), t_div, Spacer(1, 0.2 * cm)]
 
-    # Data Extraction
-    client_name = (client.get('full_name') or client.get('name') or 'ASHOKKUMAR MANGILAL GANDHI').strip()
-    consumer_num = str(client.get('consumer_number') or '253030629014').strip()
-    client_addr = (client.get('address') or '256 KONDIGRE SHIROL').strip()
-    city = (client.get('city') or 'KOLHAPUR CIRCLE').strip()
-    pincode = str(client.get('pincode') or '416101').strip()
-    site_addr = f"{client_addr} {city}-{pincode}".strip()
+    # Real-Time Data Extraction (No Hardcoded Fallbacks or Placeholders)
+    client_name = (client.get('full_name') or client.get('name') or '').strip()
+    consumer_num = str(client.get('consumer_number') or '').strip()
+    client_addr = (client.get('address') or '').strip()
+    city = (client.get('city') or '').strip()
+    pincode = str(client.get('pincode') or '').strip()
+    site_addr = f"{client_addr}{', ' + city if city else ''}{' - ' + pincode if pincode else ''}".strip(', -')
     
-    raw_cat = (client.get('consumer_type') or client.get('category') or 'COMMERCIAL CUSTOMER').strip()
-    if 'commercial' in raw_cat.lower():
-        category = 'COMMERCIAL CUSTOMER'
-    elif 'residential' in raw_cat.lower():
-        category = 'RESIDENTIAL CUSTOMER'
-    elif 'domestic' in raw_cat.lower():
-        category = 'DOMESTIC CUSTOMER'
-    else:
-        category = raw_cat.upper()
+    category = (client.get('consumer_type') or client.get('category') or '').strip()
 
-    sanction_no = client.get('sanction_number') or consumer_num
-    sol_kw = str(client.get('system_kw') or client.get('capacity') or '7.5').strip()
-    sol_wp = str(client.get('panel_wattage') or '590').strip()
-    num_panels = str(client.get('num_panels') or '13').strip()
-    panel_make = (client.get('panel_brand') or client.get('panel_make') or 'INA').strip()
-    panel_tech = (client.get('panel_technology') or 'TopCon BI-FACIAL').strip()
-    almm_model = client.get('almm_model_number') or f"{sol_wp} WP {panel_tech}"
+    sanction_no = str(client.get('sanction_number') or client.get('sanction_no') or '').strip()
+    sol_kw = str(client.get('system_kw') or client.get('capacity') or '').strip()
+    sol_kw_str = f"{sol_kw} KW" if sol_kw else ""
+    sol_wp = str(client.get('panel_wattage') or '').strip()
+    sol_wp_str = f"{sol_wp} WP" if sol_wp else ""
+    num_panels = str(client.get('num_panels') or '').strip()
+    num_panels_str = f"{num_panels} NOS" if num_panels else ""
+    panel_make = (client.get('panel_brand') or client.get('panel_make') or '').strip()
+    panel_tech = (client.get('panel_technology') or '').strip()
+    almm_model = str(client.get('almm_model_number') or (f"{sol_wp_str} {panel_tech}".strip() if sol_wp_str or panel_tech else '')).strip()
 
-    inverter_make = (client.get('inverter_make') or 'UTL').strip()
-    inverter_kw = str(client.get('inverter_capacity') or f"{sol_kw} KW").strip()
-    if not inverter_kw.upper().endswith("KW"):
-        inverter_kw = f"{inverter_kw} KW"
-    inverter_sr = (client.get('inverter_serial') or client.get('inverter_sr') or '202501002').strip()
+    inverter_make = (client.get('inverter_make') or '').strip()
+    inverter_kw = str(client.get('inverter_capacity') or '').strip()
+    inverter_kw_str = f"{inverter_kw}" if "KW" in inverter_kw.upper() else (f"{inverter_kw} KW" if inverter_kw else "")
+    inverter_sr = str(client.get('inverter_serial') or client.get('inverter_sr') or '').strip()
+    inverter_year = str(client.get('inverter_year') or client.get('manufacturing_year') or '').strip()
 
     # --- PAGE 1: 3-Column Inspection Table ---
     for item in _build_header():
@@ -708,26 +703,26 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
         [cell_obs("3"), cell_lbl("Site/Location with Complete Address"), cell_val(site_addr)],
         [cell_obs("4"), cell_lbl("Category: Govt/Private Sector"), cell_val(category)],
         [cell_obs("5"), cell_lbl("Sanction number"), cell_val(sanction_no)],
-        [cell_obs("6"), cell_lbl("Sanctioned Capacity of solar PV system (KW) Installed"), cell_val(f"{sol_kw} KW")],
-        ["", cell_lbl("Capacity of solar PV system (KW)"), cell_val(f"{sol_kw} KW")],
+        [cell_obs("6"), cell_lbl("Sanctioned Capacity of solar PV system (KW) Installed"), cell_val(sol_kw_str)],
+        ["", cell_lbl("Capacity of solar PV system (KW)"), cell_val(sol_kw_str)],
         [cell_subhdr("Specification of the Modules"), "", ""],
         [cell_obs("7"), cell_lbl("Make & Type of modules"), cell_val(panel_make)],
         ["", cell_lbl("ALMM Model Number"), cell_val(almm_model)],
-        ["", cell_lbl("Wattage per module"), cell_val(f"{sol_wp} WP")],
-        ["", cell_lbl("No. of Module"), cell_val(f"{num_panels} NOS")],
-        ["", cell_lbl("Total Capacity (KWP)"), cell_val(f"{sol_kw} KW")],
-        ["", cell_lbl("Warrantee Details (Product + Performance)"), cell_val("12+15 YEARS")],
+        ["", cell_lbl("Wattage per module"), cell_val(sol_wp_str)],
+        ["", cell_lbl("No. of Module"), cell_val(num_panels_str)],
+        ["", cell_lbl("Total Capacity (KWP)"), cell_val(sol_kw_str)],
+        ["", cell_lbl("Warrantee Details (Product + Performance)"), cell_val("12+15 YEARS" if sol_kw else "")],
         [cell_subhdr("PCU"), "", ""],
         [cell_obs("8"), cell_lbl("Make & Model number of Inverter"), cell_val(inverter_make)],
-        ["", cell_lbl("Rating"), cell_val(f"{inverter_kw}")],
-        ["", cell_lbl("Type of charge controller/ MPPT"), cell_val("MPPT")],
-        ["", cell_lbl("Capacity of Inverter"), cell_val(f"{inverter_kw}")],
+        ["", cell_lbl("Rating"), cell_val(inverter_kw_str)],
+        ["", cell_lbl("Type of charge controller/ MPPT"), cell_val("MPPT" if inverter_make else "")],
+        ["", cell_lbl("Capacity of Inverter"), cell_val(inverter_kw_str)],
         ["", cell_lbl("SR Number"), cell_val(inverter_sr)],
-        ["", cell_lbl("Year of manufacturing"), cell_val("2025")],
+        ["", cell_lbl("Year of manufacturing"), cell_val(inverter_year)],
         [cell_subhdr("EARTHING & PROTACTION"), "", ""],
-        [cell_obs("9"), cell_lbl("No of Separate Earthings with earth Resistance"), cell_val("NON_TRACKING")],
+        [cell_obs("9"), cell_lbl("No of Separate Earthings with earth Resistance"), cell_val("NON_TRACKING" if sol_kw else "")],
         ["", cell_lbl("It is certified that the Earth Resistance measure in presence of Licensed Electrical Contractor/Supervisor and found in order i.e. < 5 Ohms as per MNRE OM Dtd. 07.06.24 for CFA Component."), cell_val("")],
-        ["", cell_lbl("Lightening Arrester"), cell_val("Yes")],
+        ["", cell_lbl("Lightening Arrester"), cell_val("Yes" if sol_kw else "")],
     ]
 
     t1 = Table(table_data, colWidths=[1.0 * cm, 8.5 * cm, 9.1 * cm])
@@ -748,11 +743,11 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     story.append(t1)
     story.append(Spacer(1, 0.4 * cm))
 
-    # Signature Page 1
+    # Clean Signature Page 1
     sign1 = Table([
         [
-            Paragraph("<b>अोक गांधी</b>", ParagraphStyle('sig_m', parent=styles['Normal'], fontSize=11, fontName='Helvetica-Bold', alignment=0)),
-            Paragraph(f"<b>{company_name.upper()}</b><br/><font size='7.5' color='#64748b'>Proprietor &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Manager</font>", ParagraphStyle('sig_v', parent=styles['Normal'], alignment=2))
+            Paragraph(f"<b>Authorized Signature [Vendor]</b><br/><br/><br/>For <b>{company_name.upper()}</b>", STYLE_VAL),
+            Paragraph(f"<b>Consumer Signature</b><br/><br/><br/><b>{client_name}</b>", ParagraphStyle('sig_c1', parent=styles['Normal'], alignment=2))
         ]
     ], colWidths=[9.3 * cm, 9.3 * cm])
     sign1.setStyle(TableStyle([
@@ -790,8 +785,8 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
 
     sign2 = Table([
         [
-            Paragraph(f"<b>{company_name.upper()}</b><br/><br/><font size='8.5' color='#475569'>Proprietor &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Manager</font><br/><b>Signature [Vendor]</b>", STYLE_VAL),
-            Paragraph(f"<b>अोक गांधी</b><br/><br/><br/><b>Signature [Consumer]</b>", ParagraphStyle('sig_c2', parent=styles['Normal'], alignment=2))
+            Paragraph(f"<b>Authorized Signature [Vendor]</b><br/><br/><br/>For <b>{company_name.upper()}</b>", STYLE_VAL),
+            Paragraph(f"<b>Consumer Signature</b><br/><br/><br/><b>{client_name}</b>", ParagraphStyle('sig_c2', parent=styles['Normal'], alignment=2))
         ]
     ], colWidths=[9.3 * cm, 9.3 * cm])
     sign2.setStyle(TableStyle([
@@ -819,7 +814,7 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     story.append(Paragraph(body3_text, STYLE_BODY_JUSTIFY))
     story.append(Spacer(1, 0.3 * cm))
 
-    aadhaar_num = client.get('aadhaar') or client.get('aadhaar_number') or '6141 3962 3810'
+    aadhaar_num = str(client.get('aadhaar') or client.get('aadhaar_number') or '').strip()
 
     # Aadhaar Identity Box
     aadhaar_box_data = [
@@ -827,7 +822,7 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
         [Paragraph(
             f"<b>Stamp & Seal</b><br/><br/>"
             f"<b>Identity Details of Consumer: - ADHAR CARD</b><br/>"
-            f"<b>Aadhar Number: {aadhaar_num}</b>",
+            f"<b>Aadhar Number: {aadhaar_num}</b>" if aadhaar_num else "<b>Identity Details of Consumer: - ADHAR CARD</b>",
             ParagraphStyle('a_body', parent=styles['Normal'], fontSize=8.5, leading=13, textColor=colors.HexColor('#1e293b'))
         )]
     ]
@@ -844,8 +839,8 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
 
     sign3 = Table([
         [
-            Paragraph(f"<b>{company_name.upper()}</b><br/><br/><font size='8.5' color='#475569'>Proprietor &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Manager</font><br/><b>Signature [Vendor]</b>", STYLE_VAL),
-            Paragraph(f"<b>अोक गांधी</b><br/><br/><br/><b>Signature [Consumer]</b>", ParagraphStyle('sig_c3', parent=styles['Normal'], alignment=2))
+            Paragraph(f"<b>Authorized Signature [Vendor]</b><br/><br/><br/>For <b>{company_name.upper()}</b>", STYLE_VAL),
+            Paragraph(f"<b>Consumer Signature</b><br/><br/><br/><b>{client_name}</b>", ParagraphStyle('sig_c3', parent=styles['Normal'], alignment=2))
         ]
     ], colWidths=[9.3 * cm, 9.3 * cm])
     sign3.setStyle(TableStyle([

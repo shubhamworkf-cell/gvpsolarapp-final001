@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Search, FileText, Download, User, Zap, Building2, CheckCircle2, ShieldC
 import { toast } from "sonner";
 
 export default function DocumentTemplates() {
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const initialClientId = searchParams.get("client_id") || null;
   const [search, setSearch] = useState("");
@@ -323,8 +324,11 @@ export default function DocumentTemplates() {
                         if (!activeClient?.id) return;
                         try {
                           await api.patch(`/clients/${activeClient.id}`, { panel_brand: val, panel_make: val });
+                          queryClient.invalidateQueries(["document-engine-clients-list"]);
                           toast.success(`Panel Brand updated to ${val}`);
-                        } catch (_) {}
+                        } catch (err) {
+                          toast.error(formatApiError(err));
+                        }
                       }}
                     >
                       {["INA", "Waaree", "Adani", "Vikram", "Tata", "Rayzon", "RenewSys", "Goldi", "Emmvee", "Premier", "First Solar", "Other"].map((b) => (
@@ -343,8 +347,11 @@ export default function DocumentTemplates() {
                         if (!activeClient?.id) return;
                         try {
                           await api.patch(`/clients/${activeClient.id}`, { panel_technology: val });
+                          queryClient.invalidateQueries(["document-engine-clients-list"]);
                           toast.success(`Panel Technology updated to ${val}`);
-                        } catch (_) {}
+                        } catch (err) {
+                          toast.error(formatApiError(err));
+                        }
                       }}
                     >
                       {["TopCon Bifacial", "TopCon Mono", "Mono PERC", "Polycrystalline", "N-Type", "P-Type", "Other"].map((t) => (
@@ -363,8 +370,11 @@ export default function DocumentTemplates() {
                         if (!activeClient?.id) return;
                         try {
                           await api.patch(`/clients/${activeClient.id}`, { consumer_type: val });
+                          queryClient.invalidateQueries(["document-engine-clients-list"]);
                           toast.success(`Consumer Category updated to ${val}`);
-                        } catch (_) {}
+                        } catch (err) {
+                          toast.error(formatApiError(err));
+                        }
                       }}
                     >
                       {["Commercial Customer", "Residential Customer", "Domestic Customer"].map((c) => (
