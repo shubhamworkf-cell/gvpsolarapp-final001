@@ -570,6 +570,99 @@ def _clean_products_doc(doc: dict) -> dict:
         cleaned.pop("serial_number_required", None)
     return cleaned
 
+VALID_CLIENT_COLUMNS = {
+    "id", "sol_id", "company_id", "created_by", "full_name", "mobile", "alt_mobile",
+    "consumer_number", "address", "city", "state", "pincode", "aadhaar", "system_kw",
+    "panel_make", "panel_wattage", "num_panels", "inverter_make", "inverter_capacity",
+    "inverter_serial", "phase_type", "subsidy_eligible", "status", "stages", "documents",
+    "progress", "notes", "created_at", "updated_at"
+}
+
+def _prepare_client_supabase_payload(payload: dict) -> dict:
+    cleaned = {}
+    extra_onboarding = {}
+
+    panel_brand_val = payload.get("panel_brand") or payload.get("panel_make")
+    if panel_brand_val:
+        cleaned["panel_make"] = panel_brand_val
+        extra_onboarding["panel_brand"] = panel_brand_val
+        extra_onboarding["panel_make"] = panel_brand_val
+
+    inv_brand_val = payload.get("inverter_make") or payload.get("inverter_brand")
+    if inv_brand_val:
+        cleaned["inverter_make"] = inv_brand_val
+        extra_onboarding["inverter_brand"] = inv_brand_val
+        extra_onboarding["inverter_make"] = inv_brand_val
+
+    sec_no_val = payload.get("section_number") or payload.get("section_no")
+    if sec_no_val:
+        extra_onboarding["section_number"] = sec_no_val
+        extra_onboarding["section_no"] = sec_no_val
+
+    cat_val = payload.get("consumer_type") or payload.get("consumer_category") or payload.get("category")
+    if cat_val:
+        extra_onboarding["consumer_type"] = cat_val
+        extra_onboarding["consumer_category"] = cat_val
+        extra_onboarding["category"] = cat_val
+
+    sr_val = payload.get("inverter_serial") or payload.get("inverter_sr")
+    if sr_val:
+        cleaned["inverter_serial"] = sr_val
+        extra_onboarding["inverter_serial"] = sr_val
+        extra_onboarding["inverter_sr"] = sr_val
+
+    yr_val = payload.get("inverter_year") or payload.get("manufacturing_year")
+    if yr_val:
+        extra_onboarding["inverter_year"] = yr_val
+        extra_onboarding["manufacturing_year"] = yr_val
+
+    if "panel_technology" in payload and payload["panel_technology"]:
+        extra_onboarding["panel_technology"] = payload["panel_technology"]
+    if "inverter_model" in payload and payload["inverter_model"]:
+        extra_onboarding["inverter_model"] = payload["inverter_model"]
+    if "sanction_number" in payload and payload["sanction_number"]:
+        extra_onboarding["sanction_number"] = payload["sanction_number"]
+    if "aadhaar_name" in payload and payload["aadhaar_name"]:
+        extra_onboarding["aadhaar_name"] = payload["aadhaar_name"]
+    if "aadhaar_image" in payload and payload["aadhaar_image"]:
+        extra_onboarding["aadhaar_image"] = payload["aadhaar_image"]
+
+    for k, v in payload.items():
+        if k in VALID_CLIENT_COLUMNS:
+            cleaned[k] = v
+
+    stages_dict = dict(payload.get("stages") or {})
+    existing_ob = dict(stages_dict.get("onboarding_data") or {})
+    existing_ob.update(extra_onboarding)
+    stages_dict["onboarding_data"] = existing_ob
+    cleaned["stages"] = stages_dict
+
+    return cleaned
+
+def _enrich_client_doc(c: dict) -> dict:
+    if not isinstance(c, dict):
+        return c
+    stages = dict(c.get("stages") or {})
+    ob = dict(stages.get("onboarding_data") or {})
+
+    c["panel_brand"] = c.get("panel_brand") or c.get("panel_make") or ob.get("panel_brand") or ob.get("panel_make") or ""
+    c["panel_make"] = c.get("panel_make") or c["panel_brand"]
+    c["inverter_brand"] = c.get("inverter_brand") or c.get("inverter_make") or ob.get("inverter_brand") or ob.get("inverter_make") or ""
+    c["inverter_make"] = c.get("inverter_make") or c["inverter_brand"]
+    c["consumer_type"] = ob.get("consumer_type") or c.get("consumer_type") or ob.get("consumer_category") or ""
+    c["consumer_category"] = c["consumer_type"]
+    c["category"] = c["consumer_type"]
+    c["panel_technology"] = ob.get("panel_technology") or c.get("panel_technology") or ""
+    c["inverter_model"] = ob.get("inverter_model") or c.get("inverter_model") or ""
+    c["inverter_year"] = ob.get("inverter_year") or c.get("inverter_year") or ob.get("manufacturing_year") or ""
+    c["manufacturing_year"] = c["inverter_year"]
+    c["section_number"] = ob.get("section_number") or c.get("section_number") or ob.get("section_no") or ""
+    c["section_no"] = c["section_number"]
+    c["sanction_number"] = ob.get("sanction_number") or c.get("sanction_number") or ""
+    c["inverter_serial"] = c.get("inverter_serial") or ob.get("inverter_serial") or ob.get("inverter_sr") or ""
+    c["inverter_sr"] = c["inverter_serial"]
+    return c
+
 class CollectionAdapter:
     def __init__(self, table_name: str):
         self.table_name = table_name
@@ -893,6 +986,9 @@ class CollectionAdapter:
         if self.table_name == "products" and not _PRODUCTS_HAS_RATE:
             patch = {k: v for k, v in patch.items() if k != "rate"}
 
+        if self.table_name == "clients":
+            patch = _prepare_client_supabase_payload(patch)
+
         if not patch:
             return UpdateResult(1, 1)
 
@@ -901,42 +997,15 @@ class CollectionAdapter:
             builder = self._apply_filters(builder, filter)
             res = builder.execute()
         except Exception as e:
-            err_str = str(e)
-            if "PGRST204" in err_str or "Could not find the" in err_str:
-                logger.warning(f"Supabase table '{self.table_name}' missing schema column. Saving full update locally and retrying: {err_str}")
-                # Save full update payload locally so no onboarding data is lost
-                await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
-                # Strip unsupported columns iteratively
-                unsupported = set()
-                if "Could not find the '" in err_str:
-                    col = err_str.split("Could not find the '")[1].split("'")[0]
-                    unsupported.add(col)
-                if self.table_name == "products":
-                    unsupported.update({"high_value_goods", "serial_number_required", "opening_stock", "rate"})
-                patch_clean = {k: v for k, v in patch.items() if k not in unsupported}
-                if not patch_clean:
-                    return UpdateResult(1, 1)
-                try:
-                    builder = supabase.table(self.table_name).update(patch_clean)
-                    builder = self._apply_filters(builder, filter)
-                    res = builder.execute()
-                except Exception as e2:
-                    err_str2 = str(e2)
-                    if "PGRST204" in err_str2 or "Could not find the" in err_str2:
-                        if "Could not find the '" in err_str2:
-                            col2 = err_str2.split("Could not find the '")[1].split("'")[0]
-                            unsupported.add(col2)
-                        patch_clean2 = {k: v for k, v in patch.items() if k not in unsupported}
-                        if patch_clean2:
-                            try:
-                                builder = supabase.table(self.table_name).update(patch_clean2)
-                                builder = self._apply_filters(builder, filter)
-                                res = builder.execute()
-                            except Exception:
-                                pass
-                return UpdateResult(1, 1)
-            else:
-                raise e
+            logger.error(f"Supabase update failed for table '{self.table_name}': {e}")
+            raise e
+
+        try:
+            await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
+        except Exception:
+            pass
+
+        return UpdateResult(len(res.data) if res.data else 1, len(res.data) if res.data else 1)
 
         if not res.data and upsert:
             insert_doc = {}
@@ -3125,6 +3194,7 @@ async def get_client(client_id: str, user=Depends(get_current_user)):
         c = await db.clients.find_one({"sol_id": client_id}, {"_id": 0})
     if not c:
         raise HTTPException(status_code=404, detail="Not found")
+    c = _enrich_client_doc(c)
     c["high_value_assets"] = [a for a in _load_local_assets() if a.get("client_id") == client_id and a.get("company_id") == user["company_id"]]
     return c
 
@@ -8184,6 +8254,7 @@ async def get_client_data_detail(
     c["id"] = canonical_id
     c.pop("_id", None)
     c["client_code"] = c.get("sol_id")
+    c = _enrich_client_doc(c)
 
     client_ids = list({x for x in [client_id, canonical_id, doc_id, raw_mongo_id, c.get("sol_id")] if x})
     q = {"company_id": cid, "client_id": {"$in": client_ids}}
