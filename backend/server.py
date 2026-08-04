@@ -3905,7 +3905,7 @@ async def download_direct_document(payload: Dict[str, Any], user=Depends(get_cur
         media_type=media_type,
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
-            "Access-Control-Expose-Headers": "Content-Disposition"
+            "Access-Control-Expose-Headers": "Content-Disposition, Content-Type"
         }
     )
 

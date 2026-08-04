@@ -127,7 +127,11 @@ export default function DocumentTemplates() {
 
       const blob = response.data;
       const contentType = blob.type || response.headers?.["content-type"] || "";
-      const isDocx = contentType.includes("wordprocessingml") || contentType.includes("docx") || contentType.includes("document");
+      const disposition = response.headers?.["content-disposition"] || "";
+      const isDocx = contentType.includes("wordprocessingml") || 
+                     contentType.includes("docx") || 
+                     contentType.includes("document") || 
+                     disposition.toLowerCase().includes(".docx");
       const ext = isDocx ? ".docx" : ".pdf";
 
       const url = window.URL.createObjectURL(blob);
