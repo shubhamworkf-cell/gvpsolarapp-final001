@@ -4110,9 +4110,9 @@ async def list_tasks(user=Depends(get_current_user), client_id: Optional[str] = 
 
 @api_router.patch("/tasks/{task_id}")
 async def update_task(task_id: str, data: TaskUpdate, user=Depends(get_current_user)):
-    user_cid = user.get("company_id") if isinstance(user, dict) else "COMP-001"
-    user_id_val = user.get("id") if isinstance(user, dict) else "usr_admin"
-    user_name_val = user.get("name") if isinstance(user, dict) else "User"
+    user_cid = (user.get("company_id") if isinstance(user, dict) else None) or "COMP-001"
+    user_id_val = (user.get("id") if isinstance(user, dict) else None) or "usr_admin"
+    user_name_val = (user.get("name") if isinstance(user, dict) else None) or "User"
 
     existing_task = await db.tasks.find_one({"id": task_id, "company_id": user_cid})
     if not existing_task:
