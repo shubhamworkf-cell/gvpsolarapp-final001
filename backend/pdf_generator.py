@@ -639,7 +639,7 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     
     category = (client.get('consumer_type') or client.get('category') or '').strip()
 
-    sanction_no = str(client.get('sanction_number') or client.get('sanction_no') or '').strip()
+    sanction_no = str(client.get('sanction_number') or client.get('sanction_no') or client.get('section_number') or '').strip()
     sol_kw = str(client.get('system_kw') or client.get('capacity') or '').strip()
     sol_kw_str = f"{sol_kw} KW" if sol_kw else ""
     sol_wp = str(client.get('panel_wattage') or '').strip()

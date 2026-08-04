@@ -279,9 +279,10 @@ export default function DocumentTemplates() {
                     </div>
                     <div><span className="text-slate-500">Name:</span> <span className="font-medium text-slate-900">{activeClient?.full_name || "—"}</span></div>
                     <div><span className="text-slate-500">Mobile:</span> <span className="font-medium text-slate-900">{activeClient?.mobile || "—"}</span></div>
+                    <div><span className="text-slate-500">Consumer No:</span> <span className="font-medium text-slate-900">{activeClient?.consumer_number || "—"}</span></div>
+                    <div><span className="text-slate-500">Section Number:</span> <span className="font-medium text-slate-900">{activeClient?.sanction_number || activeClient?.sanction_no || activeClient?.section_number || "—"}</span></div>
                     <div><span className="text-slate-500">City:</span> <span className="font-medium text-slate-900">{activeClient?.city || "—"}</span></div>
                     <div><span className="text-slate-500">Category:</span> <span className="font-medium text-slate-900">{activeClient?.consumer_type || "—"}</span></div>
-                    <div><span className="text-slate-500">Subsidy:</span> <span className="font-medium text-slate-900">{activeClient?.subsidy_eligible ? "Eligible" : "Standard"}</span></div>
                     <div><span className="text-slate-500">Aadhaar:</span> <span className="font-medium text-slate-900">{activeClient?.aadhaar || activeClient?.aadhaar_number || "—"}</span></div>
                   </div>
 
