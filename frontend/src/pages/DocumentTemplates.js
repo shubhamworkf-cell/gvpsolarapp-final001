@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search, FileText, Download, User, Zap, Building2, CheckCircle2, ShieldCheck, FileCheck2, Layers } from "lucide-react";
 import { toast } from "sonner";
+import { invalidateAllClientQueries } from "@/lib/queryKeys";
 
 export default function DocumentTemplates() {
   const queryClient = useQueryClient();
@@ -42,7 +43,9 @@ export default function DocumentTemplates() {
 
       return [];
     },
-    staleTime: 30000,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
   // Automatically pre-select first client if none selected
@@ -71,6 +74,9 @@ export default function DocumentTemplates() {
       return null;
     },
     enabled: !!selectedClientId,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
   // 3. Fetch Company Details
@@ -95,11 +101,13 @@ export default function DocumentTemplates() {
     return name.includes(q) || consumer.includes(q) || mobile.includes(q) || solId.includes(q) || city.includes(q);
   });
 
-  // Selected client object (combining detail response and list item)
+  // Selected client object (combining detail response and list item for instant single source of truth)
   const activeClientInList = clientsList.find(
     (c) => c.id === selectedClientId || c.sol_id === selectedClientId || c._id === selectedClientId
   );
-  const activeClient = clientDetailData?.client || activeClientInList || null;
+  const activeClient = (activeClientInList || clientDetailData?.client || clientDetailData)
+    ? { ...(activeClientInList || {}), ...(clientDetailData || {}), ...(clientDetailData?.client || {}) }
+    : null;
   const company = companyDoc || {};
 
   // Handle direct PDF generation & immediate download
@@ -327,9 +335,7 @@ export default function DocumentTemplates() {
                         if (!activeClient?.id) return;
                         try {
                           await api.patch(`/clients/${activeClient.id}`, { panel_brand: val, panel_make: val });
-                          queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
-                          queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", activeClient.id] });
-                          queryClient.invalidateQueries({ queryKey: ["client-data"] });
+                          invalidateAllClientQueries(queryClient, activeClient.id);
                           toast.success(`Panel Brand updated to ${val || "blank"}`);
                         } catch (err) {
                           toast.error(formatApiError(err));
@@ -353,9 +359,7 @@ export default function DocumentTemplates() {
                         if (!activeClient?.id) return;
                         try {
                           await api.patch(`/clients/${activeClient.id}`, { panel_technology: val });
-                          queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
-                          queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", activeClient.id] });
-                          queryClient.invalidateQueries({ queryKey: ["client-data"] });
+                          invalidateAllClientQueries(queryClient, activeClient.id);
                           toast.success(`Panel Technology updated to ${val || "blank"}`);
                         } catch (err) {
                           toast.error(formatApiError(err));
@@ -379,9 +383,7 @@ export default function DocumentTemplates() {
                         if (!activeClient?.id) return;
                         try {
                           await api.patch(`/clients/${activeClient.id}`, { consumer_type: val });
-                          queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
-                          queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", activeClient.id] });
-                          queryClient.invalidateQueries({ queryKey: ["client-data"] });
+                          invalidateAllClientQueries(queryClient, activeClient.id);
                           toast.success(`Consumer Category updated to ${val || "blank"}`);
                         } catch (err) {
                           toast.error(formatApiError(err));

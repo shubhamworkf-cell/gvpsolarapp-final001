@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, fileUrl } from "@/lib/api";
 import { useClientDetail } from "@/hooks/useClients";
-import { queryKeys } from "@/lib/queryKeys";
+import { queryKeys, invalidateAllClientQueries } from "@/lib/queryKeys";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,11 +89,8 @@ export default function ClientDetail() {
   }, [isLoading, client, nav]);
 
   const invalidate = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["clients"] });
-    queryClient.invalidateQueries({ queryKey: ["client-data"] });
-    queryClient.invalidateQueries({ queryKey: ["projects"] });
-    queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-  }, [queryClient]);
+    invalidateAllClientQueries(queryClient, id);
+  }, [queryClient, id]);
 
   const currentStage = React.useMemo(() => {
     if (!client?.stages) return "Onboarding";

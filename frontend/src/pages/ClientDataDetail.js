@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, fileUrl } from "@/lib/api";
 import { useClientDataDetail, useLedger } from "@/hooks/useClientDataHooks";
 import { useDeleteClient } from "@/hooks/useClients";
+import { invalidateAllClientQueries } from "@/lib/queryKeys";
 import { usePermission } from "@/lib/permissions";
 import { useEmployeeList } from "@/hooks/useTeam";
 
@@ -209,13 +210,7 @@ export default function ClientDataDetail() {
       };
       // Use PATCH to avoid overwriting unrelated onboarding fields
       await api.patch(`/clients/${id}`, payload);
-      queryClient.invalidateQueries({ queryKey: ["client-data"] });
-      queryClient.invalidateQueries({ queryKey: ["client-data", id] });
-      queryClient.invalidateQueries({ queryKey: ["clients"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
-      queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", id] });
+      invalidateAllClientQueries(queryClient, id);
       toast.success("Client details updated successfully");
       setEditOpen(false);
       setEditForm(null);

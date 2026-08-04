@@ -69,3 +69,18 @@ export const queryKeys = {
   },
 };
 
+export const invalidateAllClientQueries = (queryClient, clientId) => {
+  if (!queryClient) return;
+  queryClient.invalidateQueries({ queryKey: ["clients"] });
+  queryClient.invalidateQueries({ queryKey: ["client-data"] });
+  queryClient.invalidateQueries({ queryKey: ["document-engine-clients-list"] });
+  queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine"] });
+  if (clientId) {
+    queryClient.invalidateQueries({ queryKey: ["client-data", clientId] });
+    queryClient.invalidateQueries({ queryKey: ["client-detail-doc-engine", clientId] });
+    queryClient.invalidateQueries({ queryKey: ["clients", clientId] });
+  }
+  queryClient.invalidateQueries({ queryKey: ["projects"] });
+  queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+};
+
