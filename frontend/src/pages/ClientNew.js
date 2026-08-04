@@ -47,7 +47,6 @@ export default function ClientNew() {
     const payload = { ...form, system_kw: Number(form.system_kw) || 0, panel_wattage: Number(form.panel_wattage) || 0, num_panels: Number(form.num_panels) || 0 };
     createClient.mutate(payload, {
       onSuccess: (data) => {
-        invalidateAllClientQueries(queryClient, data?.id);
         toast.success(`Client created: ${data.sol_id}`);
         nav(`/clients/${data.id}`);
       }

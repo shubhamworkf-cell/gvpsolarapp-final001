@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError, fileUrl } from "@/lib/api";
 import { useClientDataDetail, useLedger } from "@/hooks/useClientDataHooks";
 import { useDeleteClient } from "@/hooks/useClients";
-import { invalidateAllClientQueries } from "@/lib/queryKeys";
+import { queryKeys, invalidateAllClientQueries } from "@/lib/queryKeys";
 import { usePermission } from "@/lib/permissions";
 import { useEmployeeList } from "@/hooks/useTeam";
 
