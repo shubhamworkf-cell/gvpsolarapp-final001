@@ -1,9 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api, { formatApiError } from "@/lib/api";
-import { queryKeys } from "@/lib/queryKeys";
+import { queryKeys, invalidateAllClientQueries } from "@/lib/queryKeys";
 import { toast } from "sonner";
 
-const STALE_TIME = Infinity; // Lives for the entire session — invalidated only on mutation
+const STALE_TIME = 0; // Fresh fetching on navigation and mutation
 
 // --- Company -----------------------------------------------------------------
 
@@ -14,7 +14,7 @@ export function useCompany() {
       const { data } = await api.get("/company");
       return data;
     },
-    staleTime: Infinity,
+    staleTime: 300000,
     gcTime: Infinity,
   });
 }
@@ -30,7 +30,8 @@ export function useClientList() {
       return data || [];
     },
     staleTime: STALE_TIME,
-    gcTime: Infinity,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -42,7 +43,6 @@ export function useClientStats() {
       return data;
     },
     staleTime: STALE_TIME,
-    gcTime: Infinity,
   });
 }
 
@@ -55,7 +55,8 @@ export function useClientDetail(clientId) {
     },
     enabled: !!clientId,
     staleTime: STALE_TIME,
-    gcTime: Infinity,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -66,13 +67,7 @@ export function useCreateClient() {
   return useMutation({
     mutationFn: (payload) => api.post("/clients", payload).then((r) => r.data),
     onSuccess: (newClient) => {
-      // Direct cache update: prepend the new client to the local cached list
-      queryClient.setQueryData(queryKeys.clients.list(), (old) => {
-        if (!Array.isArray(old)) return [newClient];
-        return [newClient, ...old];
-      });
-      queryClient.invalidateQueries({ queryKey: queryKeys.clients.stats() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.stats() });
+      invalidateAllClientQueries(queryClient, newClient?.id);
     },
     onError: (err) => toast.error(formatApiError(err)),
   });
@@ -95,8 +90,7 @@ export function useUpdateClient(clientId) {
       toast.error(formatApiError(err));
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.clients.all() });
+      invalidateAllClientQueries(queryClient, clientId);
     },
   });
 }

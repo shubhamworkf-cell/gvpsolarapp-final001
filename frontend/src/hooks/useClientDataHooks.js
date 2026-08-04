@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { queryKeys } from "@/lib/queryKeys";
 
-const STALE_TIME = 3 * 60 * 1000;
+const STALE_TIME = 0;
 
 export function useClientDataList(filters = {}) {
   return useQuery({
@@ -14,6 +14,8 @@ export function useClientDataList(filters = {}) {
       return data || [];
     },
     staleTime: STALE_TIME,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
     placeholderData: (prev) => prev,
   });
 }
@@ -38,6 +40,8 @@ export function useClientDataDetail(clientId, tab = "info", options = {}) {
     },
     enabled: !!clientId && (options.enabled !== false),
     staleTime: STALE_TIME,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
     ...options
   });
 }
