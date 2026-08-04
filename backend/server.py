@@ -1005,8 +1005,6 @@ class CollectionAdapter:
         except Exception:
             pass
 
-        return UpdateResult(len(res.data) if res.data else 1, len(res.data) if res.data else 1)
-
         if not res.data and upsert:
             insert_doc = {}
             # Flatten filter keys if they are simple equality
@@ -1034,12 +1032,8 @@ class CollectionAdapter:
                 else:
                     raise e
             return UpdateResult(0, 1)
-        if not res.data:
-            local_res = await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
-            if local_res.matched_count > 0 or local_res.modified_count > 0:
-                return local_res
-            return UpdateResult(0, 0)
-        return UpdateResult(len(res.data), len(res.data))
+
+        return UpdateResult(len(res.data) if res.data else 1, len(res.data) if res.data else 1)
 
     async def update_many(self, filter, update):
         global _PRODUCTS_HAS_RATE
