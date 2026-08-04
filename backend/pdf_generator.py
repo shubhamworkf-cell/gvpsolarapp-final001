@@ -637,25 +637,38 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     pincode = str(client.get('pincode') or '').strip()
     site_addr = f"{client_addr}{', ' + city if city else ''}{' - ' + pincode if pincode else ''}".strip(', -')
     
-    category = (client.get('consumer_type') or client.get('category') or '').strip()
+    category = (client.get('consumer_type') or client.get('consumer_category') or client.get('category') or '').strip()
+    section_no = str(client.get('section_number') or client.get('section_no') or '').strip()
 
-    sanction_no = str(client.get('sanction_number') or client.get('sanction_no') or client.get('section_number') or '').strip()
     sol_kw = str(client.get('system_kw') or client.get('capacity') or '').strip()
     sol_kw_str = f"{sol_kw} KW" if sol_kw else ""
-    sol_wp = str(client.get('panel_wattage') or '').strip()
+    sol_wp = str(client.get('panel_wattage') or client.get('panel_wp') or '').strip()
     sol_wp_str = f"{sol_wp} WP" if sol_wp else ""
-    num_panels = str(client.get('num_panels') or '').strip()
+    num_panels = str(client.get('num_panels') or client.get('panel_quantity') or '').strip()
     num_panels_str = f"{num_panels} NOS" if num_panels else ""
     panel_make = (client.get('panel_brand') or client.get('panel_make') or '').strip()
-    panel_tech = (client.get('panel_technology') or '').strip()
-    sol_wp_tech_str = f"{sol_wp_str} {panel_tech}".strip() if sol_wp_str else ""
+    panel_tech = (client.get('panel_technology') or client.get('panel_tech') or '').strip()
+
+    if sol_wp_str and panel_tech:
+        sol_wp_tech_str = f"{sol_wp_str} / {panel_tech}"
+    elif sol_wp_str:
+        sol_wp_tech_str = sol_wp_str
+    else:
+        sol_wp_tech_str = panel_tech
+
     almm_model = str(client.get('almm_model_number') or sol_wp_tech_str).strip()
 
-    inverter_make = (client.get('inverter_make') or '').strip()
+    inverter_brand = (client.get('inverter_brand') or client.get('inverter_make') or '').strip()
+    inverter_model = (client.get('inverter_model') or '').strip()
+    if inverter_brand and inverter_model and inverter_model.lower() not in inverter_brand.lower():
+        inverter_make = f"{inverter_brand} {inverter_model}"
+    else:
+        inverter_make = inverter_brand or inverter_model
+
     inverter_kw = str(client.get('inverter_capacity') or '').strip()
     inverter_kw_str = f"{inverter_kw}" if "KW" in inverter_kw.upper() else (f"{inverter_kw} KW" if inverter_kw else "")
     inverter_sr = str(client.get('inverter_serial') or client.get('inverter_sr') or '').strip()
-    inverter_year = str(client.get('inverter_year') or client.get('manufacturing_year') or '').strip()
+    inverter_year = str(client.get('inverter_year') or client.get('manufacturing_year') or client.get('year_of_manufacture') or '').strip()
 
     # --- PAGE 1: 3-Column Inspection Table ---
     for item in _build_header():
@@ -676,13 +689,13 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
         [cell_obs("2"), cell_lbl("Consumer number"), cell_val(consumer_num)],
         [cell_obs("3"), cell_lbl("Site/Location with Complete Address"), cell_val(site_addr)],
         [cell_obs("4"), cell_lbl("Category: Govt/Private Sector"), cell_val(category)],
-        [cell_obs("5"), cell_lbl("Sanction number"), cell_val(sanction_no)],
+        [cell_obs("5"), cell_lbl("Section number"), cell_val(section_no)],
         [cell_obs("6"), cell_lbl("Sanctioned Capacity of solar PV system (KW) Installed"), cell_val(sol_kw_str)],
         ["", cell_lbl("Capacity of solar PV system (KW)"), cell_val(sol_kw_str)],
         [cell_subhdr("Specification of the Modules"), "", ""],
         [cell_obs("7"), cell_lbl("Make & Type of modules"), cell_val(panel_make)],
         ["", cell_lbl("ALMM Model Number"), cell_val(almm_model)],
-        ["", cell_lbl("Wattage per module"), cell_val(sol_wp_tech_str if sol_wp_tech_str else sol_wp_str)],
+        ["", cell_lbl("Wattage per module"), cell_val(sol_wp_str)],
         ["", cell_lbl("No. of Module"), cell_val(num_panels_str)],
         ["", cell_lbl("Total Capacity (KWP)"), cell_val(sol_kw_str)],
         ["", cell_lbl("Warrantee Details (Product + Performance)"), cell_val("12+15 YEARS" if sol_kw else "")],
