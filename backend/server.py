@@ -825,19 +825,21 @@ class CollectionAdapter:
                 return InsertOneResult(document.get("id"))
             except Exception as e:
                 err_str = str(e)
-                if self.table_name == "products" and "PGRST204" in err_str:
-                    changed = False
-                    if "rate" in err_str and _PRODUCTS_HAS_RATE:
-                        _PRODUCTS_HAS_RATE = False; changed = True
-                    if "opening_stock" in err_str and _PRODUCTS_HAS_OPENING_STOCK:
-                        _PRODUCTS_HAS_OPENING_STOCK = False; changed = True
-                    if "high_value_goods" in err_str and _PRODUCTS_HAS_HV:
-                        _PRODUCTS_HAS_HV = False; changed = True
-                    if "serial_number_required" in err_str and _PRODUCTS_HAS_SN_REQ:
-                        _PRODUCTS_HAS_SN_REQ = False; changed = True
-                    if changed:
-                        document = _clean_products_doc(document)
-                        continue
+                if "PGRST204" in err_str or "Could not find the" in err_str:
+                    logger.warning(f"Supabase table '{self.table_name}' missing schema column. Saving full insert locally: {err_str}")
+                    await LocalFileCollection(self.table_name).insert_one(document)
+                    unsupported = set()
+                    if "Could not find the '" in err_str:
+                        col = err_str.split("Could not find the '")[1].split("'")[0]
+                        unsupported.add(col)
+                    if self.table_name == "products":
+                        unsupported.update({"high_value_goods", "serial_number_required", "opening_stock", "rate"})
+                    doc_clean = {k: v for k, v in document.items() if k not in unsupported}
+                    try:
+                        supabase.table(self.table_name).insert(doc_clean, returning="minimal").execute()
+                    except Exception as e2:
+                        logger.warning(f"Fallback insert_one for {self.table_name}: {e2}")
+                    return InsertOneResult(document.get("id"))
                 if "42501" in err_str or "row-level security" in err_str.lower() or "unauthorized" in err_str.lower() or "401" in err_str:
                     return await LocalFileCollection(self.table_name).insert_one(document)
                 raise e
@@ -899,29 +901,40 @@ class CollectionAdapter:
             builder = self._apply_filters(builder, filter)
             res = builder.execute()
         except Exception as e:
-            if self.table_name == "products":
-                err_str = str(e)
-                if "PGRST204" in err_str or any(col in err_str.lower() for col in ["rate", "opening_stock", "high_value_goods", "serial_number_required"]):
-                    logger.warning(f"Supabase products table missing columns. Handling locally: {err_str}")
-                    p_name = patch.get("name") or (filter.get("name") if isinstance(filter, dict) else None)
-                    if p_name:
-                        if "high_value_goods" in patch:
-                            _save_local_high_value_product(p_name, bool(patch["high_value_goods"]))
-                        if "rate" in patch:
-                            _save_local_rate(p_name, patch["rate"])
-                    unsupported = {"high_value_goods", "serial_number_required", "opening_stock", "rate"}
-                    patch_copy = {k: v for k, v in patch.items() if k not in unsupported}
-                    if not patch_copy:
-                        return UpdateResult(1, 1)
-                    try:
-                        builder = supabase.table(self.table_name).update(patch_copy)
-                        builder = self._apply_filters(builder, filter)
-                        res = builder.execute()
-                    except Exception as sub_e:
-                        logger.warning(f"Fallback update for products: {sub_e}")
-                        return UpdateResult(1, 1)
-                else:
-                    raise e
+            err_str = str(e)
+            if "PGRST204" in err_str or "Could not find the" in err_str:
+                logger.warning(f"Supabase table '{self.table_name}' missing schema column. Saving full update locally and retrying: {err_str}")
+                # Save full update payload locally so no onboarding data is lost
+                await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
+                # Strip unsupported columns iteratively
+                unsupported = set()
+                if "Could not find the '" in err_str:
+                    col = err_str.split("Could not find the '")[1].split("'")[0]
+                    unsupported.add(col)
+                if self.table_name == "products":
+                    unsupported.update({"high_value_goods", "serial_number_required", "opening_stock", "rate"})
+                patch_clean = {k: v for k, v in patch.items() if k not in unsupported}
+                if not patch_clean:
+                    return UpdateResult(1, 1)
+                try:
+                    builder = supabase.table(self.table_name).update(patch_clean)
+                    builder = self._apply_filters(builder, filter)
+                    res = builder.execute()
+                except Exception as e2:
+                    err_str2 = str(e2)
+                    if "PGRST204" in err_str2 or "Could not find the" in err_str2:
+                        if "Could not find the '" in err_str2:
+                            col2 = err_str2.split("Could not find the '")[1].split("'")[0]
+                            unsupported.add(col2)
+                        patch_clean2 = {k: v for k, v in patch.items() if k not in unsupported}
+                        if patch_clean2:
+                            try:
+                                builder = supabase.table(self.table_name).update(patch_clean2)
+                                builder = self._apply_filters(builder, filter)
+                                res = builder.execute()
+                            except Exception:
+                                pass
+                return UpdateResult(1, 1)
             else:
                 raise e
 
@@ -3153,6 +3166,8 @@ async def patch_client(client_id: str, payload: Dict[str, Any], user=Depends(get
         if res.matched_count == 0:
             raise HTTPException(status_code=404, detail="Client not found")
     client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
+    if not client_doc:
+        client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
     return client_doc
 
 @api_router.patch("/clients/{client_id}/stages")
