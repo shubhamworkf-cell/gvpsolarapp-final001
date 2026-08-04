@@ -264,14 +264,15 @@ export default function DocumentTemplates() {
                 </CardHeader>
 
                 <CardContent className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                  {/* Client Info */}
+                  {/* Client & Location Details */}
                   <div className="p-3 bg-slate-50 rounded-lg space-y-1.5 border border-slate-100">
                     <div className="font-semibold text-slate-700 text-xs border-b pb-1 flex items-center gap-1">
-                      <User className="w-3.5 h-3.5 text-blue-600" /> Client Details
+                      <User className="w-3.5 h-3.5 text-blue-600" /> Client & Location
                     </div>
                     <div><span className="text-slate-500">Name:</span> <span className="font-medium text-slate-900">{activeClient?.full_name || "—"}</span></div>
                     <div><span className="text-slate-500">Mobile:</span> <span className="font-medium text-slate-900">{activeClient?.mobile || "—"}</span></div>
-                    <div><span className="text-slate-500">Consumer Type:</span> <span className="font-medium text-slate-900">{activeClient?.consumer_type || "—"}</span></div>
+                    <div><span className="text-slate-500">City:</span> <span className="font-medium text-slate-900">{activeClient?.city || "—"}</span></div>
+                    <div><span className="text-slate-500">Category:</span> <span className="font-medium text-slate-900">{activeClient?.consumer_type || "—"}</span></div>
                     <div><span className="text-slate-500">Subsidy:</span> <span className="font-medium text-slate-900">{activeClient?.subsidy_eligible ? "Eligible" : "Standard"}</span></div>
                     <div><span className="text-slate-500">Aadhaar:</span> <span className="font-medium text-slate-900">{activeClient?.aadhaar || activeClient?.aadhaar_number || "—"}</span></div>
                   </div>
@@ -281,11 +282,13 @@ export default function DocumentTemplates() {
                     <div className="font-semibold text-slate-700 text-xs border-b pb-1 flex items-center gap-1">
                       <Zap className="w-3.5 h-3.5 text-amber-600" /> Onboarding & System
                     </div>
-                    <div><span className="text-slate-500">Capacity:</span> <span className="font-medium text-slate-900">{activeClient?.system_kw || "0"} kW {activeClient?.panel_wattage ? `(${activeClient.panel_wattage}Wp)` : ""}</span></div>
+                    <div><span className="text-slate-500">Capacity:</span> <span className="font-medium text-slate-900">{activeClient?.system_kw ? `${activeClient.system_kw} kW` : "—"}</span></div>
                     <div><span className="text-slate-500">Phase:</span> <span className="font-medium text-slate-900">{activeClient?.phase_type || "—"}</span></div>
-                    <div><span className="text-slate-500">Panels:</span> <span className="font-medium text-slate-900">{activeClient?.panel_brand || activeClient?.panel_make || "—"} ({activeClient?.num_panels || 0} Nos)</span></div>
-                    <div><span className="text-slate-500">Inverter:</span> <span className="font-medium text-slate-900">{activeClient?.inverter_make || "—"} ({activeClient?.inverter_capacity || "—"})</span></div>
-                    <div><span className="text-slate-500">Inv Serial:</span> <span className="font-medium text-slate-900">{activeClient?.inverter_serial || "—"}</span></div>
+                    <div><span className="text-slate-500">Panel Brand:</span> <span className="font-medium text-slate-900">{activeClient?.panel_brand || activeClient?.panel_make || "—"}</span></div>
+                    <div><span className="text-slate-500">Panel Tech:</span> <span className="font-medium text-slate-900">{activeClient?.panel_technology || "—"}</span></div>
+                    <div><span className="text-slate-500">Panels:</span> <span className="font-medium text-slate-900">{activeClient?.panel_wattage ? `${activeClient.panel_wattage}Wp` : "—"} ({activeClient?.num_panels ? `${activeClient.num_panels} Nos` : "—"})</span></div>
+                    <div><span className="text-slate-500">Inverter Brand/Model:</span> <span className="font-medium text-slate-900">{activeClient?.inverter_make || "—"} {activeClient?.inverter_model || ""} ({activeClient?.inverter_capacity || "—"})</span></div>
+                    <div><span className="text-slate-500">Inv Serial / Year:</span> <span className="font-medium text-slate-900">{activeClient?.inverter_serial || "—"} {activeClient?.inverter_year ? `· ${activeClient.inverter_year}` : ""}</span></div>
                   </div>
 
                   {/* Company Details */}
@@ -293,11 +296,11 @@ export default function DocumentTemplates() {
                     <div className="font-semibold text-slate-700 text-xs border-b pb-1 flex items-center gap-1">
                       <Building2 className="w-3.5 h-3.5 text-purple-600" /> Company Details
                     </div>
-                    <div><span className="text-slate-500">Vendor:</span> <span className="font-medium text-slate-900">{company.company_name || "GVP SOLAR ENERGY"}</span></div>
-                    <div><span className="text-slate-500">GSTIN:</span> <span className="font-medium text-slate-900">{company.gst_number || company.gst || "27AAAAA0000A1Z5"}</span></div>
+                    <div><span className="text-slate-500">Vendor:</span> <span className="font-medium text-slate-900">{company.company_name || "—"}</span></div>
+                    <div><span className="text-slate-500">GSTIN:</span> <span className="font-medium text-slate-900">{company.gst_number || company.gst || "—"}</span></div>
                     <div><span className="text-slate-500">Phone:</span> <span className="font-medium text-slate-900">{company.mobile || company.phone || "—"}</span></div>
                     <div><span className="text-slate-500">Email:</span> <span className="font-medium text-slate-900 truncate block">{company.email || "—"}</span></div>
-                    <div><span className="text-slate-500">Address:</span> <span className="font-medium text-slate-900 truncate block">{company.address || "Office Address"}</span></div>
+                    <div><span className="text-slate-500">Address:</span> <span className="font-medium text-slate-900 truncate block">{company.address || "—"}</span></div>
                   </div>
                 </CardContent>
               </Card>

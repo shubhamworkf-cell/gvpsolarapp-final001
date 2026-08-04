@@ -979,17 +979,17 @@ def generate_sldr_pdf(client: dict, company: dict) -> bytes:
     )
     story = []
 
-    client_name = (client.get('full_name') or client.get('name') or 'CONSUMER NAME').upper()
-    consumer_num = client.get('consumer_number') or '—'
-    bu_num = client.get('bu_number') or client.get('billing_unit') or '4710'
-    sol_kw = str(client.get('system_kw') or '5')
-    sol_wp = str(client.get('panel_wattage') or '540')
-    num_panels = str(client.get('num_panels') or '10')
-    panel_make = (client.get('panel_make') or 'GVP SOLAR').upper()
-    inverter_make = (client.get('inverter_make') or 'GROWATT').upper()
-    inverter_kw = str(client.get('inverter_capacity') or f"{sol_kw} KW").upper()
+    client_name = (client.get('full_name') or client.get('name') or '').upper()
+    consumer_num = client.get('consumer_number') or ''
+    bu_num = client.get('bu_number') or client.get('billing_unit') or ''
+    sol_kw = str(client.get('system_kw') or '')
+    sol_wp = str(client.get('panel_wattage') or '')
+    num_panels = str(client.get('num_panels') or '')
+    panel_make = (client.get('panel_brand') or client.get('panel_make') or '').upper()
+    inverter_make = (client.get('inverter_make') or '').upper()
+    inverter_kw = str(client.get('inverter_capacity') or (f"{sol_kw} KW" if sol_kw else "")).upper()
 
-    company_name = (company.get('company_name') or 'GVP SOLAR ENERGY').upper()
+    company_name = (company.get('company_name') or '').upper()
 
     STYLE_SLDR_TITLE = ParagraphStyle('sldr_t', parent=styles['Normal'], fontSize=15, fontName='Helvetica-Bold', alignment=1, spaceAfter=8, textColor=colors.HexColor('#0f172a'))
     STYLE_SLDR_META = ParagraphStyle('sldr_m', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', leading=15, textColor=colors.HexColor('#0f172a'))
@@ -1109,23 +1109,23 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     story = []
 
     # Dynamic Data Extraction
-    client_name = (client.get("full_name") or client.get("name") or "CLIENT").strip()
-    consumer_no = str(client.get("consumer_number") or "—").strip()
-    client_addr = (client.get("address") or "—").strip()
-    city = (client.get("city") or "ICHALKARANJI").strip()
+    client_name = (client.get("full_name") or client.get("name") or "").strip()
+    consumer_no = str(client.get("consumer_number") or "").strip()
+    client_addr = (client.get("address") or "").strip()
+    city = (client.get("city") or "").strip()
     pincode = str(client.get("pincode") or "").strip()
-    full_address = f"{client_addr}, {city} {pincode}".strip(", ")
+    full_address = f"{client_addr}{', ' + city if city else ''}{' - ' + pincode if pincode else ''}".strip(", -")
     
-    system_kw = str(client.get("system_kw") or client.get("capacity") or "8").strip()
+    system_kw = str(client.get("system_kw") or client.get("capacity") or "").strip()
     
     date_str = client.get("installation_date") or client.get("created_at") or datetime.now().strftime("%d/%m/%Y")
     if len(date_str) > 10:
         date_str = date_str[:10]
         
-    company_name = company.get("company_name") or "GVP SOLAR ENERGY"
-    bu_no = client.get("bu_number") or "BU-4711"
-    sub_div = client.get("sub_division") or "ICHALKARANJI B S/DN."
-    division = client.get("division") or "Dist KOLHAPUR"
+    company_name = company.get("company_name") or ""
+    bu_no = client.get("bu_number") or ""
+    sub_div = client.get("sub_division") or ""
+    division = client.get("division") or ""
 
     # Define Styles (Refined font sizing & spacing for exact 5-page layout with compact vertical gaps)
     style_h1 = ParagraphStyle('NMA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=17, alignment=1, spaceBefore=4, spaceAfter=3)
@@ -1141,7 +1141,7 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     story.append(Spacer(1, 0.4 * cm))
 
     preamble_p1 = (
-        f"This Agreement is made and entered into at (location) <b>ICHALKARANJI</b> on this "
+        f"This Agreement is made and entered into at (location) <b>{city}</b> on this "
         f"<b>(date {date_str})</b> between the Eligible Consumer <b>{client_name}</b> "
         f"having premises at <b>{full_address}</b> and Consumer No <b>{consumer_no}</b> "
         f"as the first Party<br/>"
@@ -1411,28 +1411,28 @@ def generate_vendor_agreement_pdf(client: dict, company: dict) -> bytes:
     story = []
 
     # Dynamic Data Extraction
-    client_name = (client.get("full_name") or client.get("name") or "CLIENT").strip()
-    consumer_no = str(client.get("consumer_number") or "—").strip()
-    client_addr = (client.get("address") or "—").strip()
-    city = (client.get("city") or "ICHALKARANJI").strip()
+    client_name = (client.get("full_name") or client.get("name") or "").strip()
+    consumer_no = str(client.get("consumer_number") or "").strip()
+    client_addr = (client.get("address") or "").strip()
+    city = (client.get("city") or "").strip()
     pincode = str(client.get("pincode") or "").strip()
-    full_address = f"{client_addr}, {city} {pincode}".strip(", ")
+    full_address = f"{client_addr}{', ' + city if city else ''}{' - ' + pincode if pincode else ''}".strip(", -")
     
-    system_kw = str(client.get("system_kw") or client.get("capacity") or "3.3").strip()
-    panel_make = (client.get("panel_make") or "INA").strip()
-    panel_wattage = str(client.get("panel_wattage") or "545").strip()
-    inverter_make = (client.get("inverter_make") or "UTL").strip()
-    inverter_kw = str(client.get("inverter_capacity") or client.get("system_kw") or "4.0").strip()
-    total_cost = str(client.get("total_cost") or client.get("quotation_amount") or "200000").strip()
+    system_kw = str(client.get("system_kw") or client.get("capacity") or "").strip()
+    panel_make = (client.get("panel_brand") or client.get("panel_make") or "").strip()
+    panel_wattage = str(client.get("panel_wattage") or "").strip()
+    inverter_make = (client.get("inverter_make") or "").strip()
+    inverter_kw = str(client.get("inverter_capacity") or client.get("system_kw") or "").strip()
+    total_cost = str(client.get("total_cost") or client.get("quotation_amount") or "").strip()
     
     date_obj = datetime.now()
     day_str = date_obj.strftime("%d")
     month_str = date_obj.strftime("%m")
     year_str = date_obj.strftime("%Y")
 
-    company_name = company.get("company_name") or "GVP SOLAR ENERGY"
-    company_address = company.get("address") or "SHOP NO 1-2, BUILDING NO 1, KAPAD MARKET, ICHALKARANJI"
-    company_pincode = company.get("pincode") or "416115"
+    company_name = company.get("company_name") or ""
+    company_address = company.get("address") or ""
+    company_pincode = company.get("pincode") or ""
 
     # Define Styles
     style_h1 = ParagraphStyle('VA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=17, alignment=1, spaceBefore=4, spaceAfter=3)
@@ -1629,7 +1629,7 @@ def generate(doc_type: str, client: dict, company: dict) -> bytes:
         "completion_report": "FINAL SYSTEM COMPLETION REPORT",
     }
     story.append(Paragraph(title_map.get(doc_type_clean, doc_type_clean.upper()), H2))
-    story.append(Paragraph(f"Document No.: <b>{client.get('sol_id','SOL-')}-{doc_type_clean.upper()}</b> &nbsp;&nbsp; Date: <b>{datetime.now(timezone.utc).strftime('%d %b %Y')}</b>", SMALL))
+    story.append(Paragraph(f"Document No.: <b>{doc_type_clean.upper()}</b> &nbsp;&nbsp; Date: <b>{datetime.now(timezone.utc).strftime('%d %b %Y')}</b>", SMALL))
     story.append(Spacer(1, 0.4 * cm))
 
     story.append(Paragraph("Client Details", H2))
