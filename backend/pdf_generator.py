@@ -1026,10 +1026,12 @@ def generate_sldr_pdf(client: dict, company: dict) -> bytes:
 
     story.append(Paragraph("<b>TECHNICAL SPECIFICATIONS</b>", ParagraphStyle('tech_title', parent=styles['Normal'], fontSize=9.5, fontName='Helvetica-Bold', spaceAfter=4, textColor=colors.HexColor('#0f172a'))))
 
+    inverter_kw_display = f"{inverter_kw}" if "KW" in inverter_kw.upper() else (f"{inverter_kw} kW" if inverter_kw else "")
+
     tech_table_data = [
         [Paragraph("<b>PARAMETER</b>", STYLE_TBL_HDR), Paragraph("<b>SPECIFICATIONS</b>", STYLE_TBL_HDR), Paragraph("<b>MAKE</b>", STYLE_TBL_HDR), Paragraph("<b>KWP</b>", STYLE_TBL_HDR)],
         [Paragraph("PV MODULES", STYLE_TBL_CELL), Paragraph(f"{sol_wp} Wp X {num_panels} Nos", STYLE_TBL_CELL), Paragraph(panel_make, STYLE_TBL_CELL), Paragraph(f"{sol_kw} KW", STYLE_TBL_CELL)],
-        [Paragraph("INVERTER", STYLE_TBL_CELL), Paragraph(f"{inverter_kw} X 1 NOS", STYLE_TBL_CELL), Paragraph(inverter_make, STYLE_TBL_CELL), Paragraph(f"{inverter_kw}", STYLE_TBL_CELL)],
+        [Paragraph("INVERTER", STYLE_TBL_CELL), Paragraph(f"{inverter_kw_display} × 1 Nos", STYLE_TBL_CELL), Paragraph(inverter_make, STYLE_TBL_CELL), Paragraph(f"{inverter_kw}", STYLE_TBL_CELL)],
     ]
     t_tech = Table(tech_table_data, colWidths=[4.5 * cm, 5.5 * cm, 4.6 * cm, 4.0 * cm])
     t_tech.setStyle(TableStyle([
@@ -1046,7 +1048,7 @@ def generate_sldr_pdf(client: dict, company: dict) -> bytes:
 
     footer_table = Table([
         [
-            Paragraph(f"<b>{company_name}</b><br/><br/><br/>Proprietor / Manager", STYLE_FTR),
+            Paragraph(f"<b>{company_name}</b>", STYLE_FTR),
             Paragraph("___________________________<br/><br/><b>Consumer / Authorized Signature</b>", ParagraphStyle('sig_r', parent=STYLE_FTR, alignment=2))
         ]
     ], colWidths=[9.3 * cm, 9.3 * cm])
