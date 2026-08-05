@@ -72,9 +72,13 @@ export default function ClientDetail() {
       inverter_year: client?.inverter_year || "",
       sanction_number: client?.sanction_number || "",
       consumer_type: client?.consumer_type || "",
+      consumer_category: client?.consumer_category || client?.consumer_type || "",
       phase_type: client?.phase_type || "Single Phase",
       subsidy_eligible: client?.subsidy_eligible ?? false,
       status: client?.status || "Lead",
+      inverters: Array.isArray(client?.inverters) && client.inverters.length > 0
+        ? client.inverters
+        : (client?.inverter_capacity ? [{ capacity: client.inverter_capacity, quantity: 1 }] : [{ capacity: "", quantity: 1 }])
     });
     setEditMode(true);
   };
@@ -139,13 +143,19 @@ export default function ClientDetail() {
         system_kw: Number(editData.system_kw) || 0,
         panel_wattage: Number(editData.panel_wattage) || 0,
         num_panels: Number(editData.num_panels) || 0,
+        panel_brand: editData.panel_brand || editData.panel_make || "",
+        panel_make: editData.panel_make || editData.panel_brand || "",
+        consumer_category: editData.consumer_type || editData.consumer_category || "",
+        consumer_type: editData.consumer_type || editData.consumer_category || "",
       };
       delete payload.id; delete payload.sol_id; delete payload.created_at; delete payload.updated_at; delete payload.notes; delete payload.progress; delete payload.company_id; delete payload.created_by; delete payload.high_value_assets;
-      await api.patch(`/clients/${id}`, payload);
+      
+      const { data: updatedDoc } = await api.patch(`/clients/${id}`, payload);
+      queryClient.setQueryData(queryKeys.clients.detail(id), updatedDoc);
+      invalidateAllClientQueries(queryClient, id);
       toast.success("Client updated successfully");
       setEditMode(false);
       setEditData(null);
-      invalidate();
     } catch (e) { toast.error(formatApiError(e)); }
   };
 

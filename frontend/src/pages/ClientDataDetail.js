@@ -195,9 +195,13 @@ export default function ClientDataDetail() {
       bu_number: c.bu_number || "",
       bu_text: c.bu_text || "",
       consumer_type: c.consumer_type || "",
+      consumer_category: c.consumer_category || c.consumer_type || "",
       phase_type: c.phase_type || "Single Phase",
       subsidy_eligible: c.subsidy_eligible ?? false,
       status: c.status || "Lead",
+      inverters: Array.isArray(c.inverters) && c.inverters.length > 0
+        ? c.inverters
+        : (c.inverter_capacity ? [{ capacity: c.inverter_capacity, quantity: 1 }] : [{ capacity: "", quantity: 1 }])
     });
     setEditOpen(true);
   };
@@ -210,12 +214,17 @@ export default function ClientDataDetail() {
         system_kw: Number(editForm.system_kw) || 0,
         panel_wattage: Number(editForm.panel_wattage) || 0,
         num_panels: Number(editForm.num_panels) || 0,
+        panel_brand: editForm.panel_brand || editForm.panel_make || "",
+        panel_make: editForm.panel_make || editForm.panel_brand || "",
+        consumer_category: editForm.consumer_type || editForm.consumer_category || "",
+        consumer_type: editForm.consumer_type || editForm.consumer_category || "",
       };
       // Use PATCH to avoid overwriting unrelated onboarding fields
-      await api.patch(`/clients/${id}`, payload);
+      const { data: updatedDoc } = await api.patch(`/clients/${id}`, payload);
+      queryClient.setQueryData(queryKeys.clients.detail(id), updatedDoc);
+      queryClient.setQueryData(queryKeys.clientData.detail(id), updatedDoc);
       invalidateAllClientQueries(queryClient, id);
       queryClient.invalidateQueries({ queryKey: queryKeys.clientData.tab(id, tab) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(id) });
       toast.success("Client details updated successfully");
       setEditOpen(false);
       setEditForm(null);
@@ -611,20 +620,39 @@ export default function ClientDataDetail() {
               </div>
 
               <div className="space-y-1">
-                <Label className="text-xs font-semibold text-slate-600">Inverter Make / Brand</Label>
-                <Input value={editForm.inverter_make} onChange={(e) => setEditForm({ ...editForm, inverter_make: e.target.value })} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-slate-600">Inverter Capacity</Label>
-                <Input value={editForm.inverter_capacity} onChange={(e) => setEditForm({ ...editForm, inverter_capacity: e.target.value })} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-slate-600">Inverter Serial Number</Label>
-                <Input value={editForm.inverter_serial} onChange={(e) => setEditForm({ ...editForm, inverter_serial: e.target.value })} />
+                <Label className="text-xs font-semibold text-slate-600">Total Inverter Capacity (kW)</Label>
+                <Input value={editForm.inverter_capacity} onChange={(e) => setEditForm({ ...editForm, inverter_capacity: e.target.value })} placeholder="e.g. 340" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-semibold text-slate-600">Year of Manufacturing</Label>
                 <Input value={editForm.inverter_year} onChange={(e) => setEditForm({ ...editForm, inverter_year: e.target.value })} placeholder="e.g. 2025" />
+              </div>
+
+              <div className="md:col-span-2 border-t border-slate-200 pt-3 mt-1">
+                <Label className="text-xs font-semibold text-slate-800">Inverter Configuration</Label>
+                <p className="text-[11px] text-slate-500 mb-2">Specify inverter capacity and quantity breakdown</p>
+                <div className="space-y-2">
+                  {(editForm.inverters || []).map((inv, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
+                      <div className="col-span-7">
+                        <Input value={inv.capacity || ""} onChange={(e) => { const list = [...(editForm.inverters || [])]; list[idx] = { ...list[idx], capacity: e.target.value }; setEditForm({ ...editForm, inverters: list }); }} placeholder="Inverter kW (e.g. 60)" className="h-8 text-xs bg-white" />
+                      </div>
+                      <div className="col-span-4">
+                        <Input type="number" min="1" value={inv.quantity || 1} onChange={(e) => { const list = [...(editForm.inverters || [])]; list[idx] = { ...list[idx], quantity: e.target.value }; setEditForm({ ...editForm, inverters: list }); }} placeholder="Qty" className="h-8 text-xs bg-white" />
+                      </div>
+                      <div className="col-span-1 flex justify-center">
+                        {editForm.inverters?.length > 1 && (
+                          <Button type="button" variant="ghost" size="icon" onClick={() => { const list = (editForm.inverters || []).filter((_, i) => i !== idx); setEditForm({ ...editForm, inverters: list }); }} className="h-7 w-7 text-red-500 hover:bg-red-50" title="Remove">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <Button type="button" variant="outline" size="sm" onClick={() => setEditForm(prev => ({ ...prev, inverters: [...(prev?.inverters || []), { capacity: "", quantity: 1 }] }))} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50 mt-1">
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Add Inverter
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-1">

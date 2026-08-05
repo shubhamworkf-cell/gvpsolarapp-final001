@@ -684,6 +684,7 @@ def _enrich_client_doc(c: dict) -> dict:
     c["pan_card_number"] = c["pan_number"]
     c["add_no"] = ob.get("add_no") or ob.get("address_no") or c.get("add_no") or c.get("address_no") or ""
     c["address_no"] = c["add_no"]
+    c["inverters"] = c.get("inverters") if isinstance(c.get("inverters"), list) and len(c.get("inverters")) > 0 else (ob.get("inverters") if isinstance(ob.get("inverters"), list) else [])
     return c
 
 class CollectionAdapter:
@@ -1938,6 +1939,7 @@ class ClientIn(BaseModel):
     status: Optional[str] = "Lead"
     stages: Optional[Dict[str, Any]] = None
     documents: Optional[List[Dict[str, Any]]] = None
+    inverters: Optional[List[Dict[str, Any]]] = None
 
 class StageUpdate(BaseModel):
     stages: Dict[str, Any]
@@ -3277,7 +3279,7 @@ async def update_client(client_id: str, data: ClientIn, user=Depends(get_current
     client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
     if not client_doc:
         client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
-    return client_doc
+    return _enrich_client_doc(client_doc) if client_doc else {}
 
 @api_router.patch("/clients/{client_id}")
 async def patch_client(client_id: str, payload: Dict[str, Any], user=Depends(get_current_user)):
@@ -3297,7 +3299,7 @@ async def patch_client(client_id: str, payload: Dict[str, Any], user=Depends(get
     client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
     if not client_doc:
         client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
-    return client_doc
+    return _enrich_client_doc(client_doc) if client_doc else {}
 
 @api_router.patch("/clients/{client_id}/stages")
 async def update_stages(client_id: str, data: StageUpdate, user=Depends(get_current_user)):

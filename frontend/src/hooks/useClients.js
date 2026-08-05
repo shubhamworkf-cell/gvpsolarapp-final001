@@ -77,21 +77,13 @@ export function useUpdateClient(clientId) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload) => api.put(`/clients/${clientId}`, payload).then((r) => r.data),
-    onMutate: async (payload) => {
-      await queryClient.cancelQueries({ queryKey: queryKeys.clients.detail(clientId) });
-      const prev = queryClient.getQueryData(queryKeys.clients.detail(clientId));
-      queryClient.setQueryData(queryKeys.clients.detail(clientId), (old) =>
-        old ? { ...old, ...payload } : old
-      );
-      return { prev };
-    },
-    onError: (err, _payload, ctx) => {
-      if (ctx?.prev) queryClient.setQueryData(queryKeys.clients.detail(clientId), ctx.prev);
-      toast.error(formatApiError(err));
-    },
-    onSettled: () => {
+    onSuccess: (updatedClient) => {
+      if (updatedClient) {
+        queryClient.setQueryData(queryKeys.clients.detail(clientId), updatedClient);
+      }
       invalidateAllClientQueries(queryClient, clientId);
     },
+    onError: (err) => toast.error(formatApiError(err)),
   });
 }
 
