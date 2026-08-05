@@ -633,35 +633,96 @@ export default function ClientDataDetail() {
 
               <div className="md:col-span-2 border-t border-slate-200 pt-3 mt-1">
                 <Label className="text-xs font-semibold text-slate-800">Inverter Configuration</Label>
-                <p className="text-[11px] text-slate-500 mb-2">Specify inverter brand, capacity and quantity</p>
-                <div className="space-y-2">
-                  <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-slate-600 px-1">
-                    <div className="col-span-5">Brand</div>
-                    <div className="col-span-3">kW</div>
-                    <div className="col-span-3">Qty</div>
-                    <div className="col-span-1"></div>
-                  </div>
-                  {(editForm.inverters || []).map((inv, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
-                      <div className="col-span-5">
-                        <Input value={inv.brand || ""} onChange={(e) => { const list = [...(editForm.inverters || [])]; list[idx] = { ...list[idx], brand: e.target.value }; setEditForm({ ...editForm, inverters: list }); }} placeholder="e.g. Growatt" className="h-8 text-xs bg-white" />
+                <p className="text-[11px] text-slate-500 mb-2">Specify inverter brand, capacity, quantity, and serial numbers</p>
+                <div className="space-y-3">
+                  {(editForm.inverters || []).map((inv, idx) => {
+                    const qty = Math.max(1, Number(inv.quantity) || 1);
+                    const serials = Array.isArray(inv.serials) && inv.serials.length === qty
+                      ? inv.serials
+                      : Array.from({ length: qty }).map((_, i) => (inv.serials?.[i] !== undefined ? inv.serials[i] : (i === 0 ? inv.serial || "" : "")));
+
+                    const updateInvRow = (field, val) => {
+                      const list = [...(editForm.inverters || [])];
+                      list[idx] = { ...list[idx], [field]: val };
+                      setEditForm({ ...editForm, inverters: list });
+                    };
+
+                    const updateInvQty = (val) => {
+                      const newQty = Math.max(1, parseInt(val) || 1);
+                      const list = [...(editForm.inverters || [])];
+                      const currentSerials = Array.isArray(inv.serials) ? inv.serials : (inv.serial ? [inv.serial] : []);
+                      let newSerials = [...currentSerials];
+                      if (newSerials.length < newQty) {
+                        while (newSerials.length < newQty) newSerials.push("");
+                      } else if (newSerials.length > newQty) {
+                        newSerials = newSerials.slice(0, newQty);
+                      }
+                      list[idx] = {
+                        ...inv,
+                        quantity: newQty,
+                        serials: newSerials,
+                        serial: newSerials.filter(Boolean).join(", ")
+                      };
+                      setEditForm({ ...editForm, inverters: list });
+                    };
+
+                    const updateInvSerial = (sIdx, val) => {
+                      const list = [...(editForm.inverters || [])];
+                      let newSerials = Array.isArray(inv.serials) ? [...inv.serials] : (inv.serial ? [inv.serial] : []);
+                      while (newSerials.length < qty) newSerials.push("");
+                      newSerials[sIdx] = val;
+                      list[idx] = {
+                        ...inv,
+                        serials: newSerials,
+                        serial: newSerials.filter(Boolean).join(", ")
+                      };
+                      setEditForm({ ...editForm, inverters: list });
+                    };
+
+                    return (
+                      <div key={idx} className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
+                        <div className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-5">
+                            <Label className="text-[10px] font-semibold text-slate-500">Brand</Label>
+                            <Input value={inv.brand || ""} onChange={(e) => updateInvRow("brand", e.target.value)} placeholder="e.g. Growatt" className="h-8 text-xs bg-white" />
+                          </div>
+                          <div className="col-span-3">
+                            <Label className="text-[10px] font-semibold text-slate-500">Capacity (kW)</Label>
+                            <Input value={inv.capacity || ""} onChange={(e) => updateInvRow("capacity", e.target.value)} placeholder="60" className="h-8 text-xs bg-white" />
+                          </div>
+                          <div className="col-span-3">
+                            <Label className="text-[10px] font-semibold text-slate-500">Quantity</Label>
+                            <Input type="number" min="1" value={inv.quantity || 1} onChange={(e) => updateInvQty(e.target.value)} placeholder="1" className="h-8 text-xs bg-white" />
+                          </div>
+                          <div className="col-span-1 flex justify-center pt-3">
+                            {editForm.inverters?.length > 1 && (
+                              <Button type="button" variant="ghost" size="icon" onClick={() => { const list = (editForm.inverters || []).filter((_, i) => i !== idx); setEditForm({ ...editForm, inverters: list }); }} className="h-7 w-7 text-red-500 hover:bg-red-50" title="Remove">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-200/70">
+                          <div className="text-[11px] font-semibold text-slate-600 mb-1.5">
+                            Serial Numbers ({qty})
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                            {Array.from({ length: qty }).map((_, sIdx) => (
+                              <Input
+                                key={sIdx}
+                                value={serials[sIdx] || ""}
+                                onChange={(e) => updateInvSerial(sIdx, e.target.value)}
+                                placeholder={`Serial #${sIdx + 1}`}
+                                className="h-7 text-xs bg-white font-mono"
+                              />
+                            ))}
+                          </div>
+                        </div>
                       </div>
-                      <div className="col-span-3">
-                        <Input value={inv.capacity || ""} onChange={(e) => { const list = [...(editForm.inverters || [])]; list[idx] = { ...list[idx], capacity: e.target.value }; setEditForm({ ...editForm, inverters: list }); }} placeholder="60" className="h-8 text-xs bg-white" />
-                      </div>
-                      <div className="col-span-3">
-                        <Input type="number" min="1" value={inv.quantity || 1} onChange={(e) => { const list = [...(editForm.inverters || [])]; list[idx] = { ...list[idx], quantity: e.target.value }; setEditForm({ ...editForm, inverters: list }); }} placeholder="Qty" className="h-8 text-xs bg-white" />
-                      </div>
-                      <div className="col-span-1 flex justify-center">
-                        {editForm.inverters?.length > 1 && (
-                          <Button type="button" variant="ghost" size="icon" onClick={() => { const list = (editForm.inverters || []).filter((_, i) => i !== idx); setEditForm({ ...editForm, inverters: list }); }} className="h-7 w-7 text-red-500 hover:bg-red-50" title="Remove">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  <Button type="button" variant="outline" size="sm" onClick={() => setEditForm(prev => ({ ...prev, inverters: [...(prev?.inverters || []), { brand: "", capacity: "", quantity: 1 }] }))} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50 mt-1">
+                    );
+                  })}
+                  <Button type="button" variant="outline" size="sm" onClick={() => setEditForm(prev => ({ ...prev, inverters: [...(prev?.inverters || []), { brand: "", capacity: "", quantity: 1, serials: [""] }] }))} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50 mt-1">
                     <Plus className="w-3.5 h-3.5 mr-1" /> Add Inverter
                   </Button>
                 </div>

@@ -19,14 +19,14 @@ export default function ClientNew() {
     full_name: "", mobile: "", alt_mobile: "", consumer_number: "", address: "", city: "", state: "", pincode: "", aadhaar: "",
     system_kw: 0, panel_make: "", panel_brand: "", panel_technology: "", panel_wattage: 0, num_panels: 0,
     inverter_make: "", inverter_capacity: "", inverter_model: "", inverter_serial: "", inverter_year: "",
-    inverters: [{ brand: "", capacity: "", quantity: 1 }],
+    inverters: [{ brand: "", capacity: "", quantity: 1, serials: [""] }],
     sanction_number: "", consumer_type: "", phase_type: "Single Phase", subsidy_eligible: false, status: "Lead", documents: [],
   });
 
   const addInverterRow = () => {
     setForm((prev) => ({
       ...prev,
-      inverters: [...(prev.inverters || []), { brand: "", capacity: "", quantity: 1 }],
+      inverters: [...(prev.inverters || []), { brand: "", capacity: "", quantity: 1, serials: [""] }],
     }));
   };
 
@@ -34,6 +34,45 @@ export default function ClientNew() {
     setForm((prev) => {
       const list = [...(prev.inverters || [])];
       list[idx] = { ...list[idx], [field]: val };
+      return { ...prev, inverters: list };
+    });
+  };
+
+  const updateInverterQuantity = (idx, val) => {
+    const qty = Math.max(1, parseInt(val) || 1);
+    setForm((prev) => {
+      const list = [...(prev.inverters || [])];
+      const inv = list[idx] || {};
+      const currentSerials = Array.isArray(inv.serials) ? inv.serials : (inv.serial ? [inv.serial] : []);
+      let newSerials = [...currentSerials];
+      if (newSerials.length < qty) {
+        while (newSerials.length < qty) newSerials.push("");
+      } else if (newSerials.length > qty) {
+        newSerials = newSerials.slice(0, qty);
+      }
+      list[idx] = {
+        ...inv,
+        quantity: qty,
+        serials: newSerials,
+        serial: newSerials.filter(Boolean).join(", ")
+      };
+      return { ...prev, inverters: list };
+    });
+  };
+
+  const updateInverterSerial = (idx, sIdx, val) => {
+    setForm((prev) => {
+      const list = [...(prev.inverters || [])];
+      const inv = list[idx] || {};
+      const qty = Math.max(1, Number(inv.quantity) || 1);
+      let serials = Array.isArray(inv.serials) ? [...inv.serials] : (inv.serial ? [inv.serial] : []);
+      while (serials.length < qty) serials.push("");
+      serials[sIdx] = val;
+      list[idx] = {
+        ...inv,
+        serials: serials,
+        serial: serials.filter(Boolean).join(", ")
+      };
       return { ...prev, inverters: list };
     });
   };
@@ -146,37 +185,59 @@ export default function ClientNew() {
               <div className="col-span-full border-t border-slate-200 pt-4 mt-2">
                 <div className="mb-3">
                   <Label className="text-sm font-semibold text-slate-800">Inverter Configuration</Label>
-                  <p className="text-xs text-slate-500">Specify inverter capacity and quantity breakdown</p>
+                  <p className="text-xs text-slate-500">Specify inverter brand, capacity, quantity, and serial numbers</p>
                 </div>
 
-                <div className="space-y-2 max-w-2xl">
-                  <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-slate-600 px-1">
-                    <div className="col-span-5">Brand</div>
-                    <div className="col-span-3">kW</div>
-                    <div className="col-span-3">Qty</div>
-                    <div className="col-span-1"></div>
-                  </div>
+                <div className="space-y-3 max-w-2xl">
+                  {(form.inverters || []).map((inv, idx) => {
+                    const qty = Math.max(1, Number(inv.quantity) || 1);
+                    const serials = Array.isArray(inv.serials) && inv.serials.length === qty
+                      ? inv.serials
+                      : Array.from({ length: qty }).map((_, i) => (inv.serials?.[i] !== undefined ? inv.serials[i] : (i === 0 ? inv.serial || "" : "")));
 
-                  {(form.inverters || []).map((inv, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
-                      <div className="col-span-5">
-                        <Input value={inv.brand || ""} onChange={(e) => updateInverterRow(idx, "brand", e.target.value)} placeholder="e.g. Growatt" className="h-8 text-xs bg-white" />
+                    return (
+                      <div key={idx} className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
+                        <div className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-5">
+                            <Label className="text-[10px] font-semibold text-slate-500">Brand</Label>
+                            <Input value={inv.brand || ""} onChange={(e) => updateInverterRow(idx, "brand", e.target.value)} placeholder="e.g. Growatt" className="h-8 text-xs bg-white" />
+                          </div>
+                          <div className="col-span-3">
+                            <Label className="text-[10px] font-semibold text-slate-500">Capacity (kW)</Label>
+                            <Input value={inv.capacity || ""} onChange={(e) => updateInverterRow(idx, "capacity", e.target.value)} placeholder="60" className="h-8 text-xs bg-white" />
+                          </div>
+                          <div className="col-span-3">
+                            <Label className="text-[10px] font-semibold text-slate-500">Quantity</Label>
+                            <Input type="number" min="1" value={inv.quantity || 1} onChange={(e) => updateInverterQuantity(idx, e.target.value)} placeholder="1" className="h-8 text-xs bg-white" />
+                          </div>
+                          <div className="col-span-1 flex justify-center pt-3">
+                            {form.inverters.length > 1 && (
+                              <Button type="button" variant="ghost" size="icon" onClick={() => removeInverterRow(idx)} className="h-7 w-7 text-red-500 hover:bg-red-50" title="Remove">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-200/70">
+                          <div className="text-[11px] font-semibold text-slate-600 mb-1.5">
+                            Serial Numbers ({qty})
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                            {Array.from({ length: qty }).map((_, sIdx) => (
+                              <Input
+                                key={sIdx}
+                                value={serials[sIdx] || ""}
+                                onChange={(e) => updateInverterSerial(idx, sIdx, e.target.value)}
+                                placeholder={`Serial #${sIdx + 1}`}
+                                className="h-7 text-xs bg-white font-mono"
+                              />
+                            ))}
+                          </div>
+                        </div>
                       </div>
-                      <div className="col-span-3">
-                        <Input value={inv.capacity} onChange={(e) => updateInverterRow(idx, "capacity", e.target.value)} placeholder="60" className="h-8 text-xs bg-white" />
-                      </div>
-                      <div className="col-span-3">
-                        <Input type="number" min="1" value={inv.quantity} onChange={(e) => updateInverterRow(idx, "quantity", e.target.value)} placeholder="1" className="h-8 text-xs bg-white" />
-                      </div>
-                      <div className="col-span-1 flex justify-center">
-                        {form.inverters.length > 1 && (
-                          <Button type="button" variant="ghost" size="icon" onClick={() => removeInverterRow(idx)} className="h-7 w-7 text-red-500 hover:bg-red-50" title="Remove">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
 
                   <div className="pt-1">
                     <Button type="button" variant="outline" size="sm" onClick={addInverterRow} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50">

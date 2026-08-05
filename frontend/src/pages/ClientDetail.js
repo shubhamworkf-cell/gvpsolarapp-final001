@@ -77,8 +77,15 @@ export default function ClientDetail() {
       subsidy_eligible: client?.subsidy_eligible ?? false,
       status: client?.status || "Lead",
       inverters: Array.isArray(client?.inverters) && client.inverters.length > 0
-        ? client.inverters
-        : (client?.inverter_capacity ? [{ brand: "", capacity: client.inverter_capacity, quantity: 1 }] : [{ brand: "", capacity: "", quantity: 1 }])
+        ? client.inverters.map(inv => {
+            const qty = Math.max(1, Number(inv.quantity) || 1);
+            const serials = Array.isArray(inv.serials) && inv.serials.length === qty
+              ? inv.serials
+              : (inv.serial ? inv.serial.split(",").map(s => s.trim()) : Array.from({ length: qty }).map(() => ""));
+            while (serials.length < qty) serials.push("");
+            return { ...inv, quantity: qty, serials: serials.slice(0, qty) };
+          })
+        : (client?.inverter_capacity ? [{ brand: "", capacity: client.inverter_capacity, quantity: 1, serials: [client?.inverter_serial || ""] }] : [{ brand: "", capacity: "", quantity: 1, serials: [""] }])
     });
     setEditMode(true);
   };
@@ -304,21 +311,33 @@ export default function ClientDetail() {
               <Row label="Panel">{client.panel_make || client.panel_brand ? `${client.panel_brand || client.panel_make} ${client.panel_technology || ''} · ${client.panel_wattage}W × ${client.num_panels}`.trim() : "—"}</Row>
               
               {(() => {
-                const invList = Array.isArray(client.inverters) && client.inverters.length > 0 ? client.inverters : (client.inverter_capacity ? [{ capacity: client.inverter_capacity, quantity: 1 }] : []);
+                const invList = Array.isArray(client.inverters) && client.inverters.length > 0 ? client.inverters : (client.inverter_capacity ? [{ capacity: client.inverter_capacity, quantity: 1, serial: client.inverter_serial }] : []);
                 return (
                   <div className="col-span-full border-t border-slate-100 pt-3 mt-1 space-y-2">
                     <Row label="Total Inverter Capacity">{client.inverter_capacity ? `${client.inverter_capacity} kW`.replace(" kW kW", " kW") : "—"}</Row>
                     <div>
                       <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Inverter Configuration</span>
                       {invList.length > 0 ? (
-                        <div className="space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-xs">
-                          {invList.map((inv, idx) => (
-                            <div key={idx} className="flex items-center gap-2 font-medium text-slate-800">
-                              <span className="inline-block w-2 h-2 rounded-full bg-blue-500"></span>
-                              {inv.brand && <span className="text-blue-700 font-semibold">{inv.brand}</span>}
-                              <span>{inv.capacity || "—"} kW</span> × <span>{inv.quantity || 1}</span>
-                            </div>
-                          ))}
+                        <div className="space-y-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-xs">
+                          {invList.map((inv, idx) => {
+                            const sList = Array.isArray(inv.serials) && inv.serials.length > 0
+                              ? inv.serials.filter(Boolean)
+                              : (inv.serial ? inv.serial.split(",").map(s => s.trim()).filter(Boolean) : []);
+                            return (
+                              <div key={idx} className="space-y-0.5">
+                                <div className="flex items-center gap-2 font-medium text-slate-800">
+                                  <span className="inline-block w-2 h-2 rounded-full bg-blue-500"></span>
+                                  {inv.brand && <span className="text-blue-700 font-semibold">{inv.brand}</span>}
+                                  <span>{inv.capacity || "—"} kW</span> × <span>{inv.quantity || 1}</span>
+                                </div>
+                                {sList.length > 0 && (
+                                  <div className="text-[11px] text-slate-500 pl-4 font-mono">
+                                    Serials: {sList.join(", ")}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <div className="text-xs text-slate-400 italic">No inverter configuration specified</div>
@@ -353,40 +372,100 @@ export default function ClientDetail() {
                 <div className="col-span-full border-t border-slate-200 pt-4 mt-2">
                   <div className="mb-3">
                     <Label className="text-sm font-semibold text-slate-800">Inverter Configuration</Label>
-                    <p className="text-xs text-slate-500">Specify inverter capacity and quantity breakdown</p>
+                    <p className="text-xs text-slate-500">Specify inverter brand, capacity, quantity, and serial numbers</p>
                   </div>
 
-                  <div className="space-y-2 max-w-2xl">
-                    <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-slate-600 px-1">
-                      <div className="col-span-5">Brand</div>
-                      <div className="col-span-3">kW</div>
-                      <div className="col-span-3">Qty</div>
-                      <div className="col-span-1 text-center"></div>
-                    </div>
+                  <div className="space-y-3 max-w-2xl">
+                    {(editData.inverters || []).map((inv, idx) => {
+                      const qty = Math.max(1, Number(inv.quantity) || 1);
+                      const serials = Array.isArray(inv.serials) && inv.serials.length === qty
+                        ? inv.serials
+                        : Array.from({ length: qty }).map((_, i) => (inv.serials?.[i] !== undefined ? inv.serials[i] : (i === 0 ? inv.serial || "" : "")));
 
-                    {(editData.inverters || []).map((inv, idx) => (
-                      <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
-                        <div className="col-span-5">
-                          <Input value={inv.brand || ""} onChange={(e) => { const list = [...(editData.inverters || [])]; list[idx] = { ...list[idx], brand: e.target.value }; setEditData({ ...editData, inverters: list }); }} placeholder="e.g. Growatt" className="h-8 text-xs bg-white" />
+                      const updateInvRow = (field, val) => {
+                        const list = [...(editData.inverters || [])];
+                        list[idx] = { ...list[idx], [field]: val };
+                        setEditData({ ...editData, inverters: list });
+                      };
+
+                      const updateInvQty = (val) => {
+                        const newQty = Math.max(1, parseInt(val) || 1);
+                        const list = [...(editData.inverters || [])];
+                        const currentSerials = Array.isArray(inv.serials) ? inv.serials : (inv.serial ? [inv.serial] : []);
+                        let newSerials = [...currentSerials];
+                        if (newSerials.length < newQty) {
+                          while (newSerials.length < newQty) newSerials.push("");
+                        } else if (newSerials.length > newQty) {
+                          newSerials = newSerials.slice(0, newQty);
+                        }
+                        list[idx] = {
+                          ...inv,
+                          quantity: newQty,
+                          serials: newSerials,
+                          serial: newSerials.filter(Boolean).join(", ")
+                        };
+                        setEditData({ ...editData, inverters: list });
+                      };
+
+                      const updateInvSerial = (sIdx, val) => {
+                        const list = [...(editData.inverters || [])];
+                        let newSerials = Array.isArray(inv.serials) ? [...inv.serials] : (inv.serial ? [inv.serial] : []);
+                        while (newSerials.length < qty) newSerials.push("");
+                        newSerials[sIdx] = val;
+                        list[idx] = {
+                          ...inv,
+                          serials: newSerials,
+                          serial: newSerials.filter(Boolean).join(", ")
+                        };
+                        setEditData({ ...editData, inverters: list });
+                      };
+
+                      return (
+                        <div key={idx} className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
+                          <div className="grid grid-cols-12 gap-2 items-center">
+                            <div className="col-span-5">
+                              <Label className="text-[10px] font-semibold text-slate-500">Brand</Label>
+                              <Input value={inv.brand || ""} onChange={(e) => updateInvRow("brand", e.target.value)} placeholder="e.g. Growatt" className="h-8 text-xs bg-white" />
+                            </div>
+                            <div className="col-span-3">
+                              <Label className="text-[10px] font-semibold text-slate-500">Capacity (kW)</Label>
+                              <Input value={inv.capacity || ""} onChange={(e) => updateInvRow("capacity", e.target.value)} placeholder="60" className="h-8 text-xs bg-white" />
+                            </div>
+                            <div className="col-span-3">
+                              <Label className="text-[10px] font-semibold text-slate-500">Quantity</Label>
+                              <Input type="number" min="1" value={inv.quantity || 1} onChange={(e) => updateInvQty(e.target.value)} placeholder="1" className="h-8 text-xs bg-white" />
+                            </div>
+                            <div className="col-span-1 flex justify-center pt-3">
+                              {editData.inverters?.length > 1 && (
+                                <Button type="button" variant="ghost" size="icon" onClick={() => { const list = (editData.inverters || []).filter((_, i) => i !== idx); setEditData({ ...editData, inverters: list }); }} className="h-7 w-7 text-red-500 hover:bg-red-50" title="Remove">
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-200/70">
+                            <div className="text-[11px] font-semibold text-slate-600 mb-1.5">
+                              Serial Numbers ({qty})
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                              {Array.from({ length: qty }).map((_, sIdx) => (
+                                <Input
+                                  key={sIdx}
+                                  value={serials[sIdx] || ""}
+                                  onChange={(e) => updateInvSerial(sIdx, e.target.value)}
+                                  placeholder={`Serial #${sIdx + 1}`}
+                                  className="h-7 text-xs bg-white font-mono"
+                                />
+                              ))}
+                            </div>
+                          </div>
                         </div>
-                        <div className="col-span-3">
-                          <Input value={inv.capacity} onChange={(e) => { const list = [...(editData.inverters || [])]; list[idx] = { ...list[idx], capacity: e.target.value }; setEditData({ ...editData, inverters: list }); }} placeholder="60" className="h-8 text-xs bg-white" />
-                        </div>
-                        <div className="col-span-3">
-                          <Input type="number" min="1" value={inv.quantity} onChange={(e) => { const list = [...(editData.inverters || [])]; list[idx] = { ...list[idx], quantity: e.target.value }; setEditData({ ...editData, inverters: list }); }} placeholder="1" className="h-8 text-xs bg-white" />
-                        </div>
-                        <div className="col-span-1 flex justify-center">
-                          {editData.inverters?.length > 1 && (
-                            <Button type="button" variant="ghost" size="icon" onClick={() => { const list = (editData.inverters || []).filter((_, i) => i !== idx); setEditData({ ...editData, inverters: list }); }} className="h-7 w-7 text-red-500 hover:bg-red-50" title="Remove">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     <div className="pt-1">
-                      <Button type="button" variant="outline" size="sm" onClick={() => setEditData(prev => ({ ...prev, inverters: [...(prev?.inverters || []), { brand: "", capacity: "", quantity: 1 }] }))} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50">
+                      <Button type="button" variant="outline" size="sm" onClick={() => setEditData(prev => ({ ...prev, inverters: [...(prev?.inverters || []), { brand: "", capacity: "", quantity: 1, serials: [""] }] }))} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50">
                         <Plus className="w-3.5 h-3.5 mr-1" /> Add Inverter
                       </Button>
                     </div>

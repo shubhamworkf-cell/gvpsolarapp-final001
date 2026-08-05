@@ -692,23 +692,50 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     almm_model = str(client.get('almm_model_number') or sol_wp_tech_str).strip()
 
     inverter_list = _get_inverters_list(client)
-    if len(inverter_list) > 1:
-        distinct_brands = list(dict.fromkeys(inv.get("brand") for inv in inverter_list if inv.get("brand")))
-        if len(distinct_brands) == 1:
-            inverter_make = distinct_brands[0]
-        else:
-            inverter_make = "Multiple (See Project Details)"
-        serials_list = [inv.get("serial") for inv in inverter_list if inv.get("serial")]
-        inverter_sr = ", ".join(serials_list) if serials_list else "Multiple (See Project Details)"
-    elif len(inverter_list) == 1:
-        inv = inverter_list[0]
-        inverter_make = f"{inv.get('brand','')} {inv.get('model','')}".strip()
-        inverter_sr = inv.get("serial") or ""
-    else:
-        inverter_make = str(client.get('inverter_make') or client.get('inverter_brand') or ob_dict.get('inverter_make') or '').strip()
-        inverter_sr = str(client.get('inverter_serial') or client.get('inverter_sn') or ob_dict.get('inverter_serial') or '').strip()
 
-    # Total Inverter Capacity shown in WCR MUST ALWAYS come from the manual inverter_capacity field
+    # 1. Unique Brand Names (Row 8 of WCR) - deduplicated, no "Multiple (See Project Details)"
+    brands = []
+    if inverter_list:
+        for inv in inverter_list:
+            b = str(inv.get("brand") or "").strip()
+            if b and b not in brands:
+                brands.append(b)
+    if not brands:
+        fallback_b = str(client.get('inverter_make') or client.get('inverter_brand') or ob_dict.get('inverter_make') or '').strip()
+        if fallback_b and fallback_b != "Multiple (See Project Details)":
+            brands = [fallback_b]
+
+    inverter_make = ", ".join(brands) if brands else ""
+
+    # 2. Serial Numbers (Row 21 of WCR) - all saved serial numbers, no placeholder
+    all_serials = []
+    if inverter_list:
+        for inv in inverter_list:
+            inv_s = inv.get("serials")
+            if isinstance(inv_s, list) and inv_s:
+                for s in inv_s:
+                    s_str = str(s).strip()
+                    if s_str and s_str not in all_serials:
+                        all_serials.append(s_str)
+            elif inv.get("serial"):
+                s_raw = str(inv.get("serial")).strip()
+                if s_raw and s_raw != "Multiple (See Project Details)":
+                    for part in s_raw.split(","):
+                        p_str = part.strip()
+                        if p_str and p_str not in all_serials:
+                            all_serials.append(p_str)
+
+    if not all_serials:
+        raw_sr = str(client.get('inverter_serial') or client.get('inverter_sn') or ob_dict.get('inverter_serial') or '').strip()
+        if raw_sr and raw_sr != "Multiple (See Project Details)":
+            for part in raw_sr.split(","):
+                p_str = part.strip()
+                if p_str and p_str not in all_serials:
+                    all_serials.append(p_str)
+
+    inverter_sr = ", ".join(all_serials) if all_serials else ""
+
+    # 3. Total Inverter Capacity (Row 20 of WCR) - manual capacity field
     inverter_kw = str(client.get('inverter_capacity') or ob_dict.get('inverter_capacity') or '').strip()
     inverter_kw_str = f"{inverter_kw} KW" if (inverter_kw and "KW" not in inverter_kw.upper()) else inverter_kw
     inverter_year = str(client.get('inverter_year') or client.get('manufacturing_year') or client.get('year_of_manufacture') or ob_dict.get('inverter_year') or ob_dict.get('manufacturing_year') or ob_dict.get('year_of_manufacture') or '').strip()
@@ -1038,14 +1065,24 @@ def _get_inverters_list(client: dict) -> list[dict]:
                 model = str(inv.get("model") or "").strip()
                 cap = str(inv.get("capacity") or "").strip()
                 qty = str(inv.get("quantity") or inv.get("qty") or "1").strip()
-                serial = str(inv.get("serial") or inv.get("serial_number") or "").strip()
-                if brand or model or cap or serial:
+                serials_raw = inv.get("serials")
+                serials_list = []
+                if isinstance(serials_raw, list):
+                    serials_list = [str(s).strip() for s in serials_raw if str(s).strip()]
+                single_serial = str(inv.get("serial") or inv.get("serial_number") or "").strip()
+                if not serials_list and single_serial:
+                    serials_list = [s.strip() for s in single_serial.split(",") if s.strip()]
+                
+                serial_display = ", ".join(serials_list) if serials_list else single_serial
+
+                if brand or model or cap or serials_list or single_serial:
                     cleaned.append({
                         "brand": brand,
                         "model": model,
                         "capacity": cap,
                         "quantity": qty or "1",
-                        "serial": serial
+                        "serials": serials_list,
+                        "serial": serial_display
                     })
         if cleaned:
             return cleaned
@@ -1053,15 +1090,17 @@ def _get_inverters_list(client: dict) -> list[dict]:
     brand = str(client.get("inverter_make") or client.get("inverter_brand") or ob_dict.get("inverter_make") or "").strip()
     model = str(client.get("inverter_model") or ob_dict.get("inverter_model") or "").strip()
     cap = str(client.get("inverter_capacity") or ob_dict.get("inverter_capacity") or "").strip()
-    serial = str(client.get("inverter_serial") or client.get("inverter_sn") or ob_dict.get("inverter_serial") or "").strip()
+    raw_serial = str(client.get("inverter_serial") or client.get("inverter_sn") or ob_dict.get("inverter_serial") or "").strip()
+    serials_list = [s.strip() for s in raw_serial.split(",") if s.strip()] if raw_serial else []
 
-    if brand or cap or serial or model:
+    if brand or cap or raw_serial or model:
         return [{
             "brand": brand,
             "model": model,
             "capacity": cap,
             "quantity": "1",
-            "serial": serial
+            "serials": serials_list,
+            "serial": raw_serial
         }]
     return []
 
