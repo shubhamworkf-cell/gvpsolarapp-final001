@@ -600,13 +600,26 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     # Header Builder
     def _build_header():
         logo_bytes = company.get("logo_bytes")
+        logo_d = None
         if logo_bytes:
             try:
-                logo_d = RLImage(BytesIO(logo_bytes), width=4.0 * cm, height=1.2 * cm)
+                from PIL import Image as PILImage
+                img = PILImage.open(BytesIO(logo_bytes))
+                img_w, img_h = img.size
+                if img_w > 0 and img_h > 0:
+                    aspect = img_h / float(img_w)
+                    max_w = 4.2 * cm
+                    max_h = 1.6 * cm
+                    target_w = max_w
+                    target_h = target_w * aspect
+                    if target_h > max_h:
+                        target_h = max_h
+                        target_w = target_h / aspect
+                    logo_d = RLImage(BytesIO(logo_bytes), width=target_w, height=target_h)
             except Exception:
-                logo_d = Spacer(4.0 * cm, 1.2 * cm)
-        else:
-            logo_d = Spacer(4.0 * cm, 1.2 * cm)
+                logo_d = None
+        if not logo_d:
+            logo_d = Spacer(4.2 * cm, 1.2 * cm)
 
         p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('wcr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
         p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>GST NO – {gst_no}</font></b>", ParagraphStyle('wcr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
@@ -1728,13 +1741,26 @@ def generate_meter_testing_request_pdf(client: dict, company: dict) -> bytes:
     net_serial = _clean_field(net_serial)
 
     logo_bytes = company.get("logo_bytes")
+    logo_d = None
     if logo_bytes:
         try:
-            logo_d = RLImage(BytesIO(logo_bytes), width=4.0 * cm, height=1.2 * cm)
+            from PIL import Image as PILImage
+            img = PILImage.open(BytesIO(logo_bytes))
+            img_w, img_h = img.size
+            if img_w > 0 and img_h > 0:
+                aspect = img_h / float(img_w)
+                max_w = 4.2 * cm
+                max_h = 1.6 * cm
+                target_w = max_w
+                target_h = target_w * aspect
+                if target_h > max_h:
+                    target_h = max_h
+                    target_w = target_h / aspect
+                logo_d = RLImage(BytesIO(logo_bytes), width=target_w, height=target_h)
         except Exception:
-            logo_d = Spacer(4.0 * cm, 1.2 * cm)
-    else:
-        logo_d = Spacer(4.0 * cm, 1.2 * cm)
+            logo_d = None
+    if not logo_d:
+        logo_d = Spacer(4.2 * cm, 1.2 * cm)
 
     p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('mtr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
     gst_text = f"GST NO – {gst_no}" if gst_no else ""

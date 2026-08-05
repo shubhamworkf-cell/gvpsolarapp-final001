@@ -98,6 +98,7 @@ def _cache_invalidate_company(company_id: str) -> None:
     if not company_id: return
     with _company_cache_lock:
         _company_cache.pop(company_id, None)
+    _company_logo_cache.clear()
 
 supabase_url = os.environ['SUPABASE_URL']
 # Primary key used historically (may be anon or service role)
@@ -3670,21 +3671,45 @@ async def generate_document(client_id: str, payload: Dict[str, Any], user=Depend
     client_doc = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
     if not client_doc:
         raise HTTPException(status_code=404, detail="Client not found")
+async def _enrich_company_doc(company_doc: dict) -> dict:
+    if not company_doc:
+        return {}
+    logo_file_id = company_doc.get("logo_file_id")
+    if logo_file_id:
+        if logo_file_id in _company_logo_cache:
+            company_doc["logo_bytes"] = _company_logo_cache[logo_file_id]
+        else:
+            file_rec = await db.files.find_one({"id": logo_file_id, "is_deleted": False})
+            if file_rec:
+                try:
+                    logo_bytes, _ = get_object(file_rec["storage_path"])
+                    company_doc["logo_bytes"] = logo_bytes
+                    _company_logo_cache[logo_file_id] = logo_bytes
+                except Exception as e:
+                    logger.error(f"Error fetching company logo: {e}")
+    return company_doc
+
+@api_router.post("/documents/preview")
+async def generate_document_preview(payload: Dict[str, Any], user=Depends(get_current_user)):
+    doc_type = payload.get("doc_type", "")
+    if doc_type not in ALLOWED_DOC_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid doc_type")
+        
+    client_id = payload.get("client_id")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="client_id is required")
+        
+    if doc_type in ("quotation", "tax_invoice", "delivery_bill"):
+        if not has_perm(user, "sales_documents", "create"):
+            raise HTTPException(status_code=403, detail="Missing permission: sales_documents.create")
+    else:
+        if not has_perm(user, "clients", "create"):
+            raise HTTPException(status_code=403, detail="Missing permission: clients.create")
+    client_doc = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
+    if not client_doc:
+        raise HTTPException(status_code=404, detail="Client not found")
     company_doc = await db.companies.find_one({"id": user["company_id"]}, {"_id": 0}) or {}
-    if company_doc:
-        logo_file_id = company_doc.get("logo_file_id")
-        if logo_file_id:
-            if logo_file_id in _company_logo_cache:
-                company_doc["logo_bytes"] = _company_logo_cache[logo_file_id]
-            else:
-                file_rec = await db.files.find_one({"id": logo_file_id, "is_deleted": False})
-                if file_rec:
-                    try:
-                        logo_bytes, _ = get_object(file_rec["storage_path"])
-                        company_doc["logo_bytes"] = logo_bytes
-                        _company_logo_cache[logo_file_id] = logo_bytes
-                    except Exception as e:
-                        logger.error(f"Error fetching company logo: {e}")
+    company_doc = await _enrich_company_doc(company_doc)
 
     if client_doc:
         client_doc = _enrich_client_doc(client_doc)
@@ -3759,20 +3784,7 @@ async def generate_public_document(payload: Dict[str, Any], user=Depends(get_cur
         if not has_perm(user, "clients", "create"):
             raise HTTPException(status_code=403, detail="Missing permission: clients.create")
     company_doc = await db.companies.find_one({"id": user["company_id"]}, {"_id": 0}) or {}
-    if company_doc:
-        logo_file_id = company_doc.get("logo_file_id")
-        if logo_file_id:
-            if logo_file_id in _company_logo_cache:
-                company_doc["logo_bytes"] = _company_logo_cache[logo_file_id]
-            else:
-                file_rec = await db.files.find_one({"id": logo_file_id, "is_deleted": False})
-                if file_rec:
-                    try:
-                        logo_bytes, _ = get_object(file_rec["storage_path"])
-                        company_doc["logo_bytes"] = logo_bytes
-                        _company_logo_cache[logo_file_id] = logo_bytes
-                    except Exception as e:
-                        logger.error(f"Error fetching company logo: {e}")
+    company_doc = await _enrich_company_doc(company_doc)
 
     client_id = payload.get("client_id")
     client_doc = None
@@ -3859,6 +3871,7 @@ async def download_direct_document(payload: Dict[str, Any], user=Depends(get_cur
         raise HTTPException(status_code=400, detail="client_id is required")
 
     company_doc = await db.companies.find_one({"id": user["company_id"]}, {"_id": 0}) or {}
+    company_doc = await _enrich_company_doc(company_doc)
     cid = user["company_id"]
     or_conds: List[Dict[str, Any]] = [{"id": client_id}, {"sol_id": client_id}]
     client_doc = None
