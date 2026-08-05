@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import api, { formatApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
