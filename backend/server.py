@@ -1010,13 +1010,17 @@ class CollectionAdapter:
             patch = {k: v for k, v in patch.items() if k != "rate"}
 
         if self.table_name == "clients":
+            logger.info(f"[CLIENT-SAVE DIAG] ▶ update_one called. filter={filter}")
+            logger.info(f"[CLIENT-SAVE DIAG] ▶ raw patch before prepare: {json.dumps({k: v for k, v in patch.items() if k != 'stages'}, default=str)}")
             try:
                 builder = supabase.table(self.table_name).select("stages").limit(1)
                 builder = self._apply_filters(builder, filter)
                 ex_res = builder.execute()
+                logger.info(f"[CLIENT-SAVE DIAG] ▶ pre-fetch stages result rows={len(ex_res.data or [])}")
                 if ex_res.data and isinstance(ex_res.data[0], dict):
                     ex_doc = ex_res.data[0]
                     ex_stages = dict(ex_doc.get("stages") or {})
+                    logger.info(f"[CLIENT-SAVE DIAG] ▶ existing stages keys: {list(ex_stages.keys())}")
                     if "stages" not in patch:
                         patch["stages"] = ex_stages
                     else:
@@ -1028,9 +1032,18 @@ class CollectionAdapter:
                         ex_ob.update(inc_ob)
                         merged_stages["onboarding_data"] = ex_ob
                         patch["stages"] = merged_stages
+                else:
+                    logger.warning(f"[CLIENT-SAVE DIAG] ⚠ pre-fetch returned NO data — WHERE clause may be wrong! filter={filter}")
             except Exception as ex_err:
-                logger.warning(f"Could not pre-fetch existing client stages for merge: {ex_err}")
+                logger.warning(f"[CLIENT-SAVE DIAG] ⚠ Could not pre-fetch existing client stages: {ex_err}")
             patch = _prepare_client_supabase_payload(patch)
+            ob_data = (patch.get("stages") or {}).get("onboarding_data") or {}
+            logger.info(f"[CLIENT-SAVE DIAG] ▶ final Supabase patch keys: {list(patch.keys())}")
+            logger.info(f"[CLIENT-SAVE DIAG] ▶ panel_wattage in patch: {patch.get('panel_wattage')}")
+            logger.info(f"[CLIENT-SAVE DIAG] ▶ panel_make in patch: {patch.get('panel_make')}")
+            logger.info(f"[CLIENT-SAVE DIAG] ▶ onboarding_data.consumer_category: {ob_data.get('consumer_category')}")
+            logger.info(f"[CLIENT-SAVE DIAG] ▶ onboarding_data.section_number: {ob_data.get('section_number')}")
+            logger.info(f"[CLIENT-SAVE DIAG] ▶ onboarding_data.inverters count: {len(ob_data.get('inverters') or [])}")
 
         if not patch:
             return UpdateResult(1, 1)
@@ -1038,10 +1051,40 @@ class CollectionAdapter:
         try:
             builder = supabase.table(self.table_name).update(patch)
             builder = self._apply_filters(builder, filter)
+            logger.info(f"[CLIENT-SAVE DIAG] ▶ Executing Supabase UPDATE on table='{self.table_name}' WHERE filter={filter}")
             res = builder.execute()
+            logger.info(f"[CLIENT-SAVE DIAG] ▶ Supabase UPDATE raw response: data_count={len(res.data or [])} data={json.dumps(res.data, default=str)[:500]}")
+            if self.table_name == "clients":
+                if not res.data:
+                    logger.error(f"[CLIENT-SAVE DIAG] ✗ Supabase UPDATE returned EMPTY data — row may not exist with filter={filter}, or RLS is blocking the write!")
+                else:
+                    logger.info(f"[CLIENT-SAVE DIAG] ✓ Supabase UPDATE returned {len(res.data)} row(s)")
         except Exception as e:
+            logger.error(f"[CLIENT-SAVE DIAG] ✗ Supabase UPDATE EXCEPTION for table='{self.table_name}': {e}")
             logger.error(f"Supabase update failed for table '{self.table_name}': {e}")
             raise e
+
+        if self.table_name == "clients":
+            # Immediate SELECT read-back after UPDATE — do NOT trust in-memory objects
+            try:
+                rb_builder = supabase.table(self.table_name).select("id,sol_id,panel_wattage,panel_make,inverter_make,stages,updated_at")
+                rb_builder = self._apply_filters(rb_builder, filter)
+                rb_res = rb_builder.execute()
+                if rb_res.data:
+                    rb = rb_res.data[0]
+                    rb_ob = (rb.get("stages") or {}).get("onboarding_data") or {}
+                    logger.info(f"[CLIENT-SAVE DIAG] ▶ IMMEDIATE SELECT after UPDATE:")
+                    logger.info(f"[CLIENT-SAVE DIAG]   id={rb.get('id')} sol_id={rb.get('sol_id')}")
+                    logger.info(f"[CLIENT-SAVE DIAG]   DB panel_wattage  = {rb.get('panel_wattage')}")
+                    logger.info(f"[CLIENT-SAVE DIAG]   DB panel_make     = {rb.get('panel_make')}")
+                    logger.info(f"[CLIENT-SAVE DIAG]   DB consumer_cat   = {rb_ob.get('consumer_category')}")
+                    logger.info(f"[CLIENT-SAVE DIAG]   DB section_number = {rb_ob.get('section_number')}")
+                    logger.info(f"[CLIENT-SAVE DIAG]   DB inverters      = {json.dumps(rb_ob.get('inverters'), default=str)}")
+                    logger.info(f"[CLIENT-SAVE DIAG]   DB updated_at     = {rb.get('updated_at')}")
+                else:
+                    logger.error(f"[CLIENT-SAVE DIAG] ✗ IMMEDIATE SELECT returned EMPTY — filter={filter} matched nothing in DB!")
+            except Exception as rb_err:
+                logger.error(f"[CLIENT-SAVE DIAG] ✗ IMMEDIATE SELECT failed: {rb_err}")
 
         try:
             await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
@@ -3352,24 +3395,65 @@ async def patch_client(client_id: str, payload: Dict[str, Any], user=Depends(get
     if not has_perm(user, "clients", "edit"):
         raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
     raw_payload = dict(payload)
+
+    # ── DIAG STEP 1: Log exactly what the frontend sent ──────────────────────
+    safe_payload = {k: v for k, v in raw_payload.items() if k not in ("aadhaar", "pan_number", "mobile", "alt_mobile")}
+    logger.info(f"[CLIENT-SAVE DIAG] ══════════════════════════════════════════")
+    logger.info(f"[CLIENT-SAVE DIAG] PATCH /clients/{client_id} called")
+    logger.info(f"[CLIENT-SAVE DIAG] STEP 1 ▶ Incoming payload keys: {list(safe_payload.keys())}")
+    logger.info(f"[CLIENT-SAVE DIAG] STEP 1 ▶ panel_wattage   = {raw_payload.get('panel_wattage')}")
+    logger.info(f"[CLIENT-SAVE DIAG] STEP 1 ▶ panel_make      = {raw_payload.get('panel_make')}")
+    logger.info(f"[CLIENT-SAVE DIAG] STEP 1 ▶ consumer_cat    = {raw_payload.get('consumer_category') or raw_payload.get('consumer_type')}")
+    logger.info(f"[CLIENT-SAVE DIAG] STEP 1 ▶ section_number  = {raw_payload.get('section_number') or raw_payload.get('section_no')}")
+    logger.info(f"[CLIENT-SAVE DIAG] STEP 1 ▶ inverters count = {len(raw_payload.get('inverters') or [])}")
+
+    # ── DIAG STEP 2: Log user and company context ─────────────────────────────
+    logger.info(f"[CLIENT-SAVE DIAG] STEP 2 ▶ client_id={client_id} company_id={user.get('company_id')} user_id={user.get('id')}")
+
     payload.pop("_id", None)
     payload = _normalize_client_payload(payload)
     payload["updated_at"] = now_iso()
+
+    # ── DIAG STEP 3: WHERE clause being used ─────────────────────────────────
+    logger.info(f"[CLIENT-SAVE DIAG] STEP 3 ▶ WHERE clause #1: id={client_id} AND company_id={user.get('company_id')}")
+
     res = await db.clients.update_one({"id": client_id, "company_id": user["company_id"]}, {"$set": payload})
+    logger.info(f"[CLIENT-SAVE DIAG] STEP 3 ▶ matched_count={res.matched_count}")
     if res.matched_count == 0:
+        logger.warning(f"[CLIENT-SAVE DIAG] STEP 3 ▶ WHERE #1 missed — trying sol_id")
         res = await db.clients.update_one({"sol_id": client_id, "company_id": user["company_id"]}, {"$set": payload})
+        logger.info(f"[CLIENT-SAVE DIAG] STEP 3 ▶ sol_id match: matched_count={res.matched_count}")
         if res.matched_count == 0:
+            logger.warning(f"[CLIENT-SAVE DIAG] STEP 3 ▶ WHERE #2 missed — trying $or without company_id")
             res = await db.clients.update_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"$set": payload})
+            logger.info(f"[CLIENT-SAVE DIAG] STEP 3 ▶ $or match: matched_count={res.matched_count}")
             if res.matched_count == 0:
+                logger.error(f"[CLIENT-SAVE DIAG] ✗ ALL WHERE clauses missed — client_id={client_id} not found!")
                 raise HTTPException(status_code=404, detail="Client not found")
+
     await LocalFileCollection("clients").update_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"$set": payload})
-    
-    # Direct database read-back verification
+
+    # ── DIAG STEP 4: Fresh SELECT read-back ──────────────────────────────────
+    logger.info(f"[CLIENT-SAVE DIAG] STEP 4 ▶ Running fresh SELECT to verify persistence...")
     client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
     if not client_doc:
         client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
-    
+
+    if client_doc:
+        db_ob = (client_doc.get("stages") or {}).get("onboarding_data") or {}
+        logger.info(f"[CLIENT-SAVE DIAG] STEP 4 ▶ SELECT after UPDATE:")
+        logger.info(f"[CLIENT-SAVE DIAG]   Submitted panel_wattage  = {raw_payload.get('panel_wattage')} | DB = {client_doc.get('panel_wattage')}")
+        logger.info(f"[CLIENT-SAVE DIAG]   Submitted panel_make     = {raw_payload.get('panel_make')} | DB = {client_doc.get('panel_make')}")
+        logger.info(f"[CLIENT-SAVE DIAG]   Submitted consumer_cat   = {raw_payload.get('consumer_category') or raw_payload.get('consumer_type')} | DB = {db_ob.get('consumer_category')}")
+        logger.info(f"[CLIENT-SAVE DIAG]   Submitted section_number = {raw_payload.get('section_number') or raw_payload.get('section_no')} | DB = {db_ob.get('section_number')}")
+        logger.info(f"[CLIENT-SAVE DIAG]   Submitted inverters      = {len(raw_payload.get('inverters') or [])} items | DB = {len(db_ob.get('inverters') or [])} items")
+        logger.info(f"[CLIENT-SAVE DIAG]   DB updated_at            = {client_doc.get('updated_at')}")
+    else:
+        logger.error(f"[CLIENT-SAVE DIAG] ✗ STEP 4 SELECT returned NOTHING — client disappeared after update!")
+
     _verify_client_db_write(raw_payload, client_doc)
+    logger.info(f"[CLIENT-SAVE DIAG] ✓ _verify_client_db_write passed — returning enriched doc")
+    logger.info(f"[CLIENT-SAVE DIAG] ══════════════════════════════════════════")
     return _enrich_client_doc(client_doc) if client_doc else {}
 
 @api_router.patch("/clients/{client_id}/stages")
