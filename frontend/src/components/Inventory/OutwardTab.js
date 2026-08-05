@@ -565,7 +565,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
         onConfirm={doDelete}
       />
 
-      <ManualBulkImport open={manualOpen} onOpenChange={setManualOpen} mode="outward" products={products} onImported={() => { load(); onChanged?.(); }} />
+      <ManualBulkImport open={manualOpen} onOpenChange={setManualOpen} mode="outward" products={products} onImported={async () => { await load(); onChanged?.(); }} />
 
       <Dialog open={hvDialogOpen} onOpenChange={setHvDialogOpen}>
         <DialogContent className="max-w-md bg-white border border-slate-200 shadow-xl rounded-xl" data-testid="hv-outward-dialog">

@@ -254,8 +254,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
   });
   const fileInputRef = useRef(null);
 
-  useEffect(() => {
-    if (!open) return;
+  const resetState = useCallback(() => {
     setStep("input");
     setInputMode("text");
     setRawText("");
@@ -268,13 +267,27 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
     setImportProgress(0);
     setCancelImport(false);
     cancelImportRef.current = false;
-    setGlobalDefaults((prev) => ({
-      ...prev,
+    setGlobalDefaults({
       date: new Date().toISOString().split("T")[0],
       reference_type: "Challan Number",
+      reference_number: "",
       source_type: "Supplier",
+      source_name: "",
+      client_id: "",
+      client_name: "",
+      project_id: "",
+      project_name: "",
+      remarks: "",
       status: "Dispatched",
-    }));
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      resetState();
+      return;
+    }
+    resetState();
 
     api.get("/clients").then((r) => setClients(r.data || [])).catch(() => {});
     if (!products || products.length === 0) {
@@ -286,8 +299,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
     } else {
       setProductsList(products);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, products, resetState]);
 
   const matchProduct = (name) => {
     if (!name) return "empty";
@@ -526,33 +538,28 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
       console.log("[IMPORT] progress 100");
 
       if (!cancelImportRef.current) {
-        console.log("[IMPORT] entering success handler");
+        console.log("[IMPORT] all DB writes complete, executing completion lifecycle");
         setImportProgress(100);
-        toast.success(`Successfully imported ${validRows.length} ${mode} entries.`);
-        
-        // Reset state to initial "input" step so UI is immediately ready for next import
-        setStep("input");
-        setInputMode("text");
-        setRawText("");
-        setFile(null);
-        setFileName("");
-        setRows([]);
-        setErrors("");
-        setPreviewPage(1);
-        setImportProgress(0);
-        setCancelImport(false);
-        cancelImportRef.current = false;
-        setProcessing(false);
-        
-        // Release processing and close modal cleanly
-        onOpenChange(false);
-        
-        // Post-import refresh callback
-        try {
-          onImported?.();
-        } catch (refreshErr) {
-          console.error("[IMPORT] Safe post-import refresh failed:", refreshErr);
+
+        // 1. Inventory refresh completed first (await parent data reload)
+        if (onImported) {
+          try {
+            console.log("[IMPORT] refreshing inventory data via onImported...");
+            await Promise.resolve(onImported());
+            console.log("[IMPORT] inventory refresh completed");
+          } catch (refreshErr) {
+            console.error("[IMPORT] Post-import refresh error:", refreshErr);
+          }
         }
+
+        // 2. Display success toast
+        toast.success(`Successfully imported ${validRows.length} ${mode} entries.`);
+
+        // 3. Reset internal state to initial Step 1 ("input")
+        resetState();
+
+        // 4. Automatically close modal cleanly
+        onOpenChange?.(false);
         return;
       } else {
         setStep("review");

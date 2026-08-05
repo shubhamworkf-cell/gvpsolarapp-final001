@@ -605,7 +605,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
         </CardContent>
       </Card>
 
-      <ManualBulkImport open={manualOpen} onOpenChange={setManualOpen} mode="inward" products={products} onImported={() => { console.log("[IMPORT] InwardTab onImported callback starting"); load(); onChanged?.(); console.log("[IMPORT] InwardTab onImported callback finished"); }} />
+      <ManualBulkImport open={manualOpen} onOpenChange={setManualOpen} mode="inward" products={products} onImported={async () => { await load(); onChanged?.(); }} />
       <HighValueBulkImport open={hvManualOpen} onOpenChange={setHvManualOpen} products={products} onImported={() => { load(); onChanged?.(); }} />
 
       <ConfirmDialog
