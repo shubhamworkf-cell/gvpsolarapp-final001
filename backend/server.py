@@ -632,6 +632,15 @@ def _prepare_client_supabase_payload(payload: dict) -> dict:
         extra_onboarding["bu_number"] = payload["bu_number"]
     if "bu_text" in payload and payload["bu_text"] is not None:
         extra_onboarding["bu_text"] = payload["bu_text"]
+    # PAN Card Number and Add No — new onboarding fields
+    if "pan_number" in payload and payload["pan_number"] is not None:
+        extra_onboarding["pan_number"] = payload["pan_number"]
+    if "pan_card_number" in payload and payload["pan_card_number"] is not None:
+        extra_onboarding["pan_number"] = payload["pan_card_number"]
+    if "add_no" in payload and payload["add_no"] is not None:
+        extra_onboarding["add_no"] = payload["add_no"]
+    if "address_no" in payload and payload["address_no"] is not None:
+        extra_onboarding["add_no"] = payload["address_no"]
 
     for k, v in payload.items():
         if k in VALID_CLIENT_COLUMNS:
@@ -670,6 +679,11 @@ def _enrich_client_doc(c: dict) -> dict:
     # BU Number and BU Text (new onboarding fields)
     c["bu_number"] = ob.get("bu_number") or c.get("bu_number") or ""
     c["bu_text"]   = ob.get("bu_text")   or c.get("bu_text")   or ""
+    # PAN Card Number and Add No (new onboarding fields)
+    c["pan_number"] = ob.get("pan_number") or ob.get("pan_card_number") or c.get("pan_number") or c.get("pan_card_number") or ""
+    c["pan_card_number"] = c["pan_number"]
+    c["add_no"] = ob.get("add_no") or ob.get("address_no") or c.get("add_no") or c.get("address_no") or ""
+    c["address_no"] = c["add_no"]
     return c
 
 class CollectionAdapter:

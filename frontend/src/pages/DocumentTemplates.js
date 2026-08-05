@@ -155,14 +155,11 @@ export default function DocumentTemplates() {
 
   const availableDocs = [
     { type: "wcr", title: "WCR (Work Completion Report)", desc: "Complete 3-Page WCR with 28-row technical observation table, structural declaration, CMC certificate & Aadhaar box.", bg: "border-emerald-500 bg-emerald-50/40 hover:bg-emerald-50", badge: "3-Page Official WCR" },
-    { type: "annexure", title: "Annexure", desc: "Material & site specifications, panel/inverter serials and BOM component verification details.", bg: "border-blue-500 bg-blue-50/40 hover:bg-blue-50", badge: "Material Specs" },
     { type: "sldr", title: "SLDR (Single Line Diagram)", desc: "Electrical DC/AC protection layout, surge arresters, net meter & earthing pit certifications.", bg: "border-amber-500 bg-amber-50/40 hover:bg-amber-50", badge: "Single Line Diagram" },
-    { type: "vendor_agreement", title: "Vendor Agreement", desc: "Installation agreement, quality assurances, 5-year maintenance contract & warranty terms.", bg: "border-purple-500 bg-purple-50/40 hover:bg-purple-50", badge: "Legal Agreement" },
-    { type: "net_meter_agreement", title: "Net Meter Agreement", desc: "DISCOM grid synchronization terms, bi-directional meter parameters & tariff compliance.", bg: "border-sky-500 bg-sky-50/40 hover:bg-sky-50", badge: "DISCOM Compliance" },
     { type: "meter_testing_request", title: "Meter Testing Request", desc: "Formal DISCOM meter lab testing request letter with customer, location & meter details.", bg: "border-rose-500 bg-rose-50/40 hover:bg-rose-50", badge: "DISCOM Lab Request" },
-    { type: "quotation", title: "Quotation", desc: "Solar system commercial proposal, component pricing breakups & payment terms.", bg: "border-violet-500 bg-violet-50/40 hover:bg-violet-50", badge: "Commercial Proposal" },
-    { type: "installation_report", title: "Installation Report", desc: "On-site mechanical structure, panel mounting, electrical safety & inverter commissioning checklist.", bg: "border-teal-500 bg-teal-50/40 hover:bg-teal-50", badge: "Field Engineering" },
-    { type: "completion_report", title: "Completion Report", desc: "Final system handover report, meter testing summary & DISCOM grid synchronization certificate.", bg: "border-indigo-500 bg-indigo-50/40 hover:bg-indigo-50", badge: "Project Handover" },
+    { type: "net_meter_agreement", title: "Net Meter Agreement", desc: "DISCOM grid synchronization terms, bi-directional meter parameters & tariff compliance.", bg: "border-sky-500 bg-sky-50/40 hover:bg-sky-50", badge: "DISCOM Compliance" },
+    { type: "vendor_agreement", title: "Vendor Agreement", desc: "Installation agreement, quality assurances, 5-year maintenance contract & warranty terms.", bg: "border-purple-500 bg-purple-50/40 hover:bg-purple-50", badge: "Legal Agreement" },
+    { type: "annexure", title: "Annexure", desc: "Material & site specifications, panel/inverter serials and BOM component verification details.", bg: "border-blue-500 bg-blue-50/40 hover:bg-blue-50", badge: "Material Specs" },
   ];
 
   return (

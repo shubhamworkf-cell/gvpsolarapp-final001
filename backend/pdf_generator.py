@@ -608,23 +608,26 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
                 img_w, img_h = img.size
                 if img_w > 0 and img_h > 0:
                     aspect = img_h / float(img_w)
-                    max_w = 4.2 * cm
-                    max_h = 1.6 * cm
+                    max_w = 6.2 * cm
+                    max_h = 2.4 * cm
                     target_w = max_w
                     target_h = target_w * aspect
                     if target_h > max_h:
                         target_h = max_h
                         target_w = target_h / aspect
-                    logo_d = RLImage(BytesIO(logo_bytes), width=target_w, height=target_h)
+                    resampled = img.resize((int(round(target_w * 4)), int(round(target_h * 4))), PILImage.LANCZOS)
+                    res_buf = BytesIO()
+                    resampled.save(res_buf, format='PNG')
+                    logo_d = RLImage(BytesIO(res_buf.getvalue()), width=target_w, height=target_h)
             except Exception:
                 logo_d = None
         if not logo_d:
-            logo_d = Spacer(4.2 * cm, 1.2 * cm)
+            logo_d = Spacer(6.2 * cm, 1.2 * cm)
 
         p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('wcr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
         p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>GST NO – {gst_no}</font></b>", ParagraphStyle('wcr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
         
-        t_hdr = Table([[logo_d, p_title, p_gst]], colWidths=[4.2 * cm, 8.8 * cm, 5.6 * cm])
+        t_hdr = Table([[logo_d, p_title, p_gst]], colWidths=[6.2 * cm, 7.2 * cm, 5.2 * cm])
         t_hdr.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('LEFTPADDING', (0, 0), (-1, -1), 0),
@@ -817,27 +820,39 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     story.append(Paragraph(body3_text, STYLE_BODY_JUSTIFY))
     story.append(Spacer(1, 0.3 * cm))
 
-    aadhaar_num = str(client.get('aadhaar') or client.get('aadhaar_number') or '').strip()
+    pan_num = str(client.get('pan_number') or client.get('pan_card_number') or ob_dict.get('pan_number') or ob_dict.get('pan_card_number') or '').strip()
+    aadhaar_num = str(client.get('aadhaar') or client.get('aadhaar_number') or ob_dict.get('aadhaar') or ob_dict.get('aadhaar_number') or '').strip()
 
-    # Aadhaar Identity Box
-    aadhaar_box_data = [
-        [Paragraph("<b>[ CONSUMER AADHAAR CARD / IDENTITY VERIFICATION ]</b>", ParagraphStyle('a_hdr', parent=styles['Normal'], alignment=1, fontSize=9, fontName='Helvetica-Bold', textColor=colors.HexColor('#1e3a8a')))],
-        [Paragraph(
-            f"<b>Stamp & Seal</b><br/><br/>"
-            f"<b>Identity Details of Consumer: - ADHAR CARD</b><br/>"
-            f"<b>Aadhar Number: {aadhaar_num}</b>" if aadhaar_num else "<b>Identity Details of Consumer: - ADHAR CARD</b>",
-            ParagraphStyle('a_body', parent=styles['Normal'], fontSize=8.5, leading=13, textColor=colors.HexColor('#1e293b'))
-        )]
+    if pan_num:
+        id_title = "[ CONSUMER PAN CARD / IDENTITY VERIFICATION ]"
+        id_label = "PAN CARD"
+        id_detail = f"PAN Number: {pan_num}"
+    elif aadhaar_num:
+        id_title = "[ CONSUMER AADHAAR CARD / IDENTITY VERIFICATION ]"
+        id_label = "ADHAR CARD"
+        id_detail = f"Aadhar Number: {aadhaar_num}"
+    else:
+        id_title = "[ CONSUMER IDENTITY VERIFICATION ]"
+        id_label = "IDENTITY CARD"
+        id_detail = ""
+
+    id_body_text = f"<b>Stamp & Seal</b><br/><br/><b>Identity Details of Consumer: - {id_label}</b>"
+    if id_detail:
+        id_body_text += f"<br/><b>{id_detail}</b>"
+
+    id_box_data = [
+        [Paragraph(f"<b>{id_title}</b>", ParagraphStyle('a_hdr', parent=styles['Normal'], alignment=1, fontSize=9, fontName='Helvetica-Bold', textColor=colors.HexColor('#1e3a8a')))],
+        [Paragraph(id_body_text, ParagraphStyle('a_body', parent=styles['Normal'], fontSize=8.5, leading=13, textColor=colors.HexColor('#1e293b')))]
     ]
-    aadhaar_table = Table(aadhaar_box_data, colWidths=[14 * cm])
-    aadhaar_table.setStyle(TableStyle([
+    id_table = Table(id_box_data, colWidths=[14 * cm])
+    id_table.setStyle(TableStyle([
         ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#3b82f6')),
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#eff6ff')),
         ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#f8fafc')),
         ('PADDING', (0, 0), (-1, -1), 8),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
     ]))
-    story.append(aadhaar_table)
+    story.append(id_table)
     story.append(Spacer(1, 1.0 * cm))
 
     sign3 = Table([
@@ -1749,24 +1764,27 @@ def generate_meter_testing_request_pdf(client: dict, company: dict) -> bytes:
             img_w, img_h = img.size
             if img_w > 0 and img_h > 0:
                 aspect = img_h / float(img_w)
-                max_w = 4.2 * cm
-                max_h = 1.6 * cm
+                max_w = 6.2 * cm
+                max_h = 2.4 * cm
                 target_w = max_w
                 target_h = target_w * aspect
                 if target_h > max_h:
                     target_h = max_h
                     target_w = target_h / aspect
-                logo_d = RLImage(BytesIO(logo_bytes), width=target_w, height=target_h)
+                resampled = img.resize((int(round(target_w * 4)), int(round(target_h * 4))), PILImage.LANCZOS)
+                res_buf = BytesIO()
+                resampled.save(res_buf, format='PNG')
+                logo_d = RLImage(BytesIO(res_buf.getvalue()), width=target_w, height=target_h)
         except Exception:
             logo_d = None
     if not logo_d:
-        logo_d = Spacer(4.2 * cm, 1.2 * cm)
+        logo_d = Spacer(6.2 * cm, 1.2 * cm)
 
     p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('mtr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
     gst_text = f"GST NO – {gst_no}" if gst_no else ""
     p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>{gst_text}</font></b>", ParagraphStyle('mtr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
 
-    t_hdr = Table([[logo_d, p_title, p_gst]], colWidths=[4.2 * cm, 8.8 * cm, 5.6 * cm])
+    t_hdr = Table([[logo_d, p_title, p_gst]], colWidths=[6.2 * cm, 7.2 * cm, 5.2 * cm])
     t_hdr.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('LEFTPADDING', (0, 0), (-1, -1), 0),
@@ -1889,13 +1907,22 @@ def generate(doc_type: str, client: dict, company: dict) -> bytes:
     story.append(Paragraph(f"Document No.: <b>{doc_type_clean.upper()}</b> &nbsp;&nbsp; Date: <b>{datetime.now(timezone.utc).strftime('%d %b %Y')}</b>", SMALL))
     story.append(Spacer(1, 0.4 * cm))
 
+    pan_num_val = str(client.get("pan_number") or client.get("pan_card_number") or "").strip()
+    aadhaar_num_val = str(client.get("aadhaar") or client.get("aadhaar_number") or "").strip()
+    if pan_num_val:
+        id_kv_row = ["PAN Card", pan_num_val]
+    elif aadhaar_num_val:
+        id_kv_row = ["Aadhaar (last 4)", (aadhaar_num_val)[-4:] or "—"]
+    else:
+        id_kv_row = ["Aadhaar (last 4)", "—"]
+
     story.append(Paragraph("Client Details", H2))
     story.append(_kv_table([
         ["Client Name", client.get("full_name", "")],
         ["Mobile", client.get("mobile", "")],
         ["Consumer Number", client.get("consumer_number", "—")],
         ["Address", f"{client.get('address','')}, {client.get('city','')}, {client.get('state','')} - {client.get('pincode','')}"],
-        ["Aadhaar (last 4)", (client.get("aadhaar","") or "")[-4:] or "—"],
+        id_kv_row,
     ]))
     story.append(Spacer(1, 0.4 * cm))
 
