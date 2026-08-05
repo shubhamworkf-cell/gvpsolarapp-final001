@@ -3251,29 +3251,75 @@ async def create_client(data: ClientIn, user=Depends(get_current_user)):
         stages["Onboarding"] = True
     payload = data.model_dump()
     payload["stages"] = stages
-    doc = {
+    full_doc = {
         "id": client_id, "sol_id": sol_id, "company_id": user["company_id"],
         "created_by": user["id"], **payload,
         "progress": calc_progress(stages),
         "notes": [], "documents": data.documents or [],
         "created_at": now_iso(), "updated_at": now_iso(),
     }
-    await db.clients.insert_one(doc)
-    doc.pop("_id", None)
+
+    # ── Prepare a clean Supabase-safe payload ─────────────────────────────────
+    # Passing consumer_category, consumer_type, section_number, inverters etc.
+    # directly as top-level columns causes PGRST204 (schema cache miss), which
+    # makes insert_one silently fall back to local JSON only — the client never
+    # lands in Supabase, so GET /clients/{id} returns 404 on every cold start.
+    supabase_doc = _prepare_client_supabase_payload(dict(full_doc))
+    supabase_doc["id"] = client_id          # always keep the primary key
+    supabase_doc["sol_id"] = sol_id
+    supabase_doc["company_id"] = user["company_id"]
+    supabase_doc["created_by"] = user["id"]
+    supabase_doc["created_at"] = full_doc["created_at"]
+    supabase_doc["updated_at"] = full_doc["updated_at"]
+    supabase_doc["notes"] = []
+    supabase_doc["documents"] = full_doc["documents"]
+    supabase_doc["progress"] = full_doc["progress"]
+    supabase_doc["status"] = full_doc.get("status") or data.status
+
+    logger.info(f"[CLIENT-CREATE DIAG] Creating client id={client_id} sol_id={sol_id} for company={user['company_id']}")
+    logger.info(f"[CLIENT-CREATE DIAG] Supabase insert payload keys: {list(supabase_doc.keys())}")
+
+    # Insert the clean doc into Supabase
+    await db.clients.insert_one(supabase_doc)
+
+    # Also persist the fully-enriched doc locally so it's immediately readable
+    try:
+        await LocalFileCollection("clients").insert_one(dict(full_doc))
+    except Exception:
+        pass
+
+    # Verify the client actually landed in Supabase
+    inserted = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
+    if inserted:
+        logger.info(f"[CLIENT-CREATE DIAG] ✓ Client {client_id} confirmed in Supabase")
+    else:
+        logger.error(f"[CLIENT-CREATE DIAG] ✗ Client {client_id} NOT found in Supabase after insert — returning doc from memory")
+
+    full_doc.pop("_id", None)
     await log_activity(user["company_id"], user["id"], user["name"], "Added Client", data.full_name)
     await push_notification(user["company_id"], "admin", "New Client Added", f"{data.full_name} ({sol_id})")
-    return doc
+    return _enrich_client_doc(inserted) if inserted else _enrich_client_doc(full_doc)
 
 @api_router.get("/clients/{client_id}")
 async def get_client(client_id: str, user=Depends(get_current_user)):
+    logger.info(f"[CLIENT-GET DIAG] GET /clients/{client_id} | company_id={user.get('company_id')} user_id={user.get('id')}")
     c = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
+    if c:
+        logger.info(f"[CLIENT-GET DIAG] ✓ Found by id+company_id")
     if not c:
         c = await db.clients.find_one({"sol_id": client_id, "company_id": user["company_id"]}, {"_id": 0})
+        if c:
+            logger.info(f"[CLIENT-GET DIAG] ✓ Found by sol_id+company_id")
     if not c:
         c = await db.clients.find_one({"id": client_id}, {"_id": 0})
+        if c:
+            logger.warning(f"[CLIENT-GET DIAG] ⚠ Found by id only (no company_id match) — company_id in DB={c.get('company_id')} vs user={user.get('company_id')}")
     if not c:
         c = await db.clients.find_one({"sol_id": client_id}, {"_id": 0})
+        if c:
+            logger.warning(f"[CLIENT-GET DIAG] ⚠ Found by sol_id only (no company_id match)")
     if not c:
+        logger.error(f"[CLIENT-GET DIAG] ✗ Client {client_id} NOT FOUND in Supabase or local — returning 404")
         raise HTTPException(status_code=404, detail="Not found")
     c = _enrich_client_doc(c)
     c["high_value_assets"] = [a for a in _load_local_assets() if a.get("client_id") == client_id and a.get("company_id") == user["company_id"]]
