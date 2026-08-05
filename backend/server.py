@@ -9869,6 +9869,22 @@ async def parse_pdf_products(file: UploadFile = File(...), user=Depends(get_curr
     return {"ok": True, "rows": parsed_rows, "count": len(parsed_rows)}
 
 
+@api_router.post("/inventory/products/export-pdf")
+async def export_product_master_pdf_endpoint(payload: dict, user=Depends(get_current_user)):
+    """Generates an A4 Landscape PDF export for the Product Master view."""
+    products = payload.get("products") or []
+    company = await db.company_details.find_one({}) or {}
+    company = _enrich_company_doc(company)
+    
+    from pdf_generator import generate_product_master_pdf
+    pdf_bytes = generate_product_master_pdf(products, company)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=Product_Master.pdf"}
+    )
+
+
 app.include_router(api_router)
 
 app.add_middleware(

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 import api, { formatApiError } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,12 +27,10 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
   const [drawerProduct, setDrawerProduct] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [importModalOpen, setImportModalOpen] = useState(false);
-  const [importModalType, setImportModalType] = useState("pdf");
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const startAdd = () => { setEditing(null); setForm(EMPTY()); setOpen(true); };
   const startEdit = (p) => { setDrawerProduct(p); };
-  const openImport = (type) => { setImportModalType(type); setImportModalOpen(true); };
 
   const save = async () => {
     if (!form.name?.trim()) { toast.error("Product name required"); return; }
@@ -85,30 +84,55 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
     });
   }, [products, localSearch, globalSearch]);
 
-  const handleDownloadCSV = () => {
+  const handleExportExcel = () => {
     if (!filtered || filtered.length === 0) {
       toast.error("No product data to export");
       return;
     }
-    const headers = ["Product Name", "Size", "Category", "Unit", "Min Stock", "Rate", "Current Stock", "Status"];
-    const rows = filtered.map(p => [
-      `"${(p.name || "").replace(/"/g, '""')}"`,
-      `"${(p.size || "").replace(/"/g, '""')}"`,
-      `"${(p.category || "Solar").replace(/"/g, '""')}"`,
-      `"${(p.unit || "Nos").replace(/"/g, '""')}"`,
-      p.min_stock || 0,
-      p.rate || 0,
-      p.balance || 0,
-      `"${(p.stock_status || "Normal").replace(/"/g, '""')}"`
-    ]);
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "Product_Master.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const data = filtered.map((p) => ({
+      "Product Name": p.name || "",
+      "Size": p.size || "",
+      "Category": p.category || "Solar",
+      "Unit": p.unit || "Nos",
+      "Min Stock": p.min_stock || 0,
+      "Rate": p.rate || 0,
+      "Current Stock": p.balance || 0,
+      "Status": p.stock_status || "Normal"
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Product Master");
+    XLSX.writeFile(wb, "Product_Master.xlsx");
+    toast.success(`Exported ${filtered.length} products to Excel`);
+  };
+
+  const handleExportPDF = async () => {
+    if (!filtered || filtered.length === 0) {
+      toast.error("No product data to export");
+      return;
+    }
+    setExportingPdf(true);
+    try {
+      const response = await api.post(
+        "/inventory/products/export-pdf",
+        { products: filtered },
+        { responseType: "blob" }
+      );
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: "application/pdf" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", "Product_Master.pdf");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`Exported ${filtered.length} products to PDF`);
+    } catch (err) {
+      toast.error("Failed to generate Product Master PDF");
+    } finally {
+      setExportingPdf(false);
+    }
   };
 
   React.useEffect(() => {
@@ -142,20 +166,12 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
                 />
               </div>
 
-              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs" onClick={() => openImport("csv")} data-testid="import-csv-btn">
-                <FileSpreadsheet className="w-3.5 h-3.5 mr-1 text-emerald-600" /> Import CSV
+              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs" onClick={handleExportExcel} data-testid="export-excel-btn">
+                <FileSpreadsheet className="w-3.5 h-3.5 mr-1 text-emerald-600" /> Export Excel
               </Button>
 
-              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs" onClick={() => openImport("excel")} data-testid="import-excel-btn">
-                <FileSpreadsheet className="w-3.5 h-3.5 mr-1 text-green-600" /> Import Excel
-              </Button>
-
-              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs" onClick={() => openImport("pdf")} data-testid="import-pdf-btn">
-                <FileText className="w-3.5 h-3.5 mr-1 text-red-600" /> Import PDF
-              </Button>
-
-              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs" onClick={handleDownloadCSV} data-testid="product-master-download-btn">
-                <Download className="w-3.5 h-3.5 mr-1 text-blue-600" /> Export
+              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs" onClick={handleExportPDF} disabled={exportingPdf} data-testid="export-pdf-btn">
+                <FileText className="w-3.5 h-3.5 mr-1 text-red-600" /> {exportingPdf ? "Exporting PDF…" : "Export PDF"}
               </Button>
 
               <Button className="bg-blue-600 hover:bg-blue-700 text-xs" onClick={startAdd} data-testid="add-product-btn">

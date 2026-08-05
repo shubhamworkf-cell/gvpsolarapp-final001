@@ -2,7 +2,7 @@ from __future__ import annotations
 """PDF generators for Solarix documents."""
 from io import BytesIO
 from datetime import datetime, timezone
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib import colors
@@ -2131,4 +2131,122 @@ def generate_ledger_pdf(client: dict, ledger: dict, company: dict) -> bytes:
     story.append(_table(rows, col_widths=[5.5 * cm, 2.5 * cm, 1.5 * cm, 2 * cm, 2 * cm, 2 * cm, 2.5 * cm], header_row=True))
     
     pdf.build(story)
+    return buf.getvalue()
+
+
+def make_product_master_canvas(company: dict):
+    company_name = (company.get("company_name") or company.get("name") or "Solar App").strip()
+
+    class ProductMasterCanvas(canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._saved_page_states = []
+
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            num_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.draw_page_decorations(num_pages)
+                super().showPage()
+            super().save()
+
+        def draw_page_decorations(self, page_count):
+            self.saveState()
+            self.setStrokeColor(colors.HexColor('#cbd5e1'))
+            self.setLineWidth(0.5)
+            # A4 Landscape dimensions: width 29.7 cm, height 21.0 cm
+            self.line(1.2 * cm, 1.2 * cm, 29.7 * cm - 1.2 * cm, 1.2 * cm)
+
+            self.setFont("Helvetica", 8)
+            self.setFillColor(colors.HexColor('#475569'))
+            if company_name:
+                self.drawString(1.2 * cm, 0.8 * cm, company_name)
+            self.drawCentredString(14.85 * cm, 0.8 * cm, "Product Master Inventory Report")
+            self.drawRightString(29.7 * cm - 1.2 * cm, 0.8 * cm, f"Page {self._pageNumber} of {page_count}")
+            self.restoreState()
+
+    return ProductMasterCanvas
+
+
+def generate_product_master_pdf(products: list, company: dict) -> bytes:
+    buf = BytesIO()
+    pdf = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4),
+        leftMargin=1.2 * cm,
+        rightMargin=1.2 * cm,
+        topMargin=1.2 * cm,
+        bottomMargin=1.8 * cm
+    )
+    story = []
+
+    story.extend(_header(company))
+
+    STYLE_TITLE = ParagraphStyle('pm_t', parent=styles['Normal'], fontSize=15, fontName='Helvetica-Bold', leading=18, textColor=colors.HexColor('#0f172a'))
+    STYLE_SUBTITLE = ParagraphStyle('pm_st', parent=styles['Normal'], fontSize=8.5, fontName='Helvetica', leading=12, textColor=colors.HexColor('#475569'))
+
+    now_str = datetime.now().strftime("%d %b %Y, %I:%M %p")
+    story.append(Paragraph("<b>PRODUCT MASTER INVENTORY REPORT</b>", STYLE_TITLE))
+    story.append(Paragraph(f"Exported Date & Time: {now_str} | Total Products Exported: <b>{len(products)}</b>", STYLE_SUBTITLE))
+    story.append(Spacer(1, 0.3 * cm))
+
+    style_cell = ParagraphStyle('cell_norm', parent=styles['Normal'], fontSize=8, fontName='Helvetica', leading=10, textColor=colors.HexColor('#1e293b'))
+    style_cell_bold = ParagraphStyle('cell_bold', parent=styles['Normal'], fontSize=8, fontName='Helvetica-Bold', leading=10, textColor=colors.HexColor('#0f172a'))
+    style_cell_right = ParagraphStyle('cell_r', parent=styles['Normal'], fontSize=8, fontName='Helvetica', leading=10, alignment=2, textColor=colors.HexColor('#1e293b'))
+    style_cell_center = ParagraphStyle('cell_c', parent=styles['Normal'], fontSize=8, fontName='Helvetica', leading=10, alignment=1, textColor=colors.HexColor('#1e293b'))
+
+    hdr_cell = lambda txt, align=0: Paragraph(f"<b><font color='#ffffff' size='8'>{txt}</font></b>", ParagraphStyle('h', parent=styles['Normal'], alignment=align))
+
+    table_data = [
+        [
+            hdr_cell("Product Name"),
+            hdr_cell("Size"),
+            hdr_cell("Category"),
+            hdr_cell("Unit", 1),
+            hdr_cell("Min Stock", 2),
+            hdr_cell("Rate", 2),
+            hdr_cell("Current Stock", 2),
+            hdr_cell("Status", 1)
+        ]
+    ]
+
+    for p in products:
+        name = str(p.get("name") or "")
+        size = str(p.get("size") or "—")
+        category = str(p.get("category") or "Solar")
+        unit = str(p.get("unit") or "Nos")
+        min_stock = str(p.get("min_stock") or 0)
+        rate = f"₹{p.get('rate', 0):,.2f}" if isinstance(p.get('rate'), (int, float)) else str(p.get('rate') or "0")
+        stock = str(p.get("balance") or 0)
+        status = str(p.get("stock_status") or "Normal")
+
+        table_data.append([
+            Paragraph(name, style_cell_bold),
+            Paragraph(size, style_cell),
+            Paragraph(category, style_cell),
+            Paragraph(unit, style_cell_center),
+            Paragraph(min_stock, style_cell_right),
+            Paragraph(rate, style_cell_right),
+            Paragraph(stock, style_cell_right),
+            Paragraph(status, style_cell_center)
+        ])
+
+    col_widths = [6.5 * cm, 3.5 * cm, 3.5 * cm, 2.0 * cm, 2.3 * cm, 2.8 * cm, 2.7 * cm, 4.0 * cm]
+    t = Table(table_data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0f172a')),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+    ]))
+
+    story.append(t)
+    pdf.build(story, canvasmaker=make_product_master_canvas(company))
     return buf.getvalue()
