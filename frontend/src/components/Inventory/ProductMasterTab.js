@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Pencil, Trash2, Plus, Boxes, Search, Download } from "lucide-react";
+import { Pencil, Trash2, Plus, Boxes, Search, Download, FileSpreadsheet, FileText, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Field, SelectField, ConfirmDialog, UNIT_OPTIONS, CATEGORY_OPTIONS } from "./_shared";
 import ProductDrawer from "./ProductDrawer";
+import ProductImportModal from "./ProductImportModal";
 
 const STATUS_STYLES = {
   "Normal": "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -25,9 +26,12 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
   const [drawerProduct, setDrawerProduct] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importModalType, setImportModalType] = useState("pdf");
 
   const startAdd = () => { setEditing(null); setForm(EMPTY()); setOpen(true); };
   const startEdit = (p) => { setDrawerProduct(p); };
+  const openImport = (type) => { setImportModalType(type); setImportModalOpen(true); };
 
   const save = async () => {
     if (!form.name?.trim()) { toast.error("Product name required"); return; }
@@ -138,12 +142,24 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
                 />
               </div>
 
-              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50" onClick={handleDownloadCSV} data-testid="product-master-download-btn">
-                <Download className="w-4 h-4 mr-1.5 text-blue-600" /> Download
+              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs" onClick={() => openImport("csv")} data-testid="import-csv-btn">
+                <FileSpreadsheet className="w-3.5 h-3.5 mr-1 text-emerald-600" /> Import CSV
               </Button>
 
-              <Button className="bg-blue-600 hover:bg-blue-700" onClick={startAdd} data-testid="add-product-btn">
-                <Plus className="w-4 h-4 mr-1.5" /> Add Product
+              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs" onClick={() => openImport("excel")} data-testid="import-excel-btn">
+                <FileSpreadsheet className="w-3.5 h-3.5 mr-1 text-green-600" /> Import Excel
+              </Button>
+
+              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs" onClick={() => openImport("pdf")} data-testid="import-pdf-btn">
+                <FileText className="w-3.5 h-3.5 mr-1 text-red-600" /> Import PDF
+              </Button>
+
+              <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs" onClick={handleDownloadCSV} data-testid="product-master-download-btn">
+                <Download className="w-3.5 h-3.5 mr-1 text-blue-600" /> Export
+              </Button>
+
+              <Button className="bg-blue-600 hover:bg-blue-700 text-xs" onClick={startAdd} data-testid="add-product-btn">
+                <Plus className="w-3.5 h-3.5 mr-1" /> Add Product
               </Button>
             </div>
           </div>
@@ -282,6 +298,14 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
         product={drawerProduct}
         open={!!drawerProduct}
         onClose={() => setDrawerProduct(null)}
+        onChanged={() => { onChanged?.(); }}
+      />
+
+      <ProductImportModal
+        open={importModalOpen}
+        onOpenChange={setImportModalOpen}
+        initialType={importModalType}
+        existingProducts={products}
         onChanged={() => { onChanged?.(); }}
       />
     </div>

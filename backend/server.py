@@ -9744,6 +9744,86 @@ async def export_client_ledger(client_id: str, format: str = "csv", user=Depends
     else:
         raise HTTPException(status_code=400, detail="Invalid export format")
 
+@api_router.post("/inventory/products/parse-pdf")
+async def parse_pdf_products(file: UploadFile = File(...), user=Depends(get_current_user)):
+    """Extracts candidate Product Master rows from an uploaded PDF document."""
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Uploaded file must be a PDF document.")
+        
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded PDF file is empty.")
+        
+    extracted_text = ""
+    try:
+        from pypdf import PdfReader
+        from io import BytesIO
+        reader = PdfReader(BytesIO(contents))
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                extracted_text += t + "\n"
+    except Exception as e:
+        logger.error(f"Error extracting text from PDF with pypdf: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to read PDF document text: {e}")
+
+    if not extracted_text.strip():
+        raise HTTPException(status_code=400, detail="No readable text streams found in PDF. Please ensure file contains selectable text.")
+
+    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
+    skip_keywords = ["sl no", "s.no", "page", "total", "subtotal", "gstin", "invoice", "product master", "report", "date"]
+
+    parsed_rows = []
+    for line in lines:
+        lower_line = line.lower()
+        if any(lower_line.startswith(kw) for kw in skip_keywords):
+            continue
+            
+        parts = [p.strip() for p in re.split(r'\t|,|\||\s{2,}', line) if p.strip()]
+        if not parts:
+            continue
+            
+        name = parts[0]
+        if len(name) < 2 or name.isdigit():
+            continue
+            
+        name_lower = name.lower()
+        category = "Solar Panel" if any(w in name_lower for w in ["panel", "pv", "module", "mono", "poly"]) else ("Inverter" if any(w in name_lower for w in ["inverter", "inv", "hybrid", "growatt", "deye"]) else "Others")
+        
+        brand = parts[1] if len(parts) > 1 and not parts[1].isdigit() and len(parts[1]) < 30 else ""
+        size = parts[2] if len(parts) > 2 and len(parts[2]) < 40 else ""
+        unit = "Nos"
+        min_stock = 0
+        hsn = ""
+        gst = ""
+        high_value = False
+        
+        for p in parts[1:]:
+            p_upper = p.upper()
+            if p_upper in ("NOS", "PCS", "SETS", "MTR", "KG", "BOX", "PKT", "FEET", "ROLL"):
+                unit = p
+            elif re.match(r'^\d{4,8}$', p):
+                hsn = p
+            elif "%" in p or "GST" in p_upper:
+                gst = p
+            elif p.isdigit() and int(p) < 1000 and min_stock == 0:
+                min_stock = int(p)
+
+        parsed_rows.append({
+            "name": name,
+            "category": category,
+            "brand": brand,
+            "size": size,
+            "unit": unit,
+            "hsn": hsn,
+            "gst": gst,
+            "min_stock": min_stock,
+            "high_value_goods": high_value
+        })
+
+    return {"ok": True, "rows": parsed_rows, "count": len(parsed_rows)}
+
 
 app.include_router(api_router)
 
