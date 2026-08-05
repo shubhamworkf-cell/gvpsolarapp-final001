@@ -290,26 +290,23 @@ export default function ClientDetail() {
               <Row label="Panel">{client.panel_make || client.panel_brand ? `${client.panel_brand || client.panel_make} ${client.panel_technology || ''} · ${client.panel_wattage}W × ${client.num_panels}`.trim() : "—"}</Row>
               
               {(() => {
-                const invList = Array.isArray(client.inverters) && client.inverters.length > 0 ? client.inverters : (client.inverter_make || client.inverter_capacity ? [{ brand: client.inverter_make || "", model: client.inverter_model || "", capacity: client.inverter_capacity || "", quantity: 1, serial: client.inverter_serial || "" }] : []);
+                const invList = Array.isArray(client.inverters) && client.inverters.length > 0 ? client.inverters : (client.inverter_capacity ? [{ capacity: client.inverter_capacity, quantity: 1 }] : []);
                 return (
-                  <div className="col-span-full border-t border-slate-100 pt-3 mt-1">
-                    <Row label="Total Inverter Capacity">{client.inverter_capacity || "—"}</Row>
-                    <div className="mt-2 space-y-1">
-                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Inverters List ({invList.length})</span>
+                  <div className="col-span-full border-t border-slate-100 pt-3 mt-1 space-y-2">
+                    <Row label="Total Inverter Capacity">{client.inverter_capacity ? `${client.inverter_capacity} kW`.replace(" kW kW", " kW") : "—"}</Row>
+                    <div>
+                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Inverter Configuration</span>
                       {invList.length > 0 ? (
-                        <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg bg-slate-50/50 mt-1">
+                        <div className="space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-xs">
                           {invList.map((inv, idx) => (
-                            <div key={idx} className="p-2.5 text-xs grid grid-cols-2 sm:grid-cols-5 gap-2">
-                              <div><span className="text-slate-400 block text-[10px]">Brand</span><strong className="text-slate-800">{inv.brand || "—"}</strong></div>
-                              <div><span className="text-slate-400 block text-[10px]">Model</span><strong className="text-slate-800">{inv.model || "—"}</strong></div>
-                              <div><span className="text-slate-400 block text-[10px]">Capacity</span><strong className="text-slate-800">{inv.capacity || "—"}</strong></div>
-                              <div><span className="text-slate-400 block text-[10px]">Qty</span><strong className="text-slate-800">{inv.quantity || 1}</strong></div>
-                              <div><span className="text-slate-400 block text-[10px]">Serial(s)</span><strong className="text-slate-800 truncate block">{inv.serial || "—"}</strong></div>
+                            <div key={idx} className="flex items-center gap-2 font-medium text-slate-800">
+                              <span className="inline-block w-2 h-2 rounded-full bg-blue-500"></span>
+                              <span>{inv.capacity || "—"} kW</span> × <span>{inv.quantity || 1}</span>
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <div className="text-xs text-slate-400 italic">No inverters specified</div>
+                        <div className="text-xs text-slate-400 italic">No inverter configuration specified</div>
                       )}
                     </div>
                   </div>
@@ -335,52 +332,44 @@ export default function ClientDetail() {
                 <EF label="Panel Technology" v={editData.panel_technology} k="panel_technology" set={setEditData} />
                 <EF label="Panel Wattage (Wp)" v={editData.panel_wattage} k="panel_wattage" type="number" set={setEditData} />
                 <EF label="Number of Panels" v={editData.num_panels} k="num_panels" type="number" set={setEditData} />
-                <EF label="Total Inverter Capacity (Manual)" v={editData.inverter_capacity} k="inverter_capacity" set={setEditData} />
-                <EF label="Year of Manufacturing" v={editData.inverter_year} k="inverter_year" set={setEditData} />
+                <EF label="Total Inverter Capacity (kW)" v={editData.inverter_capacity} k="inverter_capacity" set={setEditData} />
 
                 <div className="col-span-full border-t border-slate-200 pt-4 mt-2">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <Label className="text-sm font-semibold text-slate-800">Inverters List</Label>
-                      <p className="text-xs text-slate-500">Add multiple inverters for this client</p>
-                    </div>
-                    <Button type="button" variant="outline" size="sm" onClick={() => setEditData(prev => ({ ...prev, inverters: [...(prev?.inverters || []), { brand: "", model: "", capacity: "", quantity: 1, serial: "" }] }))} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50">
-                      <Plus className="w-3.5 h-3.5 mr-1" /> Add Inverter
-                    </Button>
+                  <div className="mb-3">
+                    <Label className="text-sm font-semibold text-slate-800">Inverter Configuration</Label>
+                    <p className="text-xs text-slate-500">Specify inverter capacity and quantity breakdown</p>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-2 max-w-xl">
+                    <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-slate-600 px-1">
+                      <div className="col-span-7">Inverter kW</div>
+                      <div className="col-span-4">Qty</div>
+                      <div className="col-span-1 text-center"></div>
+                    </div>
+
                     {(editData.inverters || []).map((inv, idx) => (
-                      <div key={idx} className="grid grid-cols-1 sm:grid-cols-5 gap-2 items-center bg-slate-50 p-3 rounded-lg border border-slate-200">
-                        <div>
-                          <Label className="text-[11px] text-slate-500">Brand</Label>
-                          <Input value={inv.brand} onChange={(e) => { const list = [...(editData.inverters || [])]; list[idx] = { ...list[idx], brand: e.target.value }; setEditData({ ...editData, inverters: list }); }} placeholder="e.g. Sungrow" className="h-8 text-xs bg-white" />
+                      <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
+                        <div className="col-span-7">
+                          <Input value={inv.capacity} onChange={(e) => { const list = [...(editData.inverters || [])]; list[idx] = { ...list[idx], capacity: e.target.value }; setEditData({ ...editData, inverters: list }); }} placeholder="e.g. 60" className="h-8 text-xs bg-white" />
                         </div>
-                        <div>
-                          <Label className="text-[11px] text-slate-500">Model</Label>
-                          <Input value={inv.model} onChange={(e) => { const list = [...(editData.inverters || [])]; list[idx] = { ...list[idx], model: e.target.value }; setEditData({ ...editData, inverters: list }); }} placeholder="e.g. SG60CX" className="h-8 text-xs bg-white" />
+                        <div className="col-span-4">
+                          <Input type="number" min="1" value={inv.quantity} onChange={(e) => { const list = [...(editData.inverters || [])]; list[idx] = { ...list[idx], quantity: e.target.value }; setEditData({ ...editData, inverters: list }); }} placeholder="1" className="h-8 text-xs bg-white" />
                         </div>
-                        <div>
-                          <Label className="text-[11px] text-slate-500">Capacity (kW)</Label>
-                          <Input value={inv.capacity} onChange={(e) => { const list = [...(editData.inverters || [])]; list[idx] = { ...list[idx], capacity: e.target.value }; setEditData({ ...editData, inverters: list }); }} placeholder="e.g. 60 kW" className="h-8 text-xs bg-white" />
-                        </div>
-                        <div>
-                          <Label className="text-[11px] text-slate-500">Qty</Label>
-                          <Input type="number" min="1" value={inv.quantity} onChange={(e) => { const list = [...(editData.inverters || [])]; list[idx] = { ...list[idx], quantity: e.target.value }; setEditData({ ...editData, inverters: list }); }} className="h-8 text-xs bg-white" />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1">
-                            <Label className="text-[11px] text-slate-500">Serial No(s)</Label>
-                            <Input value={inv.serial} onChange={(e) => { const list = [...(editData.inverters || [])]; list[idx] = { ...list[idx], serial: e.target.value }; setEditData({ ...editData, inverters: list }); }} placeholder="e.g. SG60001" className="h-8 text-xs bg-white" />
-                          </div>
+                        <div className="col-span-1 flex justify-center">
                           {editData.inverters?.length > 1 && (
-                            <Button type="button" variant="ghost" size="icon" onClick={() => { const list = (editData.inverters || []).filter((_, i) => i !== idx); setEditData({ ...editData, inverters: list }); }} className="h-8 w-8 mt-4 text-red-500 hover:bg-red-50">
+                            <Button type="button" variant="ghost" size="icon" onClick={() => { const list = (editData.inverters || []).filter((_, i) => i !== idx); setEditData({ ...editData, inverters: list }); }} className="h-7 w-7 text-red-500 hover:bg-red-50" title="Remove">
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           )}
                         </div>
                       </div>
                     ))}
+
+                    <div className="pt-1">
+                      <Button type="button" variant="outline" size="sm" onClick={() => setEditData(prev => ({ ...prev, inverters: [...(prev?.inverters || []), { capacity: "", quantity: 1 }] }))} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50">
+                        <Plus className="w-3.5 h-3.5 mr-1" /> Add Inverter
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -141,51 +141,44 @@ export default function ClientNew() {
               </F>
               <F label="Panel Wattage (W)"><Input type="number" value={form.panel_wattage} onChange={set("panel_wattage")} /></F>
               <F label="Number of Panels"><Input type="number" value={form.num_panels} onChange={set("num_panels")} /></F>
-              <F label="Total Inverter Capacity (Manual)"><Input value={form.inverter_capacity} onChange={set("inverter_capacity")} placeholder="e.g. 340 kW" /></F>
+              <F label="Total Inverter Capacity (kW)"><Input value={form.inverter_capacity} onChange={set("inverter_capacity")} placeholder="e.g. 340" /></F>
 
               <div className="col-span-full border-t border-slate-200 pt-4 mt-2">
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <Label className="text-sm font-semibold text-slate-800">Inverters List</Label>
-                    <p className="text-xs text-slate-500">Add multiple inverters for this client system</p>
-                  </div>
-                  <Button type="button" variant="outline" size="sm" onClick={addInverterRow} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50">
-                    <Plus className="w-3.5 h-3.5 mr-1" /> Add Inverter
-                  </Button>
+                <div className="mb-3">
+                  <Label className="text-sm font-semibold text-slate-800">Inverter Configuration</Label>
+                  <p className="text-xs text-slate-500">Specify inverter capacity and quantity breakdown</p>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2 max-w-xl">
+                  <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-slate-600 px-1">
+                    <div className="col-span-7">Inverter kW</div>
+                    <div className="col-span-4">Qty</div>
+                    <div className="col-span-1 text-center"></div>
+                  </div>
+
                   {(form.inverters || []).map((inv, idx) => (
-                    <div key={idx} className="grid grid-cols-1 sm:grid-cols-5 gap-2 items-center bg-slate-50 p-3 rounded-lg border border-slate-200">
-                      <div>
-                        <Label className="text-[11px] text-slate-500">Brand</Label>
-                        <Input value={inv.brand} onChange={(e) => updateInverterRow(idx, "brand", e.target.value)} placeholder="e.g. Sungrow" className="h-8 text-xs bg-white" />
+                    <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
+                      <div className="col-span-7">
+                        <Input value={inv.capacity} onChange={(e) => updateInverterRow(idx, "capacity", e.target.value)} placeholder="e.g. 60" className="h-8 text-xs bg-white" />
                       </div>
-                      <div>
-                        <Label className="text-[11px] text-slate-500">Model</Label>
-                        <Input value={inv.model} onChange={(e) => updateInverterRow(idx, "model", e.target.value)} placeholder="e.g. SG60CX" className="h-8 text-xs bg-white" />
+                      <div className="col-span-4">
+                        <Input type="number" min="1" value={inv.quantity} onChange={(e) => updateInverterRow(idx, "quantity", e.target.value)} placeholder="1" className="h-8 text-xs bg-white" />
                       </div>
-                      <div>
-                        <Label className="text-[11px] text-slate-500">Capacity (kW)</Label>
-                        <Input value={inv.capacity} onChange={(e) => updateInverterRow(idx, "capacity", e.target.value)} placeholder="e.g. 60 kW" className="h-8 text-xs bg-white" />
-                      </div>
-                      <div>
-                        <Label className="text-[11px] text-slate-500">Qty</Label>
-                        <Input type="number" min="1" value={inv.quantity} onChange={(e) => updateInverterRow(idx, "quantity", e.target.value)} className="h-8 text-xs bg-white" />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1">
-                          <Label className="text-[11px] text-slate-500">Serial No(s)</Label>
-                          <Input value={inv.serial} onChange={(e) => updateInverterRow(idx, "serial", e.target.value)} placeholder="e.g. SG60001, SG60002" className="h-8 text-xs bg-white" />
-                        </div>
+                      <div className="col-span-1 flex justify-center">
                         {form.inverters.length > 1 && (
-                          <Button type="button" variant="ghost" size="icon" onClick={() => removeInverterRow(idx)} className="h-8 w-8 mt-4 text-red-500 hover:bg-red-50">
+                          <Button type="button" variant="ghost" size="icon" onClick={() => removeInverterRow(idx)} className="h-7 w-7 text-red-500 hover:bg-red-50" title="Remove">
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
                         )}
                       </div>
                     </div>
                   ))}
+
+                  <div className="pt-1">
+                    <Button type="button" variant="outline" size="sm" onClick={addInverterRow} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50">
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add Inverter
+                    </Button>
+                  </div>
                 </div>
               </div>
 
