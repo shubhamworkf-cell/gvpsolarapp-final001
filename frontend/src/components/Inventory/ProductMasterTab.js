@@ -28,6 +28,8 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
   const [confirmDel, setConfirmDel] = useState(null);
   const [busy, setBusy] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importModalType, setImportModalType] = useState("pdf");
 
   const startAdd = () => { setEditing(null); setForm(EMPTY()); setOpen(true); };
   const startEdit = (p) => { setDrawerProduct(p); };
