@@ -147,7 +147,7 @@ def resolve_annexure_values(client: dict, company: dict) -> Dict[str, str]:
     installation_date = _resolve_installation_date(client)
 
     # ── Company / vendor ──────────────────────────────────────────────────────
-    company_name    = _s(company.get("company_name") or "")
+    company_name    = _s(company.get("company_name") or company.get("name") or company.get("legal_business_name") or company.get("vendor_name") or "")
     company_city    = _s(company.get("city") or "")
     company_details = f"{company_name}, {company_city}".strip(", ") if (company_name or company_city) else company_name
 

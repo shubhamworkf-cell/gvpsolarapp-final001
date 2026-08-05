@@ -3688,20 +3688,64 @@ async def generate_document(client_id: str, payload: Dict[str, Any], user=Depend
 async def _enrich_company_doc(company_doc: dict) -> dict:
     if not company_doc:
         return {}
-    logo_file_id = company_doc.get("logo_file_id")
+    c = dict(company_doc)
+    company_name = (c.get("company_name") or c.get("name") or c.get("legal_business_name") or c.get("vendor_name") or "").strip()
+    owner_name = (c.get("owner_name") or c.get("proprietor_name") or c.get("authorized_signatory") or c.get("manager_name") or "").strip()
+    gst = (c.get("gst_number") or c.get("gstin") or c.get("gst") or "").strip()
+    pan = (c.get("pan_number") or c.get("pan") or "").strip()
+    address = (c.get("address") or c.get("address_line_1") or c.get("office_address") or c.get("registered_address") or "").strip()
+    mobile = (c.get("mobile") or c.get("mobile_number") or c.get("phone") or c.get("phone_number") or "").strip()
+    email = (c.get("email") or "").strip()
+    website = (c.get("website") or "").strip()
+    city = (c.get("city") or "").strip()
+    state = (c.get("state") or "").strip()
+    pincode = (c.get("pincode") or "").strip()
+    cin = (c.get("cin") or "").strip()
+    license_number = (c.get("license_number") or "").strip()
+
+    c["company_name"] = company_name
+    c["name"] = company_name
+    c["legal_business_name"] = company_name
+    c["vendor_name"] = company_name
+    c["owner_name"] = owner_name
+    c["proprietor_name"] = owner_name
+    c["authorized_signatory"] = owner_name
+    c["manager_name"] = owner_name
+    c["gst_number"] = gst
+    c["gstin"] = gst
+    c["gst"] = gst
+    c["pan_number"] = pan
+    c["pan"] = pan
+    c["address"] = address
+    c["address_line_1"] = address
+    c["office_address"] = address
+    c["registered_address"] = address
+    c["mobile"] = mobile
+    c["mobile_number"] = mobile
+    c["phone"] = mobile
+    c["phone_number"] = mobile
+    c["email"] = email
+    c["website"] = website
+    c["city"] = city
+    c["state"] = state
+    c["pincode"] = pincode
+    c["cin"] = cin
+    c["license_number"] = license_number
+
+    logo_file_id = c.get("logo_file_id")
     if logo_file_id:
         if logo_file_id in _company_logo_cache:
-            company_doc["logo_bytes"] = _company_logo_cache[logo_file_id]
+            c["logo_bytes"] = _company_logo_cache[logo_file_id]
         else:
             file_rec = await db.files.find_one({"id": logo_file_id, "is_deleted": False})
             if file_rec:
                 try:
                     logo_bytes, _ = get_object(file_rec["storage_path"])
-                    company_doc["logo_bytes"] = logo_bytes
+                    c["logo_bytes"] = logo_bytes
                     _company_logo_cache[logo_file_id] = logo_bytes
                 except Exception as e:
                     logger.error(f"Error fetching company logo: {e}")
-    return company_doc
+    return c
 
 @api_router.post("/documents/preview")
 async def generate_document_preview(payload: Dict[str, Any], user=Depends(get_current_user)):

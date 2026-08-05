@@ -20,16 +20,16 @@ HEADER_TEXT_STYLE = ParagraphStyle('header_text_style', parent=styles['BodyText'
 
 
 def _header(company: dict, prepared_by: str | None = None, show_owner: bool = True):
-    company_name = company.get('company_name', 'SOLARIX EPC')
-    owner_name = company.get('owner_name', '')
-    mobile = company.get('mobile', '')
-    email = company.get('email', '')
-    gst = company.get('gst_number', '') or company.get('gst', '')
-    address = company.get('address', '')
-    city = company.get('city', '')
-    state = company.get('state', '')
-    pincode = company.get('pincode', '')
-    website = company.get('website', '')
+    company_name = company.get('company_name') or company.get('name') or company.get('legal_business_name') or ''
+    owner_name = company.get('owner_name') or company.get('proprietor_name') or company.get('authorized_signatory') or ''
+    mobile = company.get('mobile') or company.get('phone') or company.get('phone_number') or ''
+    email = company.get('email') or ''
+    gst = company.get('gst_number') or company.get('gstin') or company.get('gst') or ''
+    address = company.get('address') or company.get('address_line_1') or ''
+    city = company.get('city') or ''
+    state = company.get('state') or ''
+    pincode = company.get('pincode') or ''
+    website = company.get('website') or ''
     
     full_address = f"{address}"
     if city or state or pincode:
@@ -589,8 +589,8 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     )
     story = []
 
-    company_name = company.get('company_name') or 'GVP SOLAR ENERGY'
-    gst_no = company.get('gst_number') or company.get('gst') or '27AKMPD5407A1ZM'
+    company_name = (company.get('company_name') or company.get('name') or company.get('legal_business_name') or '').strip()
+    gst_no = (company.get('gst_number') or company.get('gstin') or company.get('gst') or '').strip()
 
     # Styles
     STYLE_TITLE = ParagraphStyle('wcr_title', parent=styles['Normal'], fontSize=13, fontName='Helvetica-Bold', textColor=colors.HexColor('#0f172a'), alignment=1, spaceBefore=4, spaceAfter=8)
@@ -625,7 +625,7 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
             logo_d = Spacer(8.5 * cm, 1.2 * cm)
 
         p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('wcr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
-        p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>GST NO – {gst_no}</font></b>", ParagraphStyle('wcr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
+        p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>GST NO – {gst_no}</font></b>" if gst_no else "", ParagraphStyle('wcr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
         
         t_hdr = Table([[logo_d, p_title, p_gst]], colWidths=[8.5 * cm, 5.5 * cm, 4.6 * cm])
         t_hdr.setStyle(TableStyle([
@@ -1094,36 +1094,42 @@ def generate_sldr_pdf(client: dict, company: dict) -> bytes:
     return buf.getvalue()
 
 
-class NetMeterCanvas(canvas.Canvas):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._saved_page_states = []
+def make_net_meter_canvas(company: dict):
+    company_name = (company.get("company_name") or company.get("name") or "").strip()
 
-    def showPage(self):
-        self._saved_page_states.append(dict(self.__dict__))
-        self._startPage()
+    class NetMeterCanvas(canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._saved_page_states = []
 
-    def save(self):
-        num_pages = len(self._saved_page_states)
-        for state in self._saved_page_states:
-            self.__dict__.update(state)
-            self.draw_page_decorations(num_pages)
-            super().showPage()
-        super().save()
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
 
-    def draw_page_decorations(self, page_count):
-        self.saveState()
-        # Footer line
-        self.setStrokeColor(colors.HexColor('#cbd5e1'))
-        self.setLineWidth(0.5)
-        self.line(1.5 * cm, 1.2 * cm, 21.0 * cm - 1.5 * cm, 1.2 * cm)
-        
-        self.setFont("Helvetica", 8)
-        self.setFillColor(colors.HexColor('#475569'))
-        self.drawString(1.5 * cm, 0.8 * cm, "GVP SOLAR ENERGY")
-        self.drawCentredString(10.5 * cm, 0.8 * cm, "Net Metering Connection Agreement")
-        self.drawRightString(21.0 * cm - 1.5 * cm, 0.8 * cm, f"Page {self._pageNumber} of {page_count}")
-        self.restoreState()
+        def save(self):
+            num_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.draw_page_decorations(num_pages)
+                super().showPage()
+            super().save()
+
+        def draw_page_decorations(self, page_count):
+            self.saveState()
+            # Footer line
+            self.setStrokeColor(colors.HexColor('#cbd5e1'))
+            self.setLineWidth(0.5)
+            self.line(1.5 * cm, 1.2 * cm, 21.0 * cm - 1.5 * cm, 1.2 * cm)
+            
+            self.setFont("Helvetica", 8)
+            self.setFillColor(colors.HexColor('#475569'))
+            if company_name:
+                self.drawString(1.5 * cm, 0.8 * cm, company_name)
+            self.drawCentredString(10.5 * cm, 0.8 * cm, "Net Metering Connection Agreement")
+            self.drawRightString(21.0 * cm - 1.5 * cm, 0.8 * cm, f"Page {self._pageNumber} of {page_count}")
+            self.restoreState()
+
+    return NetMeterCanvas
 
 
 def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
@@ -1411,40 +1417,46 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     ])
     story.append(sig_block)
 
-    pdf.build(story, canvasmaker=NetMeterCanvas)
+    pdf.build(story, canvasmaker=make_net_meter_canvas(company))
     return buf.getvalue()
 
 
-class VendorCanvas(canvas.Canvas):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._saved_page_states = []
+def make_vendor_canvas(company: dict):
+    company_name = (company.get("company_name") or company.get("name") or "").strip()
 
-    def showPage(self):
-        self._saved_page_states.append(dict(self.__dict__))
-        self._startPage()
+    class VendorCanvas(canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._saved_page_states = []
 
-    def save(self):
-        num_pages = len(self._saved_page_states)
-        for state in self._saved_page_states:
-            self.__dict__.update(state)
-            self.draw_page_decorations(num_pages)
-            super().showPage()
-        super().save()
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
 
-    def draw_page_decorations(self, page_count):
-        self.saveState()
-        # Footer line
-        self.setStrokeColor(colors.HexColor('#cbd5e1'))
-        self.setLineWidth(0.5)
-        self.line(1.5 * cm, 1.2 * cm, 21.0 * cm - 1.5 * cm, 1.2 * cm)
-        
-        self.setFont("Helvetica", 8)
-        self.setFillColor(colors.HexColor('#475569'))
-        self.drawString(1.5 * cm, 0.8 * cm, "GVP SOLAR ENERGY")
-        self.drawCentredString(10.5 * cm, 0.8 * cm, "Rooftop Solar Vendor Agreement")
-        self.drawRightString(21.0 * cm - 1.5 * cm, 0.8 * cm, f"Page {self._pageNumber} of {page_count}")
-        self.restoreState()
+        def save(self):
+            num_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.draw_page_decorations(num_pages)
+                super().showPage()
+            super().save()
+
+        def draw_page_decorations(self, page_count):
+            self.saveState()
+            # Footer line
+            self.setStrokeColor(colors.HexColor('#cbd5e1'))
+            self.setLineWidth(0.5)
+            self.line(1.5 * cm, 1.2 * cm, 21.0 * cm - 1.5 * cm, 1.2 * cm)
+            
+            self.setFont("Helvetica", 8)
+            self.setFillColor(colors.HexColor('#475569'))
+            if company_name:
+                self.drawString(1.5 * cm, 0.8 * cm, company_name)
+            self.drawCentredString(10.5 * cm, 0.8 * cm, "Rooftop Solar Vendor Agreement")
+            self.drawRightString(21.0 * cm - 1.5 * cm, 0.8 * cm, f"Page {self._pageNumber} of {page_count}")
+            self.restoreState()
+
+    return VendorCanvas
 
 
 def generate_vendor_agreement_pdf(client: dict, company: dict) -> bytes:
@@ -1648,21 +1660,24 @@ def generate_vendor_agreement_pdf(client: dict, company: dict) -> bytes:
     ])
     story.append(sig_block)
 
-    pdf.build(story, canvasmaker=VendorCanvas)
+    pdf.build(story, canvasmaker=make_vendor_canvas(company))
     return buf.getvalue()
 
 
 def make_meter_testing_canvas(company: dict):
-    addr = company.get("address") or "SHOP NO – 1-2, FIRST FLOOR, BUILDING NO – 1, KAPAD TEXTILE MARKET ICHALKARANJI (MAH.) - 416115"
-    city = company.get("city") or ""
-    pincode = company.get("pincode") or ""
+    addr = (company.get("address") or company.get("address_line_1") or company.get("office_address") or "").strip()
+    city = (company.get("city") or "").strip()
+    state = (company.get("state") or "").strip()
+    pincode = (company.get("pincode") or "").strip()
     full_addr_parts = [addr]
     if city:
         full_addr_parts.append(city)
+    if state:
+        full_addr_parts.append(state)
     if pincode:
         full_addr_parts.append(f"- {pincode}")
     full_addr = ", ".join(p for p in full_addr_parts if p).replace(", -", " -")
-    phone = company.get("mobile") or company.get("phone") or "+91-9694060806 GIRIRAJ"
+    phone = (company.get("mobile") or company.get("phone") or company.get("phone_number") or "").strip()
 
     class MeterTestingCanvas(canvas.Canvas):
         def __init__(self, *args, **kwargs):
@@ -1690,8 +1705,8 @@ def make_meter_testing_canvas(company: dict):
             self.setFont("Helvetica-Bold", 7.5)
             self.setFillColor(colors.HexColor('#2563eb'))
 
-            line1 = f"OFFICE :- {full_addr}"
-            line2 = f"PHONE : {phone}"
+            line1 = f"OFFICE :- {full_addr}" if full_addr else ""
+            line2 = f"PHONE : {phone}" if phone else ""
 
             self.drawString(1.2 * cm, 1.0 * cm, line1)
             self.drawString(1.2 * cm, 0.65 * cm, line2)
@@ -1716,7 +1731,7 @@ def generate_meter_testing_request_pdf(client: dict, company: dict) -> bytes:
     )
     story = []
 
-    company_name = (company.get('company_name') or 'GVP SOLAR ENERGY').strip()
+    company_name = (company.get('company_name') or company.get('name') or company.get('legal_business_name') or '').strip()
     gst_no = (company.get('gst_number') or company.get('gst') or '').strip()
 
     stages_dict = dict(client.get("stages") or {})
