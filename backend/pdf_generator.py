@@ -2027,14 +2027,32 @@ def generate(doc_type: str, client: dict, company: dict) -> bytes:
     story.append(Spacer(1, 0.4 * cm))
 
     story.append(Paragraph("System Specifications", H2))
-    story.append(_kv_table([
-        ["System Size", f"{client.get('system_kw',0)} kW"],
-        ["Phase Type", client.get("phase_type", "")],
-        ["Subsidy Eligible", "Yes" if client.get("subsidy_eligible") else "No"],
-        ["Panel", f"{client.get('panel_make','')} · {client.get('panel_wattage','')}W × {client.get('num_panels','')}"],
-        ["Inverter", f"{client.get('inverter_make','')} · {client.get('inverter_capacity','')}"],
-        ["Inverter Serial", client.get("inverter_serial", "—")],
-    ]))
+    _ann_inv_list = _get_inverters_list(client)
+    if _ann_inv_list:
+        _inv_rows = []
+        for _i, _inv in enumerate(_ann_inv_list):
+            _lbl = "Inverter" if len(_ann_inv_list) == 1 else f"Inverter #{_i+1}"
+            _brand = str(_inv.get("brand") or client.get("inverter_make") or "").strip()
+            _cap = str(_inv.get("capacity") or "").strip()
+            _qty = str(_inv.get("quantity") or "1").strip()
+            _inv_rows.append([_lbl, f"{_brand} · {_cap} kW × {_qty}".strip(" ·")])
+        story.append(_kv_table([
+            ["System Size", f"{client.get('system_kw',0)} kW"],
+            ["Phase Type", client.get("phase_type", "")],
+            ["Subsidy Eligible", "Yes" if client.get("subsidy_eligible") else "No"],
+            ["Panel", f"{client.get('panel_make','')} · {client.get('panel_wattage','')}W × {client.get('num_panels','')}"],
+            *_inv_rows,
+            ["Inverter Serial", client.get("inverter_serial", "—")],
+        ]))
+    else:
+        story.append(_kv_table([
+            ["System Size", f"{client.get('system_kw',0)} kW"],
+            ["Phase Type", client.get("phase_type", "")],
+            ["Subsidy Eligible", "Yes" if client.get("subsidy_eligible") else "No"],
+            ["Panel", f"{client.get('panel_make','')} · {client.get('panel_wattage','')}W × {client.get('num_panels','')}"],
+            ["Inverter", f"{client.get('inverter_make','')} · {client.get('inverter_capacity','')}"],
+            ["Inverter Serial", client.get("inverter_serial", "—")],
+        ]))
     story.append(Spacer(1, 0.5 * cm))
 
     if doc_type_clean == "annexure":

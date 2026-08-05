@@ -19,14 +19,14 @@ export default function ClientNew() {
     full_name: "", mobile: "", alt_mobile: "", consumer_number: "", address: "", city: "", state: "", pincode: "", aadhaar: "",
     system_kw: 0, panel_make: "", panel_brand: "", panel_technology: "", panel_wattage: 0, num_panels: 0,
     inverter_make: "", inverter_capacity: "", inverter_model: "", inverter_serial: "", inverter_year: "",
-    inverters: [{ brand: "", model: "", capacity: "", quantity: 1, serial: "" }],
+    inverters: [{ brand: "", capacity: "", quantity: 1 }],
     sanction_number: "", consumer_type: "", phase_type: "Single Phase", subsidy_eligible: false, status: "Lead", documents: [],
   });
 
   const addInverterRow = () => {
     setForm((prev) => ({
       ...prev,
-      inverters: [...(prev.inverters || []), { brand: "", model: "", capacity: "", quantity: 1, serial: "" }],
+      inverters: [...(prev.inverters || []), { brand: "", capacity: "", quantity: 1 }],
     }));
   };
 
@@ -149,19 +149,23 @@ export default function ClientNew() {
                   <p className="text-xs text-slate-500">Specify inverter capacity and quantity breakdown</p>
                 </div>
 
-                <div className="space-y-2 max-w-xl">
+                <div className="space-y-2 max-w-2xl">
                   <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-slate-600 px-1">
-                    <div className="col-span-7">Inverter kW</div>
-                    <div className="col-span-4">Qty</div>
-                    <div className="col-span-1 text-center"></div>
+                    <div className="col-span-5">Brand</div>
+                    <div className="col-span-3">kW</div>
+                    <div className="col-span-3">Qty</div>
+                    <div className="col-span-1"></div>
                   </div>
 
                   {(form.inverters || []).map((inv, idx) => (
                     <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
-                      <div className="col-span-7">
-                        <Input value={inv.capacity} onChange={(e) => updateInverterRow(idx, "capacity", e.target.value)} placeholder="e.g. 60" className="h-8 text-xs bg-white" />
+                      <div className="col-span-5">
+                        <Input value={inv.brand || ""} onChange={(e) => updateInverterRow(idx, "brand", e.target.value)} placeholder="e.g. Growatt" className="h-8 text-xs bg-white" />
                       </div>
-                      <div className="col-span-4">
+                      <div className="col-span-3">
+                        <Input value={inv.capacity} onChange={(e) => updateInverterRow(idx, "capacity", e.target.value)} placeholder="60" className="h-8 text-xs bg-white" />
+                      </div>
+                      <div className="col-span-3">
                         <Input type="number" min="1" value={inv.quantity} onChange={(e) => updateInverterRow(idx, "quantity", e.target.value)} placeholder="1" className="h-8 text-xs bg-white" />
                       </div>
                       <div className="col-span-1 flex justify-center">

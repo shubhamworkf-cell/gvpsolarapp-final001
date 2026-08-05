@@ -633,14 +633,23 @@ export default function ClientDataDetail() {
 
               <div className="md:col-span-2 border-t border-slate-200 pt-3 mt-1">
                 <Label className="text-xs font-semibold text-slate-800">Inverter Configuration</Label>
-                <p className="text-[11px] text-slate-500 mb-2">Specify inverter capacity and quantity breakdown</p>
+                <p className="text-[11px] text-slate-500 mb-2">Specify inverter brand, capacity and quantity</p>
                 <div className="space-y-2">
+                  <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-slate-600 px-1">
+                    <div className="col-span-5">Brand</div>
+                    <div className="col-span-3">kW</div>
+                    <div className="col-span-3">Qty</div>
+                    <div className="col-span-1"></div>
+                  </div>
                   {(editForm.inverters || []).map((inv, idx) => (
                     <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
-                      <div className="col-span-7">
-                        <Input value={inv.capacity || ""} onChange={(e) => { const list = [...(editForm.inverters || [])]; list[idx] = { ...list[idx], capacity: e.target.value }; setEditForm({ ...editForm, inverters: list }); }} placeholder="Inverter kW (e.g. 60)" className="h-8 text-xs bg-white" />
+                      <div className="col-span-5">
+                        <Input value={inv.brand || ""} onChange={(e) => { const list = [...(editForm.inverters || [])]; list[idx] = { ...list[idx], brand: e.target.value }; setEditForm({ ...editForm, inverters: list }); }} placeholder="e.g. Growatt" className="h-8 text-xs bg-white" />
                       </div>
-                      <div className="col-span-4">
+                      <div className="col-span-3">
+                        <Input value={inv.capacity || ""} onChange={(e) => { const list = [...(editForm.inverters || [])]; list[idx] = { ...list[idx], capacity: e.target.value }; setEditForm({ ...editForm, inverters: list }); }} placeholder="60" className="h-8 text-xs bg-white" />
+                      </div>
+                      <div className="col-span-3">
                         <Input type="number" min="1" value={inv.quantity || 1} onChange={(e) => { const list = [...(editForm.inverters || [])]; list[idx] = { ...list[idx], quantity: e.target.value }; setEditForm({ ...editForm, inverters: list }); }} placeholder="Qty" className="h-8 text-xs bg-white" />
                       </div>
                       <div className="col-span-1 flex justify-center">
@@ -652,7 +661,7 @@ export default function ClientDataDetail() {
                       </div>
                     </div>
                   ))}
-                  <Button type="button" variant="outline" size="sm" onClick={() => setEditForm(prev => ({ ...prev, inverters: [...(prev?.inverters || []), { capacity: "", quantity: 1 }] }))} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50 mt-1">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setEditForm(prev => ({ ...prev, inverters: [...(prev?.inverters || []), { brand: "", capacity: "", quantity: 1 }] }))} className="text-xs border-blue-300 text-blue-700 hover:bg-blue-50 mt-1">
                     <Plus className="w-3.5 h-3.5 mr-1" /> Add Inverter
                   </Button>
                 </div>
@@ -828,6 +837,7 @@ function BasicInfoSection({ client: c }) {
                   {invList.map((inv, idx) => (
                     <div key={idx} className="flex items-center gap-2 font-medium text-slate-800">
                       <span className="inline-block w-2 h-2 rounded-full bg-blue-500"></span>
+                      {inv.brand && <span className="text-blue-700 font-semibold">{inv.brand}</span>}
                       <span>{inv.capacity || "—"} kW</span> × <span>{inv.quantity || 1}</span>
                     </div>
                   ))}
