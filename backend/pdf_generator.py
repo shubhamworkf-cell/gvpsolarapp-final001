@@ -608,7 +608,7 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
                 img_w, img_h = img.size
                 if img_w > 0 and img_h > 0:
                     aspect = img_h / float(img_w)
-                    max_w = 8.5 * cm
+                    max_w = 6.5 * cm
                     max_h = 3.2 * cm
                     target_w = max_w
                     target_h = target_w * aspect
@@ -622,12 +622,26 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
             except Exception:
                 logo_d = None
         if not logo_d:
-            logo_d = Spacer(8.5 * cm, 1.2 * cm)
+            logo_d = Spacer(6.5 * cm, 1.2 * cm)
 
-        p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('wcr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
+        name_len = len(company_name)
+        if name_len > 30:
+            title_font_size = 12
+            title_leading = 14
+        elif name_len > 22:
+            title_font_size = 13
+            title_leading = 15
+        elif name_len > 16:
+            title_font_size = 14
+            title_leading = 16
+        else:
+            title_font_size = 15
+            title_leading = 17
+
+        p_title = Paragraph(f"<b><font size='{title_font_size}' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('wcr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=title_leading))
         p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>GST NO – {gst_no}</font></b>" if gst_no else "", ParagraphStyle('wcr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
         
-        t_hdr = Table([[logo_d, p_title, p_gst]], colWidths=[8.5 * cm, 5.5 * cm, 4.6 * cm])
+        t_hdr = Table([[logo_d, p_title, p_gst]], colWidths=[6.5 * cm, 7.5 * cm, 4.6 * cm])
         t_hdr.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('LEFTPADDING', (0, 0), (-1, -1), 0),
