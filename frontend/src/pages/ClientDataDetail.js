@@ -786,10 +786,27 @@ function BasicInfoSection({ client: c }) {
           <InfoRow label="Panel Technology" value={c.panel_technology} />
           <InfoRow label="Panel Wp" value={c.panel_wattage ? `${c.panel_wattage} Wp` : ""} />
           <InfoRow label="Number of Panels" value={c.num_panels} />
-          <InfoRow label="Inverter Brand" value={c.inverter_make} />
-          <InfoRow label="Inverter Capacity" value={c.inverter_capacity} />
-          <InfoRow label="Inverter Serial" value={c.inverter_serial} />
-          <InfoRow label="Year of Manufacturing" value={c.inverter_year} />
+          <InfoRow label="Total Inverter Capacity" value={c.inverter_capacity} />
+          {(() => {
+            const invList = Array.isArray(c.inverters) && c.inverters.length > 0 ? c.inverters : (c.inverter_make || c.inverter_capacity ? [{ brand: c.inverter_make || "", model: c.inverter_model || "", capacity: c.inverter_capacity || "", quantity: 1, serial: c.inverter_serial || "" }] : []);
+            if (!invList.length) return <InfoRow label="Inverters" value="—" />;
+            return (
+              <div className="col-span-full border-t border-slate-100 pt-3 mt-1">
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Inverters List ({invList.length})</span>
+                <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg bg-slate-50/50 mt-1">
+                  {invList.map((inv, idx) => (
+                    <div key={idx} className="p-2.5 text-xs grid grid-cols-2 sm:grid-cols-5 gap-2">
+                      <div><span className="text-slate-400 block text-[10px]">Brand</span><strong className="text-slate-800">{inv.brand || "—"}</strong></div>
+                      <div><span className="text-slate-400 block text-[10px]">Model</span><strong className="text-slate-800">{inv.model || "—"}</strong></div>
+                      <div><span className="text-slate-400 block text-[10px]">Capacity</span><strong className="text-slate-800">{inv.capacity || "—"}</strong></div>
+                      <div><span className="text-slate-400 block text-[10px]">Qty</span><strong className="text-slate-800">{inv.quantity || 1}</strong></div>
+                      <div><span className="text-slate-400 block text-[10px]">Serial(s)</span><strong className="text-slate-800 truncate block">{inv.serial || "—"}</strong></div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 

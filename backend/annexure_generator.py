@@ -139,10 +139,29 @@ def resolve_annexure_values(client: dict, company: dict) -> Dict[str, str]:
     num_panels = _get("num_panels", "number_of_panels", "panel_quantity")
     solar_panels_in_nos_nos = f"{num_panels} NOS" if num_panels else ""
 
-    inverter_kw   = _get("inverter_capacity", "inverter_kw")
-    inverter_in_kw_kw = f"{inverter_kw} KW" if inverter_kw and "kw" not in inverter_kw.lower() else (inverter_kw or "")
+    raw_inverters = client.get("inverters") or ob_dict.get("inverters")
+    inverter_list = []
+    if isinstance(raw_inverters, list) and len(raw_inverters) > 0:
+        for inv in raw_inverters:
+            if isinstance(inv, dict):
+                brand = _s(inv.get("brand") or inv.get("make") or "")
+                model = _s(inv.get("model") or "")
+                cap = _s(inv.get("capacity") or "")
+                qty = _s(inv.get("quantity") or inv.get("qty") or "1")
+                if brand or model or cap:
+                    inverter_list.append({"brand": brand, "model": model, "capacity": cap, "quantity": qty})
 
-    inverter_brand = _get("inverter_brand", "inverter_make")
+    manual_inverter_kw = _get("inverter_capacity", "inverter_kw")
+    if len(inverter_list) > 1:
+        inverter_in_kw_kw = f"{manual_inverter_kw} KW" if (manual_inverter_kw and "kw" not in manual_inverter_kw.lower()) else (manual_inverter_kw or ", ".join(f"{inv['capacity']} × {inv['quantity']}" for inv in inverter_list))
+        inverter_brand = ", ".join(f"{inv['capacity']} × {inv['quantity']} ({inv['brand']} {inv['model']})".strip() for inv in inverter_list)
+    elif len(inverter_list) == 1:
+        inv = inverter_list[0]
+        inverter_in_kw_kw = f"{inv['capacity']} KW" if (inv['capacity'] and "kw" not in inv['capacity'].lower()) else (inv['capacity'] or manual_inverter_kw)
+        inverter_brand = f"{inv['brand']} {inv['model']}".strip()
+    else:
+        inverter_in_kw_kw = f"{manual_inverter_kw} KW" if manual_inverter_kw and "kw" not in manual_inverter_kw.lower() else (manual_inverter_kw or "")
+        inverter_brand = _get("inverter_brand", "inverter_make")
 
     installation_date = _resolve_installation_date(client)
 

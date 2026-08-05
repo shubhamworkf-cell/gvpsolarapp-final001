@@ -677,16 +677,26 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
 
     almm_model = str(client.get('almm_model_number') or sol_wp_tech_str).strip()
 
-    inverter_brand = (client.get('inverter_brand') or client.get('inverter_make') or ob_dict.get('inverter_brand') or ob_dict.get('inverter_make') or '').strip()
-    inverter_model = (client.get('inverter_model') or ob_dict.get('inverter_model') or '').strip()
-    if inverter_brand and inverter_model and inverter_model.lower() not in inverter_brand.lower():
-        inverter_make = f"{inverter_brand} {inverter_model}"
+    inverter_list = _get_inverters_list(client)
+    if len(inverter_list) > 1:
+        distinct_brands = list(dict.fromkeys(inv.get("brand") for inv in inverter_list if inv.get("brand")))
+        if len(distinct_brands) == 1:
+            inverter_make = distinct_brands[0]
+        else:
+            inverter_make = "Multiple (See Project Details)"
+        serials_list = [inv.get("serial") for inv in inverter_list if inv.get("serial")]
+        inverter_sr = ", ".join(serials_list) if serials_list else "Multiple (See Project Details)"
+    elif len(inverter_list) == 1:
+        inv = inverter_list[0]
+        inverter_make = f"{inv.get('brand','')} {inv.get('model','')}".strip()
+        inverter_sr = inv.get("serial") or ""
     else:
-        inverter_make = inverter_brand or inverter_model
+        inverter_make = str(client.get('inverter_make') or client.get('inverter_brand') or ob_dict.get('inverter_make') or '').strip()
+        inverter_sr = str(client.get('inverter_serial') or client.get('inverter_sn') or ob_dict.get('inverter_serial') or '').strip()
 
+    # Total Inverter Capacity shown in WCR MUST ALWAYS come from the manual inverter_capacity field
     inverter_kw = str(client.get('inverter_capacity') or ob_dict.get('inverter_capacity') or '').strip()
-    inverter_kw_str = f"{inverter_kw}" if "KW" in inverter_kw.upper() else (f"{inverter_kw} KW" if inverter_kw else "")
-    inverter_sr = str(client.get('inverter_serial') or client.get('inverter_sr') or ob_dict.get('inverter_serial') or ob_dict.get('inverter_sr') or '').strip()
+    inverter_kw_str = f"{inverter_kw} KW" if (inverter_kw and "KW" not in inverter_kw.upper()) else inverter_kw
     inverter_year = str(client.get('inverter_year') or client.get('manufacturing_year') or client.get('year_of_manufacture') or ob_dict.get('inverter_year') or ob_dict.get('manufacturing_year') or ob_dict.get('year_of_manufacture') or '').strip()
 
     # --- PAGE 1: 3-Column Inspection Table ---
@@ -1001,6 +1011,47 @@ def _build_sldr_drawing(sol_kw="5", sol_wp="540", num_panels="10", panel_make="G
     return d
 
 
+def _get_inverters_list(client: dict) -> list[dict]:
+    stages_dict = dict(client.get("stages") or {})
+    ob_dict = dict(stages_dict.get("onboarding_data") or {})
+
+    raw_inverters = client.get("inverters") or ob_dict.get("inverters")
+    if isinstance(raw_inverters, list) and len(raw_inverters) > 0:
+        cleaned = []
+        for inv in raw_inverters:
+            if isinstance(inv, dict):
+                brand = str(inv.get("brand") or inv.get("make") or "").strip()
+                model = str(inv.get("model") or "").strip()
+                cap = str(inv.get("capacity") or "").strip()
+                qty = str(inv.get("quantity") or inv.get("qty") or "1").strip()
+                serial = str(inv.get("serial") or inv.get("serial_number") or "").strip()
+                if brand or model or cap or serial:
+                    cleaned.append({
+                        "brand": brand,
+                        "model": model,
+                        "capacity": cap,
+                        "quantity": qty or "1",
+                        "serial": serial
+                    })
+        if cleaned:
+            return cleaned
+
+    brand = str(client.get("inverter_make") or client.get("inverter_brand") or ob_dict.get("inverter_make") or "").strip()
+    model = str(client.get("inverter_model") or ob_dict.get("inverter_model") or "").strip()
+    cap = str(client.get("inverter_capacity") or ob_dict.get("inverter_capacity") or "").strip()
+    serial = str(client.get("inverter_serial") or client.get("inverter_sn") or ob_dict.get("inverter_serial") or "").strip()
+
+    if brand or cap or serial or model:
+        return [{
+            "brand": brand,
+            "model": model,
+            "capacity": cap,
+            "quantity": "1",
+            "serial": serial
+        }]
+    return []
+
+
 def generate_sldr_pdf(client: dict, company: dict) -> bytes:
     buf = BytesIO()
 
@@ -1008,9 +1059,7 @@ def generate_sldr_pdf(client: dict, company: dict) -> bytes:
         canvas.saveState()
         canvas.setLineWidth(1.5)
         canvas.setStrokeColor(colors.HexColor("#0f172a"))
-        canvas.rect(0.8 * cm, 0.8 * cm, 19.4 * cm, 27.9 * cm)
-        canvas.setLineWidth(0.6)
-        canvas.rect(0.95 * cm, 0.95 * cm, 19.1 * cm, 27.6 * cm)
+        canvas.rect(1.0 * cm, 1.0 * cm, 19.0 * cm, 27.7 * cm)
         canvas.restoreState()
 
     pdf = SimpleDocTemplate(
@@ -1018,19 +1067,22 @@ def generate_sldr_pdf(client: dict, company: dict) -> bytes:
         pagesize=A4,
         leftMargin=1.2 * cm,
         rightMargin=1.2 * cm,
-        topMargin=1.1 * cm,
-        bottomMargin=1.1 * cm
+        topMargin=1.2 * cm,
+        bottomMargin=1.8 * cm
     )
     story = []
 
-    client_name = (client.get('full_name') or client.get('name') or '').upper()
-    consumer_num = client.get('consumer_number') or ''
-    bu_num = client.get('bu_number') or client.get('billing_unit') or ''
-    sol_kw = str(client.get('system_kw') or '')
+    client_name = str(client.get('full_name') or client.get('name') or '').upper()
+    consumer_num = str(client.get('consumer_number') or client.get('consumer_no') or '').upper()
+    bu_num = str(client.get('bu_number') or client.get('bu') or '').upper()
+    sol_kw = str(client.get('system_kw') or client.get('capacity') or '')
     sol_wp = str(client.get('panel_wattage') or '')
     num_panels = str(client.get('num_panels') or '')
     panel_make = (client.get('panel_brand') or client.get('panel_make') or '').upper()
-    inverter_make = (client.get('inverter_make') or '').upper()
+    
+    inverter_list = _get_inverters_list(client)
+    first_inv = inverter_list[0] if inverter_list else {}
+    inverter_make = (first_inv.get("brand") or client.get('inverter_make') or '').upper()
     inverter_kw = str(client.get('inverter_capacity') or (f"{sol_kw} KW" if sol_kw else "")).upper()
 
     company_name = (company.get('company_name') or '').upper()
@@ -1057,13 +1109,32 @@ def generate_sldr_pdf(client: dict, company: dict) -> bytes:
 
     story.append(Paragraph("<b>TECHNICAL SPECIFICATIONS</b>", ParagraphStyle('tech_title', parent=styles['Normal'], fontSize=9.5, fontName='Helvetica-Bold', spaceAfter=4, textColor=colors.HexColor('#0f172a'))))
 
-    inverter_kw_display = f"{inverter_kw}" if "KW" in inverter_kw.upper() else (f"{inverter_kw} kW" if inverter_kw else "")
-
     tech_table_data = [
         [Paragraph("<b>PARAMETER</b>", STYLE_TBL_HDR), Paragraph("<b>SPECIFICATIONS</b>", STYLE_TBL_HDR), Paragraph("<b>MAKE</b>", STYLE_TBL_HDR), Paragraph("<b>KWP</b>", STYLE_TBL_HDR)],
         [Paragraph("PV MODULES", STYLE_TBL_CELL), Paragraph(f"{sol_wp} Wp X {num_panels} Nos", STYLE_TBL_CELL), Paragraph(panel_make, STYLE_TBL_CELL), Paragraph(f"{sol_kw} KW", STYLE_TBL_CELL)],
-        [Paragraph("INVERTER", STYLE_TBL_CELL), Paragraph(f"{inverter_kw_display} × 1 Nos", STYLE_TBL_CELL), Paragraph(inverter_make, STYLE_TBL_CELL), Paragraph(f"{inverter_kw}", STYLE_TBL_CELL)],
     ]
+
+    if inverter_list:
+        for idx, inv in enumerate(inverter_list):
+            inv_label = f"INVERTER #{idx+1}" if len(inverter_list) > 1 else "INVERTER"
+            c_val = inv.get("capacity") or ""
+            cap_str = f"{c_val}" if "KW" in c_val.upper() else (f"{c_val} kW" if c_val else "")
+            q_val = inv.get("quantity") or "1"
+            spec_str = f"{cap_str} × {q_val} Nos" if cap_str else f"{q_val} Nos"
+            make_str = f"{inv.get('brand','')} {inv.get('model','')}".strip().upper()
+            kw_str = c_val or inverter_kw
+            tech_table_data.append([
+                Paragraph(inv_label, STYLE_TBL_CELL),
+                Paragraph(spec_str, STYLE_TBL_CELL),
+                Paragraph(make_str, STYLE_TBL_CELL),
+                Paragraph(kw_str, STYLE_TBL_CELL)
+            ])
+    else:
+        inverter_kw_display = f"{inverter_kw}" if "KW" in inverter_kw.upper() else (f"{inverter_kw} kW" if inverter_kw else "")
+        tech_table_data.append([
+            Paragraph("INVERTER", STYLE_TBL_CELL), Paragraph(f"{inverter_kw_display} × 1 Nos", STYLE_TBL_CELL), Paragraph(inverter_make, STYLE_TBL_CELL), Paragraph(f"{inverter_kw}", STYLE_TBL_CELL)
+        ])
+
     t_tech = Table(tech_table_data, colWidths=[4.5 * cm, 5.5 * cm, 4.6 * cm, 4.0 * cm])
     t_tech.setStyle(TableStyle([
         ('GRID', (0, 0), (-1, -1), 0.8, colors.HexColor('#000000')),
