@@ -216,8 +216,11 @@ export default function ClientDataDetail() {
         num_panels: Number(editForm.num_panels) || 0,
         panel_brand: editForm.panel_brand || editForm.panel_make || "",
         panel_make: editForm.panel_make || editForm.panel_brand || "",
+        section_number: editForm.section_number || editForm.section_no || "",
+        section_no: editForm.section_number || editForm.section_no || "",
         consumer_category: editForm.consumer_type || editForm.consumer_category || "",
         consumer_type: editForm.consumer_type || editForm.consumer_category || "",
+        inverters: Array.isArray(editForm.inverters) ? editForm.inverters : []
       };
       // Use PATCH to avoid overwriting unrelated onboarding fields
       const { data: updatedDoc } = await api.patch(`/clients/${id}`, payload);

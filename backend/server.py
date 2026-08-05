@@ -584,55 +584,53 @@ def _prepare_client_supabase_payload(payload: dict) -> dict:
     extra_onboarding = {}
 
     panel_brand_val = payload.get("panel_brand") or payload.get("panel_make")
-    if panel_brand_val:
+    if panel_brand_val is not None:
         cleaned["panel_make"] = panel_brand_val
         extra_onboarding["panel_brand"] = panel_brand_val
         extra_onboarding["panel_make"] = panel_brand_val
 
     inv_brand_val = payload.get("inverter_make") or payload.get("inverter_brand")
-    if inv_brand_val:
+    if inv_brand_val is not None:
         cleaned["inverter_make"] = inv_brand_val
         extra_onboarding["inverter_brand"] = inv_brand_val
         extra_onboarding["inverter_make"] = inv_brand_val
 
-    sec_no_val = payload.get("section_number") or payload.get("section_no")
-    if sec_no_val:
+    sec_no_val = payload.get("section_number") if "section_number" in payload else payload.get("section_no")
+    if sec_no_val is not None:
         extra_onboarding["section_number"] = sec_no_val
         extra_onboarding["section_no"] = sec_no_val
 
-    cat_val = payload.get("consumer_type") or payload.get("consumer_category") or payload.get("category")
-    if cat_val:
+    cat_val = payload.get("consumer_type") if "consumer_type" in payload else (payload.get("consumer_category") if "consumer_category" in payload else payload.get("category"))
+    if cat_val is not None:
         extra_onboarding["consumer_type"] = cat_val
         extra_onboarding["consumer_category"] = cat_val
         extra_onboarding["category"] = cat_val
 
-    sr_val = payload.get("inverter_serial") or payload.get("inverter_sr")
-    if sr_val:
+    sr_val = payload.get("inverter_serial") if "inverter_serial" in payload else payload.get("inverter_sr")
+    if sr_val is not None:
         cleaned["inverter_serial"] = sr_val
         extra_onboarding["inverter_serial"] = sr_val
         extra_onboarding["inverter_sr"] = sr_val
 
-    yr_val = payload.get("inverter_year") or payload.get("manufacturing_year")
-    if yr_val:
+    yr_val = payload.get("inverter_year") if "inverter_year" in payload else payload.get("manufacturing_year")
+    if yr_val is not None:
         extra_onboarding["inverter_year"] = yr_val
         extra_onboarding["manufacturing_year"] = yr_val
 
-    if "panel_technology" in payload and payload["panel_technology"]:
+    if "panel_technology" in payload and payload["panel_technology"] is not None:
         extra_onboarding["panel_technology"] = payload["panel_technology"]
-    if "inverter_model" in payload and payload["inverter_model"]:
+    if "inverter_model" in payload and payload["inverter_model"] is not None:
         extra_onboarding["inverter_model"] = payload["inverter_model"]
-    if "sanction_number" in payload and payload["sanction_number"]:
+    if "sanction_number" in payload and payload["sanction_number"] is not None:
         extra_onboarding["sanction_number"] = payload["sanction_number"]
-    if "aadhaar_name" in payload and payload["aadhaar_name"]:
+    if "aadhaar_name" in payload and payload["aadhaar_name"] is not None:
         extra_onboarding["aadhaar_name"] = payload["aadhaar_name"]
-    if "aadhaar_image" in payload and payload["aadhaar_image"]:
+    if "aadhaar_image" in payload and payload["aadhaar_image"] is not None:
         extra_onboarding["aadhaar_image"] = payload["aadhaar_image"]
-    # BU Number and BU Text — new onboarding fields (stored in stages.onboarding_data, no schema change)
     if "bu_number" in payload and payload["bu_number"] is not None:
         extra_onboarding["bu_number"] = payload["bu_number"]
     if "bu_text" in payload and payload["bu_text"] is not None:
         extra_onboarding["bu_text"] = payload["bu_text"]
-    # PAN Card Number and Add No — new onboarding fields
     if "pan_number" in payload and payload["pan_number"] is not None:
         extra_onboarding["pan_number"] = payload["pan_number"]
     if "pan_card_number" in payload and payload["pan_card_number"] is not None:
@@ -641,6 +639,9 @@ def _prepare_client_supabase_payload(payload: dict) -> dict:
         extra_onboarding["add_no"] = payload["add_no"]
     if "address_no" in payload and payload["address_no"] is not None:
         extra_onboarding["add_no"] = payload["address_no"]
+
+    if "inverters" in payload and payload["inverters"] is not None:
+        extra_onboarding["inverters"] = payload["inverters"]
 
     for k, v in payload.items():
         if k in VALID_CLIENT_COLUMNS:
@@ -676,15 +677,13 @@ def _enrich_client_doc(c: dict) -> dict:
     c["sanction_number"] = ob.get("sanction_number") or c.get("sanction_number") or ""
     c["inverter_serial"] = c.get("inverter_serial") or ob.get("inverter_serial") or ob.get("inverter_sr") or ""
     c["inverter_sr"] = c["inverter_serial"]
-    # BU Number and BU Text (new onboarding fields)
     c["bu_number"] = ob.get("bu_number") or c.get("bu_number") or ""
     c["bu_text"]   = ob.get("bu_text")   or c.get("bu_text")   or ""
-    # PAN Card Number and Add No (new onboarding fields)
     c["pan_number"] = ob.get("pan_number") or ob.get("pan_card_number") or c.get("pan_number") or c.get("pan_card_number") or ""
     c["pan_card_number"] = c["pan_number"]
     c["add_no"] = ob.get("add_no") or ob.get("address_no") or c.get("add_no") or c.get("address_no") or ""
     c["address_no"] = c["add_no"]
-    c["inverters"] = c.get("inverters") if isinstance(c.get("inverters"), list) and len(c.get("inverters")) > 0 else (ob.get("inverters") if isinstance(ob.get("inverters"), list) else [])
+    c["inverters"] = c.get("inverters") if (isinstance(c.get("inverters"), list) and len(c.get("inverters")) > 0) else (ob.get("inverters") if (isinstance(ob.get("inverters"), list) and len(ob.get("inverters")) > 0) else ([{"capacity": str(c.get("inverter_capacity")), "quantity": 1}] if c.get("inverter_capacity") else []))
     return c
 
 class CollectionAdapter:
@@ -1011,6 +1010,26 @@ class CollectionAdapter:
             patch = {k: v for k, v in patch.items() if k != "rate"}
 
         if self.table_name == "clients":
+            try:
+                builder = supabase.table(self.table_name).select("stages").limit(1)
+                builder = self._apply_filters(builder, filter)
+                ex_res = builder.execute()
+                if ex_res.data and isinstance(ex_res.data[0], dict):
+                    ex_doc = ex_res.data[0]
+                    ex_stages = dict(ex_doc.get("stages") or {})
+                    if "stages" not in patch:
+                        patch["stages"] = ex_stages
+                    else:
+                        merged_stages = dict(ex_stages)
+                        incoming_stages = dict(patch.get("stages") or {})
+                        merged_stages.update(incoming_stages)
+                        ex_ob = dict(ex_stages.get("onboarding_data") or {})
+                        inc_ob = dict(incoming_stages.get("onboarding_data") or {})
+                        ex_ob.update(inc_ob)
+                        merged_stages["onboarding_data"] = ex_ob
+                        patch["stages"] = merged_stages
+            except Exception as ex_err:
+                logger.warning(f"Could not pre-fetch existing client stages for merge: {ex_err}")
             patch = _prepare_client_supabase_payload(patch)
 
         if not patch:
@@ -3249,11 +3268,54 @@ def _normalize_client_payload(payload: dict) -> dict:
         payload["aadhaar_number"] = a_val
     return payload
 
+def _verify_client_db_write(original_payload: dict, read_back_doc: dict):
+    if not read_back_doc:
+        raise HTTPException(status_code=500, detail="Database save verification failed: DB returned empty record on read-back")
+    
+    enriched = _enrich_client_doc(dict(read_back_doc))
+    mismatches = []
+    
+    fields_to_check = [
+        "full_name", "mobile", "alt_mobile", "consumer_number", "section_number", "address",
+        "city", "state", "pincode", "aadhaar", "system_kw", "panel_make", "panel_brand",
+        "panel_technology", "panel_wattage", "num_panels", "inverter_make", "inverter_brand",
+        "inverter_capacity", "inverter_serial", "inverter_model", "inverter_year",
+        "sanction_number", "consumer_type", "consumer_category", "phase_type", "subsidy_eligible"
+    ]
+    
+    for k in fields_to_check:
+        if k in original_payload and original_payload[k] is not None:
+            expected = original_payload[k]
+            actual = enriched.get(k)
+            if isinstance(expected, (int, float)) and actual is not None:
+                try:
+                    if float(expected) != float(actual):
+                        mismatches.append(f"{k} (expected {expected}, got {actual})")
+                except (ValueError, TypeError):
+                    if str(expected) != str(actual):
+                        mismatches.append(f"{k} (expected {expected}, got {actual})")
+            elif expected != "" and (actual is None or actual == ""):
+                mismatches.append(f"{k} (expected '{expected}', got '{actual}')")
+            elif str(expected).strip() != "" and str(expected).strip().lower() != str(actual or "").strip().lower():
+                mismatches.append(f"{k} (expected '{expected}', got '{actual}')")
+
+    if "inverters" in original_payload and isinstance(original_payload["inverters"], list):
+        exp_inv = original_payload["inverters"]
+        act_inv = enriched.get("inverters") or []
+        if len(exp_inv) > 0 and len(act_inv) == 0:
+            mismatches.append(f"inverters (expected {len(exp_inv)} inverters, got 0)")
+
+    if mismatches:
+        err_msg = f"Database save verification failed: {', '.join(mismatches)}"
+        logger.error(err_msg)
+        raise HTTPException(status_code=500, detail=err_msg)
+
 @api_router.put("/clients/{client_id}")
 async def update_client(client_id: str, data: ClientIn, user=Depends(get_current_user)):
     if not has_perm(user, "clients", "edit"):
         raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
-    update = _normalize_client_payload(data.model_dump())
+    raw_payload = data.model_dump()
+    update = _normalize_client_payload(dict(raw_payload))
     existing = await db.clients.find_one({"id": client_id, "company_id": user["company_id"]}, {"_id": 0})
     if existing:
         if not update.get("stages"):
@@ -3276,15 +3338,20 @@ async def update_client(client_id: str, data: ClientIn, user=Depends(get_current
                 raise HTTPException(status_code=404, detail="Not found")
     await LocalFileCollection("clients").update_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"$set": update})
     await log_activity(user["company_id"], user["id"], user["name"], "Updated Client", data.full_name)
+    
+    # Direct database read-back verification
     client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
     if not client_doc:
         client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
+    
+    _verify_client_db_write(raw_payload, client_doc)
     return _enrich_client_doc(client_doc) if client_doc else {}
 
 @api_router.patch("/clients/{client_id}")
 async def patch_client(client_id: str, payload: Dict[str, Any], user=Depends(get_current_user)):
     if not has_perm(user, "clients", "edit"):
         raise HTTPException(status_code=403, detail="Missing permission: clients.edit")
+    raw_payload = dict(payload)
     payload.pop("_id", None)
     payload = _normalize_client_payload(payload)
     payload["updated_at"] = now_iso()
@@ -3296,9 +3363,13 @@ async def patch_client(client_id: str, payload: Dict[str, Any], user=Depends(get
             if res.matched_count == 0:
                 raise HTTPException(status_code=404, detail="Client not found")
     await LocalFileCollection("clients").update_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"$set": payload})
+    
+    # Direct database read-back verification
     client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}], "company_id": user["company_id"]}, {"_id": 0})
     if not client_doc:
         client_doc = await db.clients.find_one({"$or": [{"id": client_id}, {"sol_id": client_id}]}, {"_id": 0})
+    
+    _verify_client_db_write(raw_payload, client_doc)
     return _enrich_client_doc(client_doc) if client_doc else {}
 
 @api_router.patch("/clients/{client_id}/stages")

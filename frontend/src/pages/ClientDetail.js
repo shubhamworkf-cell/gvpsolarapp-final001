@@ -145,8 +145,11 @@ export default function ClientDetail() {
         num_panels: Number(editData.num_panels) || 0,
         panel_brand: editData.panel_brand || editData.panel_make || "",
         panel_make: editData.panel_make || editData.panel_brand || "",
+        section_number: editData.section_number || editData.section_no || "",
+        section_no: editData.section_number || editData.section_no || "",
         consumer_category: editData.consumer_type || editData.consumer_category || "",
         consumer_type: editData.consumer_type || editData.consumer_category || "",
+        inverters: Array.isArray(editData.inverters) ? editData.inverters : []
       };
       delete payload.id; delete payload.sol_id; delete payload.created_at; delete payload.updated_at; delete payload.notes; delete payload.progress; delete payload.company_id; delete payload.created_by; delete payload.high_value_assets;
       
@@ -264,7 +267,7 @@ export default function ClientDetail() {
               variant="outline"
               size="sm"
               className="ml-auto border-blue-300 bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 hover:from-blue-100 hover:to-indigo-100 hover:text-blue-800"
-              onClick={() => navigate(`/templates?client_id=${id}`)}
+              onClick={() => nav(`/templates?client_id=${id}`)}
               data-testid="generate-from-template-btn"
             >
               <FileText className="w-3.5 h-3.5 mr-1.5" /> Open Documents Hub
@@ -296,7 +299,8 @@ export default function ClientDetail() {
               <Row label="Alternate Mobile">{client.alt_mobile || "—"}</Row>
               <Row label="Aadhaar">{client.aadhaar || "—"}</Row>
               <Row label="Consumer Category">{client.consumer_type || "—"}</Row>
-               <Row label="Sanction Number">{client.sanction_number || "—"}</Row>
+              <Row label="Section Number">{client.section_number || client.section_no || "—"}</Row>
+              <Row label="Sanction Number">{client.sanction_number || "—"}</Row>
               <Row label="Panel">{client.panel_make || client.panel_brand ? `${client.panel_brand || client.panel_make} ${client.panel_technology || ''} · ${client.panel_wattage}W × ${client.num_panels}`.trim() : "—"}</Row>
               
               {(() => {
@@ -331,6 +335,7 @@ export default function ClientDetail() {
                 <EF label="Alternate Mobile" v={editData.alt_mobile} k="alt_mobile" set={setEditData} />
                 <EF label="Consumer #" v={editData.consumer_number} k="consumer_number" set={setEditData} />
                 <EF label="Consumer Category" v={editData.consumer_type} k="consumer_type" set={setEditData} />
+                <EF label="Section Number" v={editData.section_number} k="section_number" set={setEditData} />
                 <EF label="Sanction Number" v={editData.sanction_number} k="sanction_number" set={setEditData} />
                 <EF label="Aadhaar #" v={editData.aadhaar} k="aadhaar" set={setEditData} />
                 <EF label="System KW" v={editData.system_kw} k="system_kw" type="number" set={setEditData} />
