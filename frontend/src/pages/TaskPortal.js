@@ -1302,6 +1302,7 @@ function DocumentMakingWorkflow({ task, canMutate, updateStatus }) {
     { label: "SLDR", value: "sldr" },
     { label: "Net Meter Agreement", value: "net_meter_agreement" },
     { label: "Vendor Agreement", value: "vendor_agreement" },
+    { label: "Meter Testing Request", value: "meter_testing_request" },
   ];
   const [uploading, setUploading] = useState("");
   const [uploadedFiles, setUploadedFiles] = useState({});

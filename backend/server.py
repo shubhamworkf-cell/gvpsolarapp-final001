@@ -3571,7 +3571,7 @@ async def delete_client(client_id: str, user=Depends(get_current_user)):
 
 ALLOWED_DOC_TYPES = (
     "annexure", "wcr", "sldr", "net_meter_agreement", "vendor_agreement",
-    "quotation", "tax_invoice", "delivery_bill",
+    "meter_testing_request", "quotation", "tax_invoice", "delivery_bill",
 )
 
 def _document_label(doc_type: str) -> str:
@@ -3581,6 +3581,7 @@ def _document_label(doc_type: str) -> str:
         "sldr": "SLDR",
         "net_meter_agreement": "Net Meter Agreement",
         "vendor_agreement": "Vendor Agreement",
+        "meter_testing_request": "Meter Testing Request",
         "quotation": "Quotation",
         "tax_invoice": "Tax Invoice",
         "delivery_bill": "Delivery Bill",

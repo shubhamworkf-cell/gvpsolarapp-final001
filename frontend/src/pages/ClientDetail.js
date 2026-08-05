@@ -267,6 +267,7 @@ export default function ClientDetail() {
               { k: "sldr", l: "SLDR" },
               { k: "net_meter_agreement", l: "Net Meter Agreement" },
               { k: "vendor_agreement", l: "Vendor Agreement" },
+              { k: "meter_testing_request", l: "Meter Testing Request" },
             ].map((d) => (
               <Button key={d.k} variant="outline" size="sm" onClick={() => generateDoc(d.k)} data-testid={`gen-${d.k}`}>
                 <FileText className="w-3.5 h-3.5 mr-1.5" /> {d.l} (PDF)

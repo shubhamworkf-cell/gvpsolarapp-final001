@@ -62,6 +62,7 @@ export default function TemplateGenerateDialog({ open, onOpenChange, clientId })
             { k: "sldr", l: "SLDR" },
             { k: "vendor_agreement", l: "Vendor Agreement" },
             { k: "net_meter_agreement", l: "Net Meter Agreement" },
+            { k: "meter_testing_request", l: "Meter Testing Request" },
             { k: "quotation", l: "Quotation" },
           ].map((d) => (
             <Button

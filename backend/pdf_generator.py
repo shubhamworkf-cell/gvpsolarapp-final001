@@ -1624,6 +1624,206 @@ def generate_vendor_agreement_pdf(client: dict, company: dict) -> bytes:
     return buf.getvalue()
 
 
+def make_meter_testing_canvas(company: dict):
+    addr = company.get("address") or "SHOP NO – 1-2, FIRST FLOOR, BUILDING NO – 1, KAPAD TEXTILE MARKET ICHALKARANJI (MAH.) - 416115"
+    city = company.get("city") or ""
+    pincode = company.get("pincode") or ""
+    full_addr_parts = [addr]
+    if city:
+        full_addr_parts.append(city)
+    if pincode:
+        full_addr_parts.append(f"- {pincode}")
+    full_addr = ", ".join(p for p in full_addr_parts if p).replace(", -", " -")
+    phone = company.get("mobile") or company.get("phone") or "+91-9694060806 GIRIRAJ"
+
+    class MeterTestingCanvas(canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._saved_page_states = []
+
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            num_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.draw_page_decorations(num_pages)
+                super().showPage()
+            super().save()
+
+        def draw_page_decorations(self, page_count):
+            self.saveState()
+            self.setStrokeColor(colors.HexColor('#991b1b'))
+            self.setLineWidth(1.5)
+            self.line(1.2 * cm, 1.4 * cm, 21.0 * cm - 1.2 * cm, 1.4 * cm)
+
+            self.setFont("Helvetica-Bold", 7.5)
+            self.setFillColor(colors.HexColor('#2563eb'))
+
+            line1 = f"OFFICE :- {full_addr}"
+            line2 = f"PHONE : {phone}"
+
+            self.drawString(1.2 * cm, 1.0 * cm, line1)
+            self.drawString(1.2 * cm, 0.65 * cm, line2)
+
+            self.setFont("Helvetica", 8)
+            self.setFillColor(colors.HexColor('#475569'))
+            self.drawRightString(21.0 * cm - 1.2 * cm, 0.65 * cm, f"Page {self._pageNumber} of {page_count}")
+            self.restoreState()
+
+    return MeterTestingCanvas
+
+
+def generate_meter_testing_request_pdf(client: dict, company: dict) -> bytes:
+    buf = BytesIO()
+    pdf = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.2 * cm,
+        rightMargin=1.2 * cm,
+        topMargin=1.0 * cm,
+        bottomMargin=1.8 * cm
+    )
+    story = []
+
+    company_name = (company.get('company_name') or 'GVP SOLAR ENERGY').strip()
+    gst_no = (company.get('gst_number') or company.get('gst') or '').strip()
+
+    stages_dict = dict(client.get("stages") or {})
+    ob_dict = dict(stages_dict.get("onboarding_data") or {})
+
+    client_name = (client.get('full_name') or client.get('name') or client.get('client_name') or ob_dict.get('full_name') or '').strip()
+    consumer_num = str(client.get('consumer_number') or client.get('consumer_no') or ob_dict.get('consumer_number') or '').strip()
+
+    client_addr = (client.get('address') or ob_dict.get('address') or '').strip()
+    city = (client.get('city') or ob_dict.get('city') or '').strip()
+    pincode = str(client.get('pincode') or ob_dict.get('pincode') or '').strip()
+
+    location_parts = []
+    if client_addr:
+        location_parts.append(client_addr)
+    if city and pincode:
+        location_parts.append(f"{city} - {pincode}")
+    elif city:
+        location_parts.append(city)
+    elif pincode:
+        location_parts.append(pincode)
+    location_str = ", ".join(location_parts)
+
+    gen_make = (client.get('gen_meter_make') or client.get('generation_meter_make') or ob_dict.get('gen_meter_make') or ob_dict.get('generation_meter_make') or '').strip()
+    gen_serial = (client.get('gen_meter_serial') or client.get('generation_meter_serial') or client.get('gen_meter_sn') or ob_dict.get('gen_meter_serial') or '').strip()
+    net_make = (client.get('net_meter_make') or ob_dict.get('net_meter_make') or '').strip()
+    net_serial = (client.get('net_meter_serial') or client.get('net_meter_sn') or ob_dict.get('net_meter_serial') or '').strip()
+
+    def _clean_field(val: str) -> str:
+        if val.upper() in ("NA", "N/A", "0", "DEFAULT", "GROWATT", "NULL", "NONE"):
+            return ""
+        return val
+
+    gen_make = _clean_field(gen_make)
+    gen_serial = _clean_field(gen_serial)
+    net_make = _clean_field(net_make)
+    net_serial = _clean_field(net_serial)
+
+    logo_bytes = company.get("logo_bytes")
+    if logo_bytes:
+        try:
+            logo_d = RLImage(BytesIO(logo_bytes), width=4.0 * cm, height=1.2 * cm)
+        except Exception:
+            logo_d = Spacer(4.0 * cm, 1.2 * cm)
+    else:
+        logo_d = Spacer(4.0 * cm, 1.2 * cm)
+
+    p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('mtr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
+    gst_text = f"GST NO – {gst_no}" if gst_no else ""
+    p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>{gst_text}</font></b>", ParagraphStyle('mtr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
+
+    t_hdr = Table([[logo_d, p_title, p_gst]], colWidths=[4.2 * cm, 8.8 * cm, 5.6 * cm])
+    t_hdr.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+    ]))
+
+    t_div = Table([[""]], colWidths=[18.6 * cm])
+    t_div.setStyle(TableStyle([
+        ('LINEABOVE', (0, 0), (-1, -1), 1.5, colors.HexColor('#1d4ed8')),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+
+    story.extend([t_hdr, Spacer(1, 0.1 * cm), t_div, Spacer(1, 0.4 * cm)])
+
+    STYLE_BOLD_SERIF = ParagraphStyle('mtr_bold', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=colors.HexColor('#000000'), leading=14)
+    STYLE_BODY = ParagraphStyle('mtr_body', parent=styles['Normal'], fontSize=10, fontName='Helvetica', textColor=colors.HexColor('#000000'), leading=14.5, alignment=4, spaceAfter=8)
+
+    city_line = f"MSEDCL Meter Lab {city}." if city else "MSEDCL Meter Lab."
+    to_text_parts = ["<b>To,</b>", "<b>Additional Executive Engineer</b>", f"<b>{city_line}</b>"]
+    if pincode:
+        to_text_parts.append(f"<b>{pincode}</b>")
+    to_text = "<br/>".join(to_text_parts)
+    story.append(Paragraph(to_text, STYLE_BOLD_SERIF))
+    story.append(Spacer(1, 0.3 * cm))
+
+    story.append(Paragraph("<b>Sub: Request for Gen-meter Letter.</b>", STYLE_BOLD_SERIF))
+    story.append(Spacer(1, 0.2 * cm))
+    story.append(Paragraph("Dear Sir,", STYLE_BODY))
+    story.append(Spacer(1, 0.1 * cm))
+
+    p1 = "I hope this letter finds you well. I am writing to request meter testing services for my solar photovoltaic (PV) system. As a responsible solar PV system owner, I understand the importance of accurate and reliable meter readings to ensure the system's optimal performance and compliance with regulatory standards."
+    story.append(Paragraph(p1, STYLE_BODY))
+
+    p2 = f"<b>Customer Name:</b> <u>{client_name}</u> <b>C NO.</b> <u>{consumer_num}</u> I currently have a solar PV system installed at the following <b>location:</b> {location_str}"
+    story.append(Paragraph(p2, STYLE_BODY))
+
+    p3 = "To ensure the system's efficiency and adherence to industry standards, I am seeking a comprehensive meter testing service for the following meters within the system:"
+    story.append(Paragraph(p3, STYLE_BODY))
+
+    meter_rows = [
+        [
+            Paragraph(f"<b>Generation Meter - Make-</b> {gen_make}", STYLE_BODY),
+            Paragraph(f"<b>SERIAL NO-</b> {gen_serial}", STYLE_BODY),
+        ],
+        [
+            Paragraph(f"<b>NET METER – MAKE -</b> {net_make}", STYLE_BODY),
+            Paragraph(f"<b>SERIAL NO -</b> {net_serial}", STYLE_BODY),
+        ]
+    ]
+    t_meters = Table(meter_rows, colWidths=[9.3 * cm, 9.3 * cm])
+    t_meters.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    story.append(t_meters)
+    story.append(Spacer(1, 0.3 * cm))
+
+    p4 = "I kindly request that the meter testing service be conducted by a certified and accredited organization, ensuring accurate and unbiased results. The testing should include a thorough assessment of the meters' functionality, calibration, and accuracy, as well as verification of their compliance with relevant industry standards and regulations."
+    story.append(Paragraph(p4, STYLE_BODY))
+
+    p5 = "Thank you for your attention to this matter. I look forward to receiving your response and arranging the necessary meter testing for my solar PV system."
+    story.append(Paragraph(p5, STYLE_BODY))
+    story.append(Spacer(1, 0.4 * cm))
+
+    story.append(Paragraph("Thanks & Regards,", STYLE_BODY))
+    story.append(Spacer(1, 0.6 * cm))
+    story.append(Paragraph(f"<b>{company_name.upper()}</b>", STYLE_BOLD_SERIF))
+    story.append(Spacer(1, 0.8 * cm))
+
+    encl_text = "<b>Encl:</b><br/>1. Gen-meter<br/>2. Test report of meter<br/>3. Electricity Bill<br/>4. Solar PV System Approval Latter Copy."
+    story.append(Paragraph(encl_text, STYLE_BODY))
+
+    canvas_cls = make_meter_testing_canvas(company)
+    pdf.build(story, canvasmaker=canvas_cls)
+    return buf.getvalue()
+
+
 def generate(doc_type: str, client: dict, company: dict) -> bytes:
     doc_type_clean = (doc_type or "").lower().strip()
     if doc_type_clean == "wcr":
@@ -1634,6 +1834,8 @@ def generate(doc_type: str, client: dict, company: dict) -> bytes:
         return generate_net_meter_agreement_pdf(client, company)
     if doc_type_clean in ("vendor_agreement", "vendor"):
         return generate_vendor_agreement_pdf(client, company)
+    if doc_type_clean in ("meter_testing_request", "meter_testing"):
+        return generate_meter_testing_request_pdf(client, company)
     if doc_type_clean == "annexure":
         try:
             import annexure_generator
