@@ -4127,6 +4127,7 @@ async def generate_public_document(payload: Dict[str, Any], user=Depends(get_cur
 async def download_direct_document(payload: Dict[str, Any], user=Depends(get_current_user)):
     client_id = payload.get("client_id")
     doc_type = (payload.get("doc_type") or "wcr").lower().strip()
+    doc_format = (payload.get("format") or "pdf").lower().strip()  # "pdf" or "docx"
     
     if not client_id:
         raise HTTPException(status_code=400, detail="client_id is required")
@@ -4164,12 +4165,19 @@ async def download_direct_document(payload: Dict[str, Any], user=Depends(get_cur
         raise HTTPException(status_code=404, detail="Client not found")
 
     client_doc = _enrich_client_doc(client_doc)
-    doc_bytes = pdf_generator.generate(doc_type, client_doc, company_doc)
-    
-    # Detect if doc_bytes is DOCX (starts with PK) or PDF (starts with %PDF)
-    is_docx = doc_bytes[:2] == b"PK"
-    media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if is_docx else "application/pdf"
-    ext = ".docx" if is_docx else ".pdf"
+
+    if doc_format == "docx":
+        # Generate Word document
+        doc_bytes = pdf_generator.generate_docx(doc_type, client_doc, company_doc)
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ext = ".docx"
+    else:
+        # Generate PDF (existing behavior, unchanged)
+        doc_bytes = pdf_generator.generate(doc_type, client_doc, company_doc)
+        # Detect if result is DOCX (starts with PK) or PDF (starts with %PDF)
+        is_docx = doc_bytes[:2] == b"PK"
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if is_docx else "application/pdf"
+        ext = ".docx" if is_docx else ".pdf"
 
     client_name = client_doc.get("full_name") or "Client"
     safe_name = "".join(c for c in client_name if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")

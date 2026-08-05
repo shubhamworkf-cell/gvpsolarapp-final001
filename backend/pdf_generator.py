@@ -2282,3 +2282,289 @@ def generate_product_master_pdf(products: list, company: dict) -> bytes:
     story.append(t)
     pdf.build(story, canvasmaker=make_product_master_canvas(company))
     return buf.getvalue()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DOCX generator — mirrors PDF content using python-docx
+# Does NOT touch any existing PDF generator functions.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _docx_heading(doc, text: str, level: int = 1):
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    p = doc.add_heading(text, level=level)
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    for run in p.runs:
+        run.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+        run.font.size = Pt(14 if level == 1 else 11)
+
+
+def _docx_kv_table(doc, rows: list):
+    """Add a 2-column label-value table."""
+    from docx.shared import Pt, RGBColor
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    tbl = doc.add_table(rows=len(rows), cols=2)
+    tbl.style = "Table Grid"
+    for i, (lbl, val) in enumerate(rows):
+        cells = tbl.rows[i].cells
+        cells[0].text = str(lbl)
+        cells[1].text = str(val) if val is not None else ""
+        # Bold label
+        for run in cells[0].paragraphs[0].runs:
+            run.bold = True
+    return tbl
+
+
+def _docx_company_header(doc, company: dict):
+    from docx.shared import Pt, RGBColor
+    company_name = company.get("company_name") or company.get("name") or ""
+    mobile = company.get("mobile") or company.get("phone") or ""
+    email = company.get("email") or ""
+    gst = company.get("gst_number") or company.get("gst") or ""
+    address = company.get("address") or ""
+    city = company.get("city") or ""
+    state = company.get("state") or ""
+    pincode = company.get("pincode") or ""
+    full_address = ", ".join(filter(bool, [address, city, state]))
+    if pincode:
+        full_address += f" - {pincode}"
+
+    p = doc.add_paragraph()
+    run = p.add_run(company_name)
+    run.bold = True
+    run.font.size = Pt(14)
+    run.font.color.rgb = RGBColor(0x1d, 0x4e, 0xd8)
+
+    if mobile:
+        doc.add_paragraph(f"Mobile: {mobile}")
+    if email:
+        doc.add_paragraph(f"Email: {email}")
+    if gst:
+        doc.add_paragraph(f"GSTIN: {gst}")
+    if full_address:
+        doc.add_paragraph(f"Address: {full_address}")
+
+
+def generate_docx(doc_type: str, client: dict, company: dict) -> bytes:
+    """
+    Generate a Word (.docx) document for the given doc_type.
+    Uses python-docx to build structured content matching the PDF layout.
+    Does NOT modify any existing PDF generator.
+    """
+    from docx import Document
+    from docx.shared import Pt, Inches, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc_type_clean = (doc_type or "").lower().strip()
+
+    # ── Annexure: use existing DOCX template flow ──────────────────────────────
+    if doc_type_clean == "annexure":
+        try:
+            import annexure_generator
+            _, content_type = annexure_generator.generate_annexure(client, company)
+            # Call the internal DOCX-only path: fill template without PDF conversion
+            template_bytes = annexure_generator._load_template_bytes()
+            replacements = annexure_generator.resolve_annexure_values(client, company)
+            filled_docx = annexure_generator._fill_template(template_bytes, replacements)
+            return filled_docx
+        except Exception as _e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(f"Annexure DOCX template path failed: {_e}. Building from scratch.")
+
+    doc = Document()
+
+    # ── Common: company header ─────────────────────────────────────────────────
+    _docx_company_header(doc, company)
+    doc.add_paragraph()
+
+    # ── Title ─────────────────────────────────────────────────────────────────
+    title_map = {
+        "wcr": "WORK COMPLETION REPORT (WCR)",
+        "sldr": "SINGLE LINE DIAGRAM REPORT (SLDR)",
+        "net_meter_agreement": "NET METER AGREEMENT",
+        "vendor_agreement": "VENDOR AGREEMENT",
+        "meter_testing_request": "METER TESTING REQUEST",
+        "meter_testing": "METER TESTING REQUEST",
+        "annexure": "ANNEXURE — Material & Site Details",
+    }
+    title = title_map.get(doc_type_clean, doc_type_clean.upper())
+    title_para = doc.add_heading(title, level=1)
+    title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    date_str = datetime.now(timezone.utc).strftime("%d %b %Y")
+    date_para = doc.add_paragraph(f"Date: {date_str}")
+    date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph()
+
+    # ── Client Details ─────────────────────────────────────────────────────────
+    doc.add_heading("Client Details", level=2)
+    client_name = client.get("full_name") or client.get("name") or ""
+    address_parts = [client.get("address") or "", client.get("city") or "",
+                     client.get("state") or "", client.get("pincode") or ""]
+    full_address = ", ".join(p for p in address_parts if p)
+    pan_num = str(client.get("pan_number") or client.get("pan_card_number") or "").strip()
+    aadhaar_num = str(client.get("aadhaar") or client.get("aadhaar_number") or "").strip()
+    id_label = "PAN Card" if pan_num else "Aadhaar (last 4)"
+    id_val = pan_num if pan_num else ((aadhaar_num[-4:] if aadhaar_num else "—"))
+
+    _docx_kv_table(doc, [
+        ["Client Name", client_name],
+        ["Mobile", client.get("mobile") or "—"],
+        ["Consumer Number", client.get("consumer_number") or "—"],
+        ["Address", full_address or "—"],
+        [id_label, id_val],
+    ])
+    doc.add_paragraph()
+
+    # ── System Specifications ──────────────────────────────────────────────────
+    doc.add_heading("System Specifications", level=2)
+    inv_list = _get_inverters_list(client)
+    inv_rows = []
+    if inv_list:
+        for i, inv in enumerate(inv_list):
+            lbl = "Inverter" if len(inv_list) == 1 else f"Inverter #{i+1}"
+            brand = str(inv.get("brand") or client.get("inverter_make") or "").strip()
+            cap = str(inv.get("capacity") or "").strip()
+            qty = str(inv.get("quantity") or "1").strip()
+            inv_rows.append([lbl, f"{brand} · {cap} kW × {qty}".strip(" ·")])
+    else:
+        inv_make = str(client.get("inverter_make") or "").strip()
+        inv_cap = str(client.get("inverter_capacity") or "").strip()
+        inv_rows.append(["Inverter", f"{inv_make} · {inv_cap}".strip(" ·")])
+
+    _docx_kv_table(doc, [
+        ["System Size", f"{client.get('system_kw', 0)} kW"],
+        ["Phase Type", client.get("phase_type") or "—"],
+        ["Subsidy Eligible", "Yes" if client.get("subsidy_eligible") else "No"],
+        ["Panel", f"{client.get('panel_make') or client.get('panel_brand') or ''} · {client.get('panel_wattage') or ''}W × {client.get('num_panels') or ''}".strip(" ·")],
+        *inv_rows,
+        ["Inverter Serial", client.get("inverter_serial") or "—"],
+        ["Inverter Year", client.get("inverter_year") or "—"],
+        ["Consumer Category", client.get("consumer_type") or "—"],
+        ["Section Number", client.get("section_number") or client.get("section_no") or "—"],
+        ["Sanction Number", client.get("sanction_number") or "—"],
+    ])
+    doc.add_paragraph()
+
+    # ── Document-specific sections ─────────────────────────────────────────────
+    if doc_type_clean == "wcr":
+        doc.add_heading("Work Completion Details", level=2)
+        _docx_kv_table(doc, [
+            ["Consumer Number", client.get("consumer_number") or "—"],
+            ["Net Meter Number", client.get("net_meter_number") or "—"],
+            ["Section/BU Number", client.get("bu_number") or client.get("section_number") or "—"],
+            ["Installation Date", client.get("installation_date") or date_str],
+        ])
+        doc.add_paragraph()
+        doc.add_heading("Technical Observations", level=2)
+        doc.add_paragraph("Structural certification, earthing, DC/AC wiring, surge protection, DCDB and ACDB installations verified and compliant as per IS:732 and IS:3043 standards.")
+        doc.add_paragraph()
+        doc.add_heading("Declaration", level=2)
+        co = company.get("company_name") or "the Vendor"
+        doc.add_paragraph(
+            f"This Work Completion Report certifies that the solar PV system of {client.get('system_kw', 0)} kW capacity "
+            f"has been installed at the premises of {client_name} by {co}. "
+            "All materials used conform to the approved Bill of Materials. "
+            "The system has been commissioned and is ready for net-metering connection."
+        )
+
+    elif doc_type_clean == "sldr":
+        doc.add_heading("Single Line Diagram – Technical Summary", level=2)
+        doc.add_paragraph(
+            "DC side: Solar panels → DCDB (with surge arrester & DC isolator) → Inverter MPPT input. "
+            "AC side: Inverter AC output → ACDB (with MCB + RCBO) → Net Meter → DISCOM grid. "
+            "Earthing: Separate earth pits for AC, DC and lightning arrester as per IS 3043."
+        )
+        doc.add_paragraph()
+        doc.add_heading("Technical Specifications", level=2)
+        sol_kw = str(client.get("system_kw") or "")
+        panel_make = client.get("panel_brand") or client.get("panel_make") or ""
+        sol_wp = str(client.get("panel_wattage") or "")
+        num_panels = str(client.get("num_panels") or "")
+        inv_cap = str(client.get("inverter_capacity") or sol_kw)
+        tbl_rows = [["PARAMETER", "SPECIFICATIONS", "MAKE", "kWp"]]
+        tbl_rows.append(["PV MODULES", f"{sol_wp} Wp × {num_panels} Nos", panel_make.upper(), f"{sol_kw} kW"])
+        if inv_list:
+            for i, inv in enumerate(inv_list):
+                lbl = "INVERTER" if len(inv_list) == 1 else f"INVERTER #{i+1}"
+                cap = str(inv.get("capacity") or inv_cap)
+                qty = str(inv.get("quantity") or "1")
+                make = str(inv.get("brand") or client.get("inverter_make") or "").upper()
+                tbl_rows.append([lbl, f"{cap} kW × {qty} Nos", make, cap])
+        else:
+            make = str(client.get("inverter_make") or "").upper()
+            tbl_rows.append(["INVERTER", f"{inv_cap} kW × 1 Nos", make, inv_cap])
+        tbl = doc.add_table(rows=len(tbl_rows), cols=4)
+        tbl.style = "Table Grid"
+        for i, row in enumerate(tbl_rows):
+            for j, cell_text in enumerate(row):
+                cell = tbl.rows[i].cells[j]
+                cell.text = str(cell_text)
+                if i == 0:
+                    for run in cell.paragraphs[0].runs:
+                        run.bold = True
+
+    elif doc_type_clean == "net_meter_agreement":
+        doc.add_heading("Net Meter Agreement Terms", level=2)
+        doc.add_paragraph("1. The consumer agrees to install a bi-directional net meter at their premises.")
+        doc.add_paragraph("2. Excess generation will be credited as per the prevailing DISCOM tariff.")
+        doc.add_paragraph("3. Annual settlement will be carried out by the DISCOM as per state regulations.")
+        doc.add_paragraph("4. The vendor agrees to provide 5-year Comprehensive Maintenance Contract (CMC) coverage.")
+        doc.add_paragraph()
+        _docx_kv_table(doc, [
+            ["Net Meter Number", client.get("net_meter_number") or "—"],
+            ["Agreement Date", date_str],
+            ["Company", company.get("company_name") or "—"],
+            ["GSTIN", company.get("gst_number") or company.get("gst") or "—"],
+        ])
+
+    elif doc_type_clean in ("vendor_agreement", "vendor"):
+        doc.add_heading("Vendor Agreement Terms", level=2)
+        inv_make = str(client.get("inverter_make") or "").strip()
+        inv_kw = str(client.get("inverter_capacity") or client.get("system_kw") or "").strip()
+        doc.add_paragraph(f"1. The vendor will procure and install a solar PV system of {client.get('system_kw', 0)} kW capacity.")
+        doc.add_paragraph(f"2. Solar panel of {client.get('panel_make') or ''} make, {client.get('panel_wattage') or ''} Wp rated, {client.get('num_panels') or ''} Nos will be installed.")
+        doc.add_paragraph(f"3. Solar inverter of {inv_make} make, model {inv_kw} KW rated output capacity will be procured and installed.")
+        doc.add_paragraph("4. The vendor agrees to provide a 5-year Comprehensive Maintenance Contract (CMC).")
+        doc.add_paragraph("5. All materials shall conform to the approved Bill of Materials and relevant BIS standards.")
+        doc.add_paragraph()
+        _docx_kv_table(doc, [
+            ["Agreement Date", date_str],
+            ["Vendor", company.get("company_name") or "—"],
+            ["GSTIN", company.get("gst_number") or company.get("gst") or "—"],
+        ])
+
+    elif doc_type_clean in ("meter_testing_request", "meter_testing"):
+        doc.add_heading("Meter Testing Request Details", level=2)
+        _docx_kv_table(doc, [
+            ["Consumer Name", client_name],
+            ["Consumer Number", client.get("consumer_number") or "—"],
+            ["Mobile", client.get("mobile") or "—"],
+            ["Address", full_address or "—"],
+            ["Meter Number", client.get("meter_number") or "—"],
+            ["Request Date", date_str],
+            ["Company", company.get("company_name") or "—"],
+        ])
+        doc.add_paragraph()
+        doc.add_paragraph(
+            "This is a formal request for meter testing at the DISCOM meter testing laboratory. "
+            "The existing meter is suspected to be faulty. Kindly arrange for meter testing at the earliest."
+        )
+
+    else:
+        doc.add_heading("Document Details", level=2)
+        doc.add_paragraph(f"Document Type: {doc_type_clean.upper()}")
+
+    # ── Signature block ────────────────────────────────────────────────────────
+    doc.add_paragraph()
+    doc.add_paragraph()
+    sig_tbl = doc.add_table(rows=2, cols=2)
+    sig_tbl.rows[0].cells[0].text = "Consumer Signature"
+    sig_tbl.rows[0].cells[1].text = f"Vendor Signature ({company.get('company_name') or ''})"
+    sig_tbl.rows[1].cells[0].text = "\n\n_________________________"
+    sig_tbl.rows[1].cells[1].text = "\n\n_________________________"
+
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()

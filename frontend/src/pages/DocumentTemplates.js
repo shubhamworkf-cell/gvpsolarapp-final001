@@ -16,7 +16,7 @@ export default function DocumentTemplates() {
   const initialClientId = searchParams.get("client_id") || null;
   const [search, setSearch] = useState("");
   const [selectedClientId, setSelectedClientId] = useState(initialClientId);
-  const [generatingDoc, setGeneratingDoc] = useState(null);
+  const [generatingDoc, setGeneratingDoc] = useState(null); // tracks "wcr:pdf", "wcr:docx", etc.
 
   // Synchronize client_id from URL query if provided
   useEffect(() => {
@@ -110,27 +110,30 @@ export default function DocumentTemplates() {
     : null;
   const company = companyDoc || {};
 
-  // Handle direct PDF generation & immediate download
-  const handleGeneratePdf = async (docType, docLabel) => {
+  // Handle direct document generation & immediate download
+  // format: "pdf" (default) or "docx"
+  const handleGeneratePdf = async (docType, docLabel, format = "pdf") => {
     if (!selectedClientId) {
       toast.error("Please select a client first.");
       return;
     }
-    setGeneratingDoc(docType);
-    const toastId = toast.loading(`Generating ${docLabel} PDF from code...`);
+    const genKey = `${docType}:${format}`;
+    setGeneratingDoc(genKey);
+    const fmtLabel = format === "docx" ? "Word" : "PDF";
+    const toastId = toast.loading(`Generating ${docLabel} ${fmtLabel}...`);
     try {
       const response = await api.post(
         "/documents/download-direct",
-        { client_id: selectedClientId, doc_type: docType },
+        { client_id: selectedClientId, doc_type: docType, format },
         { responseType: "blob" }
       );
 
       const blob = response.data;
       const contentType = blob.type || response.headers?.["content-type"] || "";
       const disposition = response.headers?.["content-disposition"] || "";
-      const isDocx = contentType.includes("wordprocessingml") || 
-                     contentType.includes("docx") || 
-                     contentType.includes("document") || 
+      const isDocx = contentType.includes("wordprocessingml") ||
+                     contentType.includes("docx") ||
+                     contentType.includes("document") ||
                      disposition.toLowerCase().includes(".docx");
       const ext = isDocx ? ".docx" : ".pdf";
 
@@ -144,8 +147,7 @@ export default function DocumentTemplates() {
       link.parentNode.removeChild(link);
       window.URL.revokeObjectURL(url);
 
-      const formatLabel = isDocx ? `${docLabel} (DOCX)` : `${docLabel} (PDF)`;
-      toast.success(`${formatLabel} downloaded successfully!`, { id: toastId });
+      toast.success(`${docLabel} (${fmtLabel}) downloaded successfully!`, { id: toastId });
     } catch (err) {
       toast.error(formatApiError(err) || `Failed to generate ${docLabel}`, { id: toastId });
     } finally {
@@ -415,12 +417,14 @@ export default function DocumentTemplates() {
                     Generate Documents
                   </CardTitle>
                   <CardDescription className="text-xs">
-                    Click any document below to generate a fresh, complete PDF from code and download immediately.
+                    Click PDF or Word to generate and download each document immediately.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {availableDocs.map((doc) => {
-                    const isGenerating = generatingDoc === doc.type;
+                    const isGenPdf = generatingDoc === `${doc.type}:pdf`;
+                    const isGenDocx = generatingDoc === `${doc.type}:docx`;
+                    const anyGenerating = !!generatingDoc;
                     return (
                       <div
                         key={doc.type}
@@ -435,15 +439,27 @@ export default function DocumentTemplates() {
                           </div>
                           <p className="text-xs text-slate-600 leading-relaxed max-w-xl">{doc.desc}</p>
                         </div>
-                        <Button
-                          disabled={isGenerating || loadingDetail}
-                          onClick={() => handleGeneratePdf(doc.type, doc.title)}
-                          className="shrink-0 bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs px-4 py-2"
-                          data-testid={`generate-${doc.type}-btn`}
-                        >
-                          <Download className="w-3.5 h-3.5 mr-2" />
-                          {isGenerating ? "Generating..." : "Generate"}
-                        </Button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Button
+                            disabled={anyGenerating || loadingDetail}
+                            onClick={() => handleGeneratePdf(doc.type, doc.title, "pdf")}
+                            className="bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs px-3 py-2"
+                            data-testid={`generate-${doc.type}-pdf-btn`}
+                          >
+                            <Download className="w-3.5 h-3.5 mr-1.5" />
+                            {isGenPdf ? "Generating..." : "PDF"}
+                          </Button>
+                          <Button
+                            disabled={anyGenerating || loadingDetail}
+                            onClick={() => handleGeneratePdf(doc.type, doc.title, "docx")}
+                            variant="outline"
+                            className="border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium text-xs px-3 py-2"
+                            data-testid={`generate-${doc.type}-docx-btn`}
+                          >
+                            <FileText className="w-3.5 h-3.5 mr-1.5" />
+                            {isGenDocx ? "Generating..." : "Word"}
+                          </Button>
+                        </div>
                       </div>
                     );
                   })}
