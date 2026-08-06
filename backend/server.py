@@ -677,7 +677,10 @@ def _enrich_client_doc(c: dict) -> dict:
     c["sanction_number"] = ob.get("sanction_number") or c.get("sanction_number") or ""
     c["inverter_serial"] = c.get("inverter_serial") or ob.get("inverter_serial") or ob.get("inverter_sr") or ""
     c["inverter_sr"] = c["inverter_serial"]
-    c["bu_number"] = ob.get("bu_number") or c.get("bu_number") or ""
+    bu_val = ob.get("bu_number") or c.get("bu_number") or ob.get("bu_no") or c.get("bu_no") or ob.get("bu") or c.get("bu") or ""
+    c["bu_number"] = bu_val
+    c["bu_no"] = bu_val
+    c["bu"] = bu_val
     c["bu_text"]   = ob.get("bu_text")   or c.get("bu_text")   or ""
     c["pan_number"] = ob.get("pan_number") or ob.get("pan_card_number") or c.get("pan_number") or c.get("pan_card_number") or ""
     c["pan_card_number"] = c["pan_number"]

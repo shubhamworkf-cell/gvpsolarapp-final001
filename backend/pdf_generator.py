@@ -782,7 +782,7 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
         ["", cell_lbl("Lightening Arrester"), cell_val("Yes" if sol_kw else "")],
     ]
 
-    t1 = Table(table_data, colWidths=[1.0 * cm, 8.5 * cm, 9.1 * cm])
+    t1 = Table(table_data, colWidths=[0.7 * cm, 8.8 * cm, 9.1 * cm])
     t1.setStyle(TableStyle([
         ('GRID', (0, 0), (-1, -1), 0.6, colors.HexColor('#64748b')),
         ('SPAN', (0, 8), (2, 8)),
@@ -1105,6 +1105,46 @@ def _get_inverters_list(client: dict) -> list[dict]:
     return []
 
 
+def _get_vendor_inverter_clause_text(client: dict):
+    """
+    Returns (inverter_clause_data, is_multiple).
+    For single inverter: returns ((brand, capacity_str), False).
+    For multiple inverters: returns (formatted_combined_str, True).
+    """
+    inverter_list = _get_inverters_list(client)
+    has_multiple = len(inverter_list) > 1 or any(int(inv.get("quantity") or 1) > 1 for inv in inverter_list)
+
+    if not has_multiple and inverter_list:
+        inv = inverter_list[0]
+        brand = str(inv.get("brand") or client.get("inverter_make") or "").strip()
+        cap = str(inv.get("capacity") or client.get("inverter_capacity") or "").strip()
+        if cap and not ("KW" in cap.upper() or "KWATT" in cap.upper()):
+            cap = f"{cap} kW"
+        return (brand, cap), False
+
+    if has_multiple:
+        items = []
+        for inv in inverter_list:
+            b = str(inv.get("brand") or "").strip()
+            c = str(inv.get("capacity") or "").strip()
+            if c and not ("KW" in c.upper() or "KWATT" in c.upper()):
+                c = f"{c} kW"
+            q = str(inv.get("quantity") or "1").strip()
+            base = f"{b} {c}".strip()
+            if base:
+                items.append(f"{base} × {q}")
+        if items:
+            return ", ".join(items), True
+
+    # Fallback to single inverter fields from client object
+    brand = str(client.get("inverter_make") or client.get("inverter_brand") or "").strip()
+    cap = str(client.get("inverter_capacity") or "").strip()
+    if cap and not ("KW" in cap.upper() or "KWATT" in cap.upper()):
+        cap = f"{cap} kW"
+    return (brand, cap), False
+
+
+
 def generate_sldr_pdf(client: dict, company: dict) -> bytes:
     buf = BytesIO()
 
@@ -1300,11 +1340,13 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         
     company_name = company.get("company_name") or ""
     # BU Number and BU Text from onboarding (enriched via _enrich_client_doc before this call)
-    bu_no = client.get("bu_number") or client.get("bu_no") or ""
+    bu_no = client.get("bu_number") or client.get("bu_no") or client.get("bu") or ""
     bu_text = client.get("bu_text") or ""
-    # sub_div: use bu_text if available, else fall back to sub_division field (leave blank if both empty)
     sub_div = bu_text or client.get("sub_division") or ""
     division = client.get("division") or ""
+
+    sub_bu_str = f"{sub_div}/ {bu_no}" if (sub_div and bu_no) else (sub_div or bu_no)
+    licensee_sub = f", {sub_bu_str}" if sub_bu_str else ""
 
     # Define Styles (Refined font sizing & spacing for exact 5-page layout with compact vertical gaps)
     style_h1 = ParagraphStyle('NMA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=17, alignment=1, spaceBefore=4, spaceAfter=3)
@@ -1325,7 +1367,7 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         f"having premises at <b>{full_address}</b> and Consumer No <b>{consumer_no}</b> "
         f"as the first Party<br/>"
         f"AND<br/>"
-        f"The Distribution Licensee <b>Additional Executive Engineer, {sub_div}/ {bu_no}, MSEDCL</b>, "
+        f"The Distribution Licensee <b>Additional Executive Engineer{licensee_sub}, MSEDCL</b>, "
         f"(hereinafter referred to as 'the Licensee') and having its Registered Office at <b>{division}</b> as second Party of this Agreement;"
     )
     story.append(Paragraph(preamble_p1, style_body))
@@ -1673,7 +1715,17 @@ def generate_vendor_agreement_pdf(client: dict, company: dict) -> bytes:
     story.append(Paragraph(f"2.1. Total capacity of RTS System will be minimum <b>{system_kw} KWatt</b>.", style_body))
     story.append(Paragraph("2.2. The Solar modules, inverters and BoS will confirm to minimum specifications and DCR requirement of MNRE.", style_body))
     story.append(Paragraph(f"2.3. Solar modules of <b>{panel_make}</b> make model, <b>{panel_wattage} Wp</b> capacity each and <b>21.13%</b> efficiency will be procured and installed by the Vendor", style_body))
-    story.append(Paragraph(f"2.4. Solar inverter of <b>{inverter_make}</b> make, model <b>{inverter_kw} KW</b> rated output capacity will be procured and installed by the Vendor", style_body))
+    inv_data, is_multi = _get_vendor_inverter_clause_text(client)
+    if is_multi:
+        inv_clause_p = f"2.4. Solar inverter of <b>{inv_data}</b> rated output capacity will be procured and installed by the Vendor"
+    else:
+        brand, cap = inv_data
+        brand_str = f"<b>{brand}</b> make" if brand else ""
+        cap_str = f"model <b>{cap}</b>" if cap else ""
+        parts = [p for p in [brand_str, cap_str] if p]
+        mid = ", ".join(parts) if parts else "standard"
+        inv_clause_p = f"2.4. Solar inverter of {mid} rated output capacity will be procured and installed by the Vendor"
+    story.append(Paragraph(inv_clause_p, style_body))
     story.append(Paragraph("2.5. The module mounting structure must withstand minimum wind load pressure as specified by MNRE.", style_body))
     story.append(Paragraph("2.6. Other BoS installations shall be as per best industry practice with all safety and protection gears installed by the vendor.", style_body))
 
@@ -1919,7 +1971,7 @@ def generate_meter_testing_request_pdf(client: dict, company: dict) -> bytes:
     if not logo_d:
         logo_d = Spacer(6.2 * cm, 1.2 * cm)
 
-    p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('mtr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20))
+    p_title = Paragraph(f"<b><font size='18' color='#1d4ed8'>{company_name.upper()}</font></b>", ParagraphStyle('mtr_hdr_title', parent=styles['Normal'], fontName='Helvetica-Bold', leading=20, spaceBefore=5))
     gst_text = f"GST NO – {gst_no}" if gst_no else ""
     p_gst = Paragraph(f"<b><font size='9' color='#1d4ed8'>{gst_text}</font></b>", ParagraphStyle('mtr_hdr_gst', parent=styles['Normal'], fontName='Helvetica-Bold', alignment=2, leading=14))
 
@@ -2713,8 +2765,8 @@ def _generate_wcr_docx(client: dict, company: dict) -> bytes:
     SUB_HDR = {8, 15, 22}
     insp_tbl = doc.add_table(rows=len(insp_rows), cols=3)
     insp_tbl.style = 'Table Grid'
-    insp_tbl.columns[0].width = int(1.0 * 360000)
-    insp_tbl.columns[1].width = int(8.5 * 360000)
+    insp_tbl.columns[0].width = int(0.7 * 360000)
+    insp_tbl.columns[1].width = int(8.8 * 360000)
     insp_tbl.columns[2].width = int(9.1 * 360000)
     for r_idx, (sr, comp, obs) in enumerate(insp_rows):
         row_cells = insp_tbl.rows[r_idx].cells
@@ -2961,10 +3013,12 @@ def _generate_net_meter_docx(client: dict, company: dict) -> bytes:
     system_kw    = str(client.get("system_kw") or client.get("capacity") or "").strip()
     date_str_raw = client.get("installation_date") or datetime.now().strftime("%d/%m/%Y")
     date_str     = date_str_raw[:10] if len(date_str_raw) > 10 else date_str_raw
-    bu_no   = client.get("bu_number") or ""
+    bu_no   = client.get("bu_number") or client.get("bu_no") or client.get("bu") or ""
     bu_text = client.get("bu_text") or ""
     sub_div = bu_text or client.get("sub_division") or ""
     division = client.get("division") or ""
+    sub_bu_str = f"{sub_div}/ {bu_no}" if (sub_div and bu_no) else (sub_div or bu_no)
+    licensee_sub = f", {sub_bu_str}" if sub_bu_str else ""
 
     def _hdr(text, size=14, center=True):
         p = doc.add_paragraph()
@@ -3000,7 +3054,7 @@ def _generate_net_meter_docx(client: dict, company: dict) -> bytes:
     _body(f"This Agreement is made and entered into at (location) {city} on this (date {date_str}) "
           f"between the Eligible Consumer {client_name} having premises at {full_address} "
           f"and Consumer No {consumer_no} as the first Party\nAND\n"
-          f"The Distribution Licensee Additional Executive Engineer, {sub_div}/ {bu_no}, MSEDCL, "
+          f"The Distribution Licensee Additional Executive Engineer{licensee_sub}, MSEDCL, "
           f"(hereinafter referred to as 'the Licensee') and having its Registered Office at {division} "
           f"as second Party of this Agreement;")
     _docx_add_spacer(doc, 4)
@@ -3202,7 +3256,17 @@ def _generate_vendor_docx(client: dict, company: dict) -> bytes:
     _body(f"2.1. Total capacity of RTS System will be minimum {system_kw} KWatt.")
     _body("2.2. The Solar modules, inverters and BoS will confirm to minimum specifications and DCR requirement of MNRE.")
     _body(f"2.3. Solar modules of {panel_make} make model, {panel_wattage} Wp capacity each and 21.13% efficiency will be procured and installed by the Vendor.")
-    _body(f"2.4. Solar inverter of {inverter_make} make, model {inverter_kw} KW rated output capacity will be procured and installed by the Vendor.")
+    inv_data, is_multi = _get_vendor_inverter_clause_text(client)
+    if is_multi:
+        inv_clause_p = f"2.4. Solar inverter of {inv_data} rated output capacity will be procured and installed by the Vendor."
+    else:
+        brand, cap = inv_data
+        brand_str = f"{brand} make" if brand else ""
+        cap_str = f"model {cap}" if cap else ""
+        parts = [p for p in [brand_str, cap_str] if p]
+        mid = ", ".join(parts) if parts else "standard"
+        inv_clause_p = f"2.4. Solar inverter of {mid} rated output capacity will be procured and installed by the Vendor."
+    _body(inv_clause_p)
     _body("2.5. The module mounting structure must withstand minimum wind load pressure as specified by MNRE.")
     _body("2.6. Other BoS installations shall be as per best industry practice with all safety and protection gears installed by the vendor.")
 

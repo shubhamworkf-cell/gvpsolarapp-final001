@@ -449,16 +449,18 @@ export default function DocumentTemplates() {
                             <Download className="w-3.5 h-3.5 mr-1.5" />
                             {isGenPdf ? "Generating..." : "PDF"}
                           </Button>
-                          <Button
-                            disabled={anyGenerating || loadingDetail}
-                            onClick={() => handleGeneratePdf(doc.type, doc.title, "docx")}
-                            variant="outline"
-                            className="border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium text-xs px-3 py-2"
-                            data-testid={`generate-${doc.type}-docx-btn`}
-                          >
-                            <FileText className="w-3.5 h-3.5 mr-1.5" />
-                            {isGenDocx ? "Generating..." : "Word"}
-                          </Button>
+                          {doc.type !== "sldr" && (
+                            <Button
+                              disabled={anyGenerating || loadingDetail}
+                              onClick={() => handleGeneratePdf(doc.type, doc.title, "docx")}
+                              variant="outline"
+                              className="border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium text-xs px-3 py-2"
+                              data-testid={`generate-${doc.type}-docx-btn`}
+                            >
+                              <FileText className="w-3.5 h-3.5 mr-1.5" />
+                              {isGenDocx ? "Generating..." : "Word"}
+                            </Button>
+                          )}
                         </div>
                       </div>
                     );
