@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import StatusBadge from "@/components/StatusBadge";
 import { toast } from "sonner";
-import { ArrowLeft, Check, FileText, MessageSquare, Phone, MapPin, Zap, Wand2, Sparkles, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, FileText, MessageSquare, Phone, MapPin, Zap, Wand2, Sparkles, Plus, Trash2, Copy } from "lucide-react";
 import dayjs from "dayjs";
 import TemplateGenerateDialog from "@/components/TemplateGenerateDialog";
 
@@ -519,7 +519,24 @@ export default function ClientDetail() {
                             {a.size_model && <div className="text-[10px] text-slate-400 font-normal mt-0.5">{a.size_model}</div>}
                           </td>
                           <td className="p-3 font-medium text-slate-800">{a.quantity !== undefined && a.quantity !== null ? a.quantity : 1}</td>
-                          <td className="p-3 font-mono font-medium text-slate-600">{a.serial_number || "—"}</td>
+                          <td className="p-3 font-mono font-medium text-slate-600">
+                            <div className="flex items-center gap-1.5">
+                              <span>{a.serial_number || "—"}</span>
+                              {a.serial_number && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(a.serial_number);
+                                    toast.success("Serial number copied");
+                                  }}
+                                  className="text-slate-400 hover:text-blue-600 p-0.5 rounded"
+                                  title="Copy Serial Number"
+                                >
+                                  <Copy className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
                           <td className="p-3 text-slate-700">{a.installation_date || "—"}</td>
                           <td className="p-3">
                             <span className={`font-semibold ${a.warranty_status === "Active" ? "text-emerald-600" : "text-rose-600"}`}>

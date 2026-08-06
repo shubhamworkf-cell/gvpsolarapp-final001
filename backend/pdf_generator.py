@@ -2285,73 +2285,79 @@ def generate_product_master_pdf(products: list, company: dict) -> bytes:
     pdf = SimpleDocTemplate(
         buf,
         pagesize=landscape(A4),
-        leftMargin=1.2 * cm,
-        rightMargin=1.2 * cm,
-        topMargin=1.2 * cm,
-        bottomMargin=1.8 * cm
+        leftMargin=1.0 * cm,
+        rightMargin=1.0 * cm,
+        topMargin=1.0 * cm,
+        bottomMargin=1.5 * cm
     )
     story = []
 
     story.extend(_header(company))
 
-    STYLE_TITLE = ParagraphStyle('pm_t', parent=styles['Normal'], fontSize=15, fontName='Helvetica-Bold', leading=18, textColor=colors.HexColor('#0f172a'))
+    STYLE_TITLE = ParagraphStyle('pm_t', parent=styles['Normal'], fontSize=14, fontName='Helvetica-Bold', leading=17, textColor=colors.HexColor('#0f172a'))
     STYLE_SUBTITLE = ParagraphStyle('pm_st', parent=styles['Normal'], fontSize=8.5, fontName='Helvetica', leading=12, textColor=colors.HexColor('#475569'))
 
     now_str = datetime.now().strftime("%d %b %Y, %I:%M %p")
     story.append(Paragraph("<b>PRODUCT MASTER INVENTORY REPORT</b>", STYLE_TITLE))
     story.append(Paragraph(f"Exported Date & Time: {now_str} | Total Products Exported: <b>{len(products)}</b>", STYLE_SUBTITLE))
-    story.append(Spacer(1, 0.3 * cm))
+    story.append(Spacer(1, 0.25 * cm))
 
-    style_cell = ParagraphStyle('cell_norm', parent=styles['Normal'], fontSize=8, fontName='Helvetica', leading=10, textColor=colors.HexColor('#1e293b'))
-    style_cell_bold = ParagraphStyle('cell_bold', parent=styles['Normal'], fontSize=8, fontName='Helvetica-Bold', leading=10, textColor=colors.HexColor('#0f172a'))
-    style_cell_right = ParagraphStyle('cell_r', parent=styles['Normal'], fontSize=8, fontName='Helvetica', leading=10, alignment=2, textColor=colors.HexColor('#1e293b'))
-    style_cell_center = ParagraphStyle('cell_c', parent=styles['Normal'], fontSize=8, fontName='Helvetica', leading=10, alignment=1, textColor=colors.HexColor('#1e293b'))
+    style_cell = ParagraphStyle('cell_norm', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', leading=9.5, textColor=colors.HexColor('#1e293b'))
+    style_cell_bold = ParagraphStyle('cell_bold', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica-Bold', leading=9.5, textColor=colors.HexColor('#0f172a'))
+    style_cell_right = ParagraphStyle('cell_r', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', leading=9.5, alignment=2, textColor=colors.HexColor('#1e293b'))
+    style_cell_center = ParagraphStyle('cell_c', parent=styles['Normal'], fontSize=7.5, fontName='Helvetica', leading=9.5, alignment=1, textColor=colors.HexColor('#1e293b'))
 
-    hdr_cell = lambda txt, align=0: Paragraph(f"<b><font color='#ffffff' size='8'>{txt}</font></b>", ParagraphStyle('h', parent=styles['Normal'], alignment=align))
+    hdr_cell = lambda txt, align=0: Paragraph(f"<b><font color='#ffffff' size='7.5'>{txt}</font></b>", ParagraphStyle('h', parent=styles['Normal'], alignment=align))
 
     table_data = [
         [
             hdr_cell("Product Name"),
-            hdr_cell("Size"),
-            hdr_cell("Category"),
+            hdr_cell("Specification"),
             hdr_cell("Unit", 1),
-            hdr_cell("Min Stock", 2),
-            hdr_cell("Rate", 2),
+            hdr_cell("HSN", 1),
+            hdr_cell("Category"),
+            hdr_cell("Opening Stock", 2),
             hdr_cell("Current Stock", 2),
+            hdr_cell("High Value", 1),
+            hdr_cell("Barcode", 1),
             hdr_cell("Status", 1)
         ]
     ]
 
     for p in products:
         name = str(p.get("name") or "")
-        size = str(p.get("size") or "—")
-        category = str(p.get("category") or "Solar")
+        spec = str(p.get("size") or p.get("specification") or "—")
         unit = str(p.get("unit") or "Nos")
-        min_stock = str(p.get("min_stock") or 0)
-        rate = f"₹{p.get('rate', 0):,.2f}" if isinstance(p.get('rate'), (int, float)) else str(p.get('rate') or "0")
-        stock = str(p.get("balance") or 0)
-        status = str(p.get("stock_status") or "Normal")
+        hsn = str(p.get("hsn") or p.get("hsn_code") or p.get("sku") or "—")
+        category = str(p.get("category") or "Solar")
+        op_stock = str(p.get("opening_stock") if p.get("opening_stock") is not None else p.get("min_stock") or 0)
+        cur_stock = str(p.get("balance") if p.get("balance") is not None else p.get("current_stock") or 0)
+        is_hv = "Yes" if (p.get("high_value_goods") or p.get("is_high_value") or p.get("high_value")) else "No"
+        barcode = str(p.get("barcode") or p.get("barcode_num") or p.get("code") or "—")
+        status = str(p.get("stock_status") or p.get("status") or "Normal")
 
         table_data.append([
             Paragraph(name, style_cell_bold),
-            Paragraph(size, style_cell),
-            Paragraph(category, style_cell),
+            Paragraph(spec, style_cell),
             Paragraph(unit, style_cell_center),
-            Paragraph(min_stock, style_cell_right),
-            Paragraph(rate, style_cell_right),
-            Paragraph(stock, style_cell_right),
+            Paragraph(hsn, style_cell_center),
+            Paragraph(category, style_cell),
+            Paragraph(op_stock, style_cell_right),
+            Paragraph(cur_stock, style_cell_right),
+            Paragraph(is_hv, style_cell_center),
+            Paragraph(barcode, style_cell_center),
             Paragraph(status, style_cell_center)
         ])
 
-    col_widths = [6.5 * cm, 3.5 * cm, 3.5 * cm, 2.0 * cm, 2.3 * cm, 2.8 * cm, 2.7 * cm, 4.0 * cm]
+    col_widths = [5.0 * cm, 3.0 * cm, 1.6 * cm, 2.2 * cm, 2.8 * cm, 2.4 * cm, 2.4 * cm, 2.0 * cm, 2.6 * cm, 2.4 * cm]
     t = Table(table_data, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0f172a')),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
     ]))
 

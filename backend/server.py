@@ -4843,8 +4843,8 @@ async def cancel_material_request(req_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Material request not found")
     if user["role"] not in ("Admin", "Supervisor") and req.get("requested_by") != user["id"]:
         raise HTTPException(status_code=403, detail="Not your request")
-    if (req.get("status") or "").lower() not in ("draft", "pending"):
-        raise HTTPException(status_code=400, detail="Only pending or draft requests can be cancelled")
+    if (req.get("status") or "").lower() not in ("draft", "pending", "submitted"):
+        raise HTTPException(status_code=400, detail="Only pending, draft, or submitted requests can be cancelled")
 
     await db.material_requests.update_one(
         {"id": req_id, "company_id": user["company_id"]},
