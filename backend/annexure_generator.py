@@ -139,7 +139,7 @@ def resolve_annexure_values(client: dict, company: dict) -> Dict[str, str]:
     num_panels = _get("num_panels", "number_of_panels", "panel_quantity")
     solar_panels_in_nos_nos = f"{num_panels} NOS" if num_panels else ""
 
-    raw_inverters = client.get("inverters") or ob_dict.get("inverters")
+    raw_inverters = client.get("inverters") or ob.get("inverters")
     inverter_list = []
     if isinstance(raw_inverters, list) and len(raw_inverters) > 0:
         for inv in raw_inverters:
@@ -340,20 +340,169 @@ def _convert_via_unoconv(docx_bytes: bytes) -> Optional[bytes]:
 
 
 def _docx_to_pdf(docx_bytes: bytes) -> Optional[bytes]:
-    """Try all available DOCX → PDF conversion methods in order."""
+    """Try headless DOCX → PDF conversion methods (LibreOffice CLI / unoconv)."""
     # 1. LibreOffice headless (best on Linux servers)
     result = _convert_docx_to_pdf(docx_bytes)
     if result:
         return result
-    # 2. docx2pdf package (uses MS Word on macOS, or LibreOffice on Linux via subprocess)
-    result = _convert_via_docx2pdf(docx_bytes)
-    if result:
-        return result
-    # 3. unoconv
+    # 2. unoconv
     result = _convert_via_unoconv(docx_bytes)
     if result:
         return result
     return None
+
+
+def _generate_annexure_pdf_reportlab(replacements: Dict[str, str], company: dict) -> bytes:
+    """Generate high-fidelity MSEDCL Annexure-I PDF directly using ReportLab as fallback when LibreOffice is absent."""
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.5 * cm,
+        rightMargin=1.5 * cm,
+        topMargin=1.2 * cm,
+        bottomMargin=1.2 * cm,
+    )
+    styles = getSampleStyleSheet()
+
+    title_center_bold = ParagraphStyle(
+        'ann_title_center_bold',
+        parent=styles['Normal'],
+        fontSize=12,
+        leading=15,
+        alignment=1,
+        fontName='Helvetica-Bold',
+        textColor=colors.HexColor('#0f172a')
+    )
+    title_center = ParagraphStyle(
+        'ann_title_center',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=13,
+        alignment=1,
+        fontName='Helvetica',
+        textColor=colors.HexColor('#1e293b')
+    )
+    cell_style = ParagraphStyle(
+        'ann_cell_style',
+        parent=styles['Normal'],
+        fontSize=8.5,
+        leading=11,
+        textColor=colors.HexColor('#0f172a')
+    )
+    cell_bold = ParagraphStyle(
+        'ann_cell_bold',
+        parent=styles['Normal'],
+        fontSize=8.5,
+        leading=11,
+        fontName='Helvetica-Bold',
+        textColor=colors.HexColor('#0f172a')
+    )
+
+    story = []
+
+    # Header matching MSEDCL Annexure-I
+    story.append(Paragraph("Maharashtra State Electricity", title_center_bold))
+    story.append(Paragraph("Distribution Company Limited", title_center_bold))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph("Renewable Energy Generating System", title_center))
+    story.append(Paragraph("Annexure-I", title_center_bold))
+    story.append(Paragraph("(Commissioning Report for RE System)", title_center))
+    story.append(Spacer(1, 8))
+
+    # Table matching annexure_template.docx Table 0
+    headers = [
+        Paragraph("<b>S/N</b>", cell_bold),
+        Paragraph("<b>Particulars</b>", cell_bold),
+        Paragraph("<b>As Commissioned</b>", cell_bold)
+    ]
+
+    table_rows = [headers]
+
+    raw_rows = [
+        ("1", "Name of Consumer", replacements.get("client_full_name", "")),
+        ("2", "Consumer Number", replacements.get("consumer_no", "")),
+        ("3", "Mobile Number", replacements.get("mobile_no", "")),
+        ("4", "Email Id", replacements.get("email_id", "")),
+        ("5", "Address of Installation", replacements.get("address", "")),
+        ("6", "RE Arrangement Type", replacements.get("net_metering_arrangement", "")),
+        ("7", "RE Source", replacements.get("re_source", "")),
+        ("8", "", ""),
+        ("9", "Capacity Type", replacements.get("capacity_type", "")),
+        ("10", "Project Model", replacements.get("project_model", "")),
+        ("11", "RE Installed Capacity (Rooftop) (Kw)", replacements.get("panel_in_kw_kw", "")),
+        ("12", "RE Installed Capacity (Rooftop + Ground) (Kw)", "NA"),
+        ("13", "RE Installed Capacity (Ground) (Kw)", "NA"),
+        ("14", "Installation Date", replacements.get("installation_date", "")),
+        ("15", "Solar PV Details", replacements.get("solar_pv_details", "")),
+        ("16", "Inverter Capacity (Kw)", replacements.get("inverter_in_kw_kw", "")),
+        ("17", "Inverter Make", replacements.get("inverter_brand", "")),
+        ("18", "No. of PV Modules", replacements.get("solar_panels_in_nos_nos", "")),
+        ("19", "Module Capacity (Kw)", replacements.get("panel_in_wp_wp", "")),
+    ]
+
+    for sn, part, val in raw_rows:
+        table_rows.append([
+            Paragraph(sn, cell_bold if sn else cell_style),
+            Paragraph(part, cell_bold if part else cell_style),
+            Paragraph(val, cell_style)
+        ])
+
+    table = Table(table_rows, colWidths=[1.2 * cm, 8.5 * cm, 8.3 * cm])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 8))
+
+    # Notes section
+    story.append(Paragraph("<b>To be uploaded separately:</b>", cell_bold))
+    notes = [
+        "Self-certification of safety of the installation of the RTS system along with the test report of the Licensed Electrical Contractor.",
+        "Electrical Inspector permission if system is above 200 Kw. (Mandatory if system is above 200 Kw only)",
+        "Third party leasing agreement if Model selected is RESCO.",
+        "Photograph of the system commissioned."
+    ]
+    for n in notes:
+        story.append(Paragraph(f"• {n}", cell_style))
+
+    story.append(Spacer(1, 12))
+
+    # Footer / Signatures
+    inst_date = replacements.get("installation_date", "")
+    client_name = replacements.get("client_full_name", "")
+    comp_details = replacements.get("company_details", "")
+
+    sig_data = [
+        [
+            Paragraph(f"<b>Date:</b> {inst_date}", cell_style),
+            Paragraph(f"<b>Consumer:</b> {client_name}", cell_style),
+            Paragraph(f"<b>Vendor / Company:</b> {comp_details}", cell_style)
+        ]
+    ]
+    sig_table = Table(sig_data, colWidths=[4.0 * cm, 7.0 * cm, 7.0 * cm])
+    sig_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    story.append(sig_table)
+
+    doc.build(story)
+    return buf.getvalue()
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -364,8 +513,7 @@ def generate_annexure(client: dict, company: dict) -> Tuple[bytes, str]:
 
     Returns:
         (content_bytes, content_type)
-        content_type is "application/pdf" if conversion succeeded,
-        otherwise "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        content_type is "application/pdf"
     """
     template_bytes = _load_template_bytes()
     replacements = resolve_annexure_values(client, company)
@@ -377,6 +525,8 @@ def generate_annexure(client: dict, company: dict) -> Tuple[bytes, str]:
     if pdf_bytes:
         return pdf_bytes, "application/pdf"
     else:
-        # Fall back to DOCX
-        logger.warning("Returning Annexure as DOCX (no LibreOffice).")
-        return filled_docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        # Fall back to ReportLab PDF generator so PDF request always returns application/pdf
+        logger.info("LibreOffice not available for DOCX->PDF; generating Annexure PDF via ReportLab.")
+        pdf_bytes = _generate_annexure_pdf_reportlab(replacements, company or {})
+        return pdf_bytes, "application/pdf"
+

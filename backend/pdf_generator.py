@@ -615,7 +615,7 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
                     if target_h > max_h:
                         target_h = max_h
                         target_w = target_h / aspect
-                    resampled = img.resize((int(round(target_w * 4)), int(round(target_h * 4))), PILImage.LANCZOS)
+                    resampled = img.resize((round(target_w * 4), round(target_h * 4)), PILImage.LANCZOS)
                     res_buf = BytesIO()
                     resampled.save(res_buf, format='PNG')
                     logo_d = RLImage(BytesIO(res_buf.getvalue()), width=target_w, height=target_h)
@@ -1910,7 +1910,7 @@ def generate_meter_testing_request_pdf(client: dict, company: dict) -> bytes:
                 if target_h > max_h:
                     target_h = max_h
                     target_w = target_h / aspect
-                resampled = img.resize((int(round(target_w * 4)), int(round(target_h * 4))), PILImage.LANCZOS)
+                resampled = img.resize((round(target_w * 4), round(target_h * 4)), PILImage.LANCZOS)
                 res_buf = BytesIO()
                 resampled.save(res_buf, format='PNG')
                 logo_d = RLImage(BytesIO(res_buf.getvalue()), width=target_w, height=target_h)
@@ -2339,17 +2339,13 @@ def _docx_heading(doc, text: str, level: int = 1):
 
 
 def _docx_kv_table(doc, rows: list):
-    """Add a 2-column label-value table."""
-    from docx.shared import Pt, RGBColor
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
+    """Add a 2-column label-value table (generic fallback)."""
     tbl = doc.add_table(rows=len(rows), cols=2)
     tbl.style = "Table Grid"
     for i, (lbl, val) in enumerate(rows):
         cells = tbl.rows[i].cells
         cells[0].text = str(lbl)
         cells[1].text = str(val) if val is not None else ""
-        # Bold label
         for run in cells[0].paragraphs[0].runs:
             run.bold = True
     return tbl
@@ -2365,16 +2361,14 @@ def _docx_company_header(doc, company: dict):
     city = company.get("city") or ""
     state = company.get("state") or ""
     pincode = company.get("pincode") or ""
-    full_address = ", ".join(filter(bool, [address, city, state]))
+    full_address = ", ".join(p for p in [address, city, state] if p)
     if pincode:
         full_address += f" - {pincode}"
-
     p = doc.add_paragraph()
     run = p.add_run(company_name)
     run.bold = True
     run.font.size = Pt(14)
     run.font.color.rgb = RGBColor(0x1d, 0x4e, 0xd8)
-
     if mobile:
         doc.add_paragraph(f"Mobile: {mobile}")
     if email:
@@ -2385,39 +2379,1040 @@ def _docx_company_header(doc, company: dict):
         doc.add_paragraph(f"Address: {full_address}")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Faithful DOCX helpers (match PDF layout exactly)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_docx_document(left_cm=1.2, right_cm=1.2, top_cm=1.0, bottom_cm=1.8):
+    """Create a python-docx Document with A4 page size and given margins (in cm)."""
+    from docx import Document as _Document
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    doc = _Document()
+    for section in doc.sections:
+        section.page_width  = int(21.0 * 360000)
+        section.page_height = int(29.7 * 360000)
+        section.left_margin   = int(left_cm   * 360000)
+        section.right_margin  = int(right_cm  * 360000)
+        section.top_margin    = int(top_cm    * 360000)
+        section.bottom_margin = int(bottom_cm * 360000)
+    for p in doc.paragraphs:
+        p._element.getparent().remove(p._element)
+    return doc
+
+
+def _docx_set_cell_bg(cell, hex_color: str):
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    shd = OxmlElement('w:shd')
+    shd.set(qn('w:val'), 'clear')
+    shd.set(qn('w:color'), 'auto')
+    shd.set(qn('w:fill'), hex_color.lstrip('#'))
+    tcPr.append(shd)
+
+
+def _remove_tbl_borders(tbl):
+    """Remove all borders from a table."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    tblPr = tbl._tbl.tblPr
+    tblBorders = OxmlElement('w:tblBorders')
+    for side in ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']:
+        bd = OxmlElement(f'w:{side}')
+        bd.set(qn('w:val'), 'none')
+        bd.set(qn('w:sz'), '0')
+        bd.set(qn('w:space'), '0')
+        bd.set(qn('w:color'), 'auto')
+        tblBorders.append(bd)
+    tblPr.append(tblBorders)
+
+
+def _docx_header_block(doc, company: dict):
+    """
+    Build the branded document header matching the PDF:
+      [Logo | Company Name (large blue bold) | GST (right-aligned blue)]
+      ─── solid blue divider line ───
+    """
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    company_name = (company.get('company_name') or company.get('name') or
+                    company.get('legal_business_name') or '').strip()
+    gst_no = (company.get('gst_number') or company.get('gstin') or
+              company.get('gst') or '').strip()
+    logo_bytes = company.get('logo_bytes')
+
+    # 3-column header table: [logo | company name | GST]
+    hdr_tbl = doc.add_table(rows=1, cols=3)
+    hdr_tbl.style = 'Table Grid'
+    _remove_tbl_borders(hdr_tbl)
+    for idx, w_cm in enumerate([6.5, 7.5, 4.6]):
+        hdr_tbl.columns[idx].width = int(w_cm * 360000)
+
+    row = hdr_tbl.rows[0]
+    logo_cell = row.cells[0]
+    logo_cell.width = int(6.5 * 360000)
+    if logo_bytes:
+        try:
+            from PIL import Image as _PILImage
+            img = _PILImage.open(BytesIO(logo_bytes))
+            iw, ih = img.size
+            if iw > 0 and ih > 0:
+                aspect = ih / float(iw)
+                target_w = 6.5
+                target_h = target_w * aspect
+                if target_h > 3.2:
+                    target_h = 3.2
+                    target_w = target_h / aspect
+                res_buf = BytesIO()
+                resized = img.resize((int(target_w * 4 * 28.35), int(target_h * 4 * 28.35)))
+                resized.save(res_buf, format='PNG')
+                res_buf.seek(0)
+                lp = logo_cell.paragraphs[0]
+                lrun = lp.add_run()
+                lrun.add_picture(res_buf, width=int(target_w * 360000))
+        except Exception:
+            logo_cell.paragraphs[0].add_run('')
+    else:
+        logo_cell.paragraphs[0].add_run('')
+
+    name_cell = row.cells[1]
+    name_cell.width = int(7.5 * 360000)
+    name_para = name_cell.paragraphs[0]
+    name_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    name_run = name_para.add_run(company_name.upper())
+    name_run.bold = True
+    name_run.font.size = Pt(15)
+    name_run.font.color.rgb = RGBColor(0x1d, 0x4e, 0xd8)
+
+    gst_cell = row.cells[2]
+    gst_cell.width = int(4.6 * 360000)
+    gst_para = gst_cell.paragraphs[0]
+    gst_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    if gst_no:
+        gst_run = gst_para.add_run(f"GST NO - {gst_no}")
+        gst_run.bold = True
+        gst_run.font.size = Pt(9)
+        gst_run.font.color.rgb = RGBColor(0x1d, 0x4e, 0xd8)
+
+    # Blue divider line (thick top border on a minimal-height row)
+    div_tbl = doc.add_table(rows=1, cols=1)
+    div_tbl.style = 'Table Grid'
+    _remove_tbl_borders(div_tbl)
+    div_cell = div_tbl.rows[0].cells[0]
+    div_cell.width = int(18.6 * 360000)
+    tc = div_cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcBorders = OxmlElement('w:tcBorders')
+    top_bd = OxmlElement('w:top')
+    top_bd.set(qn('w:val'), 'single')
+    top_bd.set(qn('w:sz'), '12')
+    top_bd.set(qn('w:space'), '0')
+    top_bd.set(qn('w:color'), '1D4ED8')
+    tcBorders.append(top_bd)
+    for side in ['bottom', 'left', 'right']:
+        bd = OxmlElement(f'w:{side}')
+        bd.set(qn('w:val'), 'none')
+        bd.set(qn('w:sz'), '0')
+        bd.set(qn('w:space'), '0')
+        bd.set(qn('w:color'), 'auto')
+        tcBorders.append(bd)
+    tcPr.append(tcBorders)
+    trPr = div_tbl.rows[0]._tr.get_or_add_trPr()
+    trHeight = OxmlElement('w:trHeight')
+    trHeight.set(qn('w:val'), '80')
+    trHeight.set(qn('w:hRule'), 'exact')
+    trPr.append(trHeight)
+
+    sp = doc.add_paragraph()
+    sp.paragraph_format.space_before = Pt(0)
+    sp.paragraph_format.space_after = Pt(2)
+
+
+def _docx_add_spacer(doc, height_pt=6):
+    from docx.shared import Pt
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    p.paragraph_format.line_spacing = Pt(height_pt)
+
+
+def _docx_add_body_paragraph(doc, text: str, font_size=9, justify=False):
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(3)
+    if justify:
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    run = p.add_run(text)
+    run.font.size = Pt(font_size)
+    run.font.color.rgb = RGBColor(0x1f, 0x29, 0x37)
+    return p
+
+
+def _docx_add_section_title(doc, text, font_size=11, bold=True, center=False):
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_after  = Pt(3)
+    if center:
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(text)
+    run.bold = bold
+    run.font.size = Pt(font_size)
+    run.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+    return p
+
+
+def _docx_signature_block(doc, client_name: str, company_name: str):
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    _docx_add_spacer(doc, 18)
+    sig_tbl = doc.add_table(rows=1, cols=2)
+    sig_tbl.style = 'Table Grid'
+    _remove_tbl_borders(sig_tbl)
+    sig_tbl.rows[0].cells[0].width = int(9.3 * 360000)
+    sig_tbl.rows[0].cells[1].width = int(9.3 * 360000)
+    lp = sig_tbl.rows[0].cells[0].paragraphs[0]
+    lr = lp.add_run(f"Authorized Signature [Vendor]\n\n\nFor {company_name.upper()}")
+    lr.bold = True
+    lr.font.size = Pt(9)
+    rp = sig_tbl.rows[0].cells[1].paragraphs[0]
+    rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    rr = rp.add_run(f"Consumer Signature\n\n\n{client_name}")
+    rr.bold = True
+    rr.font.size = Pt(9)
+
+    under_tbl = doc.add_table(rows=1, cols=2)
+    under_tbl.style = 'Table Grid'
+    _remove_tbl_borders(under_tbl)
+    under_tbl.rows[0].cells[0].width = int(9.3 * 360000)
+    under_tbl.rows[0].cells[1].width = int(9.3 * 360000)
+    under_tbl.rows[0].cells[0].paragraphs[0].add_run("_________________________")
+    rp2 = under_tbl.rows[0].cells[1].paragraphs[0]
+    rp2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    rp2.add_run("_________________________")
+
+
+# ─── Per-document faithful DOCX generators ───────────────────────────────────
+
+def _generate_wcr_docx(client: dict, company: dict) -> bytes:
+    """WCR Word document mirroring the 3-page PDF layout."""
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = _build_docx_document(left_cm=1.2, right_cm=1.2, top_cm=1.0, bottom_cm=1.8)
+
+    stages_dict = dict(client.get("stages") or {})
+    ob_dict = dict(stages_dict.get("onboarding_data") or {})
+    company_name = (company.get('company_name') or '').strip()
+    client_name  = (client.get('full_name') or client.get('name') or '').strip()
+    consumer_num = str(client.get('consumer_number') or '').strip()
+    client_addr  = (client.get('address') or '').strip()
+    city         = (client.get('city') or '').strip()
+    pincode      = str(client.get('pincode') or '').strip()
+    site_addr    = f"{client_addr}{', ' + city if city else ''}{' - ' + pincode if pincode else ''}".strip(', -')
+    category     = (client.get('consumer_type') or client.get('consumer_category') or ob_dict.get('consumer_type') or '').strip()
+    section_no   = str(client.get('section_number') or client.get('section_no') or ob_dict.get('section_number') or '').strip()
+    sol_kw       = str(client.get('system_kw') or client.get('capacity') or '').strip()
+    sol_kw_str   = f"{sol_kw} KW" if sol_kw else ''
+    sol_wp       = str(client.get('panel_wattage') or ob_dict.get('panel_wattage') or '').strip()
+    sol_wp_str   = f"{sol_wp} WP" if sol_wp else ''
+    num_panels   = str(client.get('num_panels') or ob_dict.get('num_panels') or '').strip()
+    num_panels_str = f"{num_panels} NOS" if num_panels else ''
+    panel_make   = (client.get('panel_brand') or client.get('panel_make') or ob_dict.get('panel_brand') or ob_dict.get('panel_make') or '').strip()
+    panel_tech   = (client.get('panel_technology') or ob_dict.get('panel_technology') or '').strip()
+    sol_wp_tech_str = f"{sol_wp_str} / {panel_tech}" if (sol_wp_str and panel_tech) else (sol_wp_str or panel_tech)
+    almm_model   = str(client.get('almm_model_number') or sol_wp_tech_str).strip()
+    inverter_list = _get_inverters_list(client)
+    brands = []
+    if inverter_list:
+        for inv in inverter_list:
+            b = str(inv.get("brand") or "").strip()
+            if b and b not in brands:
+                brands.append(b)
+    if not brands:
+        fb = str(client.get('inverter_make') or ob_dict.get('inverter_make') or '').strip()
+        if fb:
+            brands = [fb]
+    inverter_make = ", ".join(brands) if brands else ''
+    all_serials = []
+    if inverter_list:
+        for inv in inverter_list:
+            inv_s = inv.get("serials")
+            if isinstance(inv_s, list):
+                for s in inv_s:
+                    s_str = str(s).strip()
+                    if s_str and s_str not in all_serials:
+                        all_serials.append(s_str)
+            elif inv.get("serial"):
+                for part in str(inv.get("serial")).split(","):
+                    p_str = part.strip()
+                    if p_str and p_str not in all_serials:
+                        all_serials.append(p_str)
+    if not all_serials:
+        raw_sr = str(client.get('inverter_serial') or ob_dict.get('inverter_serial') or '').strip()
+        if raw_sr:
+            all_serials = [p.strip() for p in raw_sr.split(",") if p.strip()]
+    inverter_sr = ", ".join(all_serials) if all_serials else ''
+    inverter_kw = str(client.get('inverter_capacity') or ob_dict.get('inverter_capacity') or '').strip()
+    inverter_kw_str = f"{inverter_kw} KW" if (inverter_kw and "KW" not in inverter_kw.upper()) else inverter_kw
+    inverter_year = str(client.get('inverter_year') or ob_dict.get('inverter_year') or '').strip()
+    pan_num = str(client.get('pan_number') or client.get('pan_card_number') or ob_dict.get('pan_number') or '').strip()
+    aadhaar_num = str(client.get('aadhaar') or client.get('aadhaar_number') or ob_dict.get('aadhaar') or '').strip()
+
+    # PAGE 1
+    _docx_header_block(doc, company)
+    title_p = doc.add_paragraph()
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_p.paragraph_format.space_before = Pt(4)
+    title_p.paragraph_format.space_after  = Pt(8)
+    tr = title_p.add_run("Work Completion Report for Solar Power Plant")
+    tr.bold = True; tr.font.size = Pt(13)
+    tr.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+
+    insp_rows = [
+        ("Sr.No", "Component", "Observation"),
+        ("1", "Name", client_name),
+        ("2", "Consumer number", consumer_num),
+        ("3", "Site/Location with Complete Address", site_addr),
+        ("4", "Category: Govt/Private Sector", category),
+        ("5", "Section number", section_no),
+        ("6", "Sanctioned Capacity of solar PV system (KW) Installed", sol_kw_str),
+        ("",  "Capacity of solar PV system (KW)", sol_kw_str),
+        ("SPECIFICATION OF THE MODULES", "", ""),  # sub-header row 8
+        ("7", "Make & Type of modules", panel_make),
+        ("",  "ALMM Model Number", almm_model),
+        ("",  "Wattage per module", sol_wp_str),
+        ("",  "No. of Module", num_panels_str),
+        ("",  "Total Capacity (KWP)", sol_kw_str),
+        ("",  "Warrantee Details (Product + Performance)", "12+15 YEARS" if sol_kw else ""),
+        ("PCU", "", ""),  # sub-header row 15
+        ("8", "Make & Model number of Inverter", inverter_make),
+        ("",  "Rating", inverter_kw_str),
+        ("",  "Type of charge controller/ MPPT", "MPPT" if inverter_make else ""),
+        ("",  "Capacity of Inverter", inverter_kw_str),
+        ("",  "SR Number", inverter_sr),
+        ("",  "Year of manufacturing", inverter_year),
+        ("EARTHING & PROTECTION", "", ""),  # sub-header row 22
+        ("9", "No of Separate Earthings with earth Resistance", "NON_TRACKING" if sol_kw else ""),
+        ("",  "It is certified that the Earth Resistance measure in presence of Licensed Electrical "
+              "Contractor/Supervisor and found in order i.e. < 5 Ohms as per MNRE OM Dtd. 07.06.24 for CFA Component.", ""),
+        ("",  "Lightening Arrester", "Yes" if sol_kw else ""),
+    ]
+    SUB_HDR = {8, 15, 22}
+    insp_tbl = doc.add_table(rows=len(insp_rows), cols=3)
+    insp_tbl.style = 'Table Grid'
+    insp_tbl.columns[0].width = int(1.0 * 360000)
+    insp_tbl.columns[1].width = int(8.5 * 360000)
+    insp_tbl.columns[2].width = int(9.1 * 360000)
+    for r_idx, (sr, comp, obs) in enumerate(insp_rows):
+        row_cells = insp_tbl.rows[r_idx].cells
+        if r_idx in SUB_HDR:
+            merged = row_cells[0].merge(row_cells[1]).merge(row_cells[2])
+            _docx_set_cell_bg(merged, 'f1f5f9')
+            sp = merged.paragraphs[0]
+            sp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            srn = sp.add_run(sr)
+            srn.bold = True; srn.font.size = Pt(9)
+            srn.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+            continue
+        for c_idx, text in enumerate([sr, comp, obs]):
+            cell = row_cells[c_idx]
+            p = cell.paragraphs[0]
+            if r_idx == 0:
+                _docx_set_cell_bg(cell, 'e2e8f0')
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = p.add_run(str(text))
+                run.bold = True; run.font.size = Pt(9)
+                run.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+            else:
+                run = p.add_run(str(text))
+                run.font.size = Pt(8.5)
+                if c_idx in (0, 2):
+                    run.bold = True
+                run.font.color.rgb = RGBColor(0x1e, 0x29, 0x3b)
+    _docx_add_spacer(doc, 8)
+    _docx_signature_block(doc, client_name, company_name)
+
+    # PAGE 2 – Declaration
+    doc.add_page_break()
+    _docx_header_block(doc, company)
+    _docx_add_spacer(doc, 6)
+    _docx_add_body_paragraph(doc,
+        f"We {company_name} [Vendor] & {client_name} [Consumer] bearing Consumer Number "
+        f"{consumer_num} Ensured structural stability of installed solar power plant and obtained "
+        "requisite permissions from the concerned authority. If in future, by virtue of any means "
+        "due to collapsing or damage to the installed solar power plant, MSEDCL will not be held "
+        "responsible for any loss to property or human life, if any.",
+        font_size=9.5, justify=True)
+    _docx_add_spacer(doc, 4)
+    _docx_add_body_paragraph(doc,
+        "This is to Certify above Installed Solar PV System is working properly with electrical safety & "
+        "Islanding switch in case of any presence of backup inverter an arrangement should be made in "
+        "such way the backup inverter supply should never be synchronized with solar inverter to avoid "
+        "any electrical accident due to back feeding. We will be held responsible for non-working of "
+        "islanding mechanism and back feed to the de-energized grid.",
+        font_size=9.5, justify=True)
+    _docx_add_spacer(doc, 18)
+    _docx_signature_block(doc, client_name, company_name)
+
+    # PAGE 3 – Guarantee Certificate
+    doc.add_page_break()
+    _docx_header_block(doc, company)
+    _docx_add_spacer(doc, 4)
+    cert_title = doc.add_paragraph()
+    cert_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    ct_run = cert_title.add_run("Guarantee Certificate Undertaking to be submitted by VENDOR")
+    ct_run.bold = True; ct_run.font.size = Pt(13)
+    ct_run.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+    _docx_add_spacer(doc, 4)
+    _docx_add_body_paragraph(doc,
+        "The undersigned will provide services to the consumers for repairs/maintenance of the "
+        "RTS plant free of cost for 5 years of the comprehensive Maintenance Contract (CMC) period "
+        "from the date of commissioning of the plant. Nonperforming/under-performing system "
+        "components will be replaced/repaired free of cost in the CMC period",
+        font_size=9.5, justify=True)
+    _docx_add_spacer(doc, 8)
+    if pan_num:
+        id_title = "[ CONSUMER PAN CARD / IDENTITY VERIFICATION ]"
+        id_label = "PAN CARD"
+        id_detail = f"PAN Number: {pan_num}"
+    elif aadhaar_num:
+        id_title = "[ CONSUMER AADHAAR CARD / IDENTITY VERIFICATION ]"
+        id_label = "ADHAR CARD"
+        id_detail = f"Aadhar Number: {aadhaar_num}"
+    else:
+        id_title = "[ CONSUMER IDENTITY VERIFICATION ]"
+        id_label = "IDENTITY CARD"
+        id_detail = ""
+    id_box_tbl = doc.add_table(rows=2, cols=1)
+    id_box_tbl.style = 'Table Grid'
+    id_box_tbl.columns[0].width = int(14.0 * 360000)
+    hdr_cell = id_box_tbl.rows[0].cells[0]
+    _docx_set_cell_bg(hdr_cell, 'eff6ff')
+    hp = hdr_cell.paragraphs[0]
+    hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    hr = hp.add_run(id_title)
+    hr.bold = True; hr.font.size = Pt(9)
+    hr.font.color.rgb = RGBColor(0x1e, 0x3a, 0x8a)
+    body_cell = id_box_tbl.rows[1].cells[0]
+    _docx_set_cell_bg(body_cell, 'f8fafc')
+    bp = body_cell.paragraphs[0]
+    brun = bp.add_run(f"Stamp & Seal\n\nIdentity Details of Consumer: - {id_label}")
+    brun.bold = True; brun.font.size = Pt(8.5)
+    if id_detail:
+        drun = bp.add_run(f"\n{id_detail}")
+        drun.bold = True; drun.font.size = Pt(8.5)
+    _docx_add_spacer(doc, 18)
+    _docx_signature_block(doc, client_name, company_name)
+
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def _generate_sldr_docx(client: dict, company: dict) -> bytes:
+    """SLDR Word document mirroring the PDF layout."""
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = _build_docx_document(left_cm=1.2, right_cm=1.2, top_cm=1.2, bottom_cm=1.8)
+    company_name = (company.get('company_name') or '').strip().upper()
+    client_name  = str(client.get('full_name') or client.get('name') or '').upper()
+    consumer_num = str(client.get('consumer_number') or '').upper()
+    bu_num       = str(client.get('bu_number') or '').upper()
+    sol_kw       = str(client.get('system_kw') or '').strip()
+    sol_wp       = str(client.get('panel_wattage') or '').strip()
+    num_panels   = str(client.get('num_panels') or '').strip()
+    panel_make   = (client.get('panel_brand') or client.get('panel_make') or '').upper()
+    inverter_list = _get_inverters_list(client)
+    first_inv    = inverter_list[0] if inverter_list else {}
+    inverter_make = (first_inv.get("brand") or client.get('inverter_make') or '').upper()
+    inverter_kw  = str(client.get('inverter_capacity') or (f"{sol_kw} KW" if sol_kw else "")).upper()
+
+    title_p = doc.add_paragraph()
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_run = title_p.add_run("SINGLE LINE DIAGRAM")
+    title_run.bold = True; title_run.underline = True
+    title_run.font.size = Pt(15)
+    title_run.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+    _docx_add_spacer(doc, 4)
+
+    meta_p = doc.add_paragraph()
+    meta_p.paragraph_format.space_after = Pt(4)
+    for label, value in [
+        ("CONSUMER NAME :-", f" {client_name}  "),
+        ("CONSUMER NO.:-",   f" {consumer_num}  "),
+        ("B.U.:-",           f" {bu_num}\n"),
+        ("PROJECT:-",        f" GCRT OF {sol_kw} KW"),
+    ]:
+        lr = meta_p.add_run(label)
+        lr.bold = True; lr.font.size = Pt(10)
+        lr.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+        vr = meta_p.add_run(value)
+        vr.font.size = Pt(10)
+        vr.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+
+    _docx_add_spacer(doc, 4)
+    # Bordered diagram area box
+    diag_tbl = doc.add_table(rows=1, cols=1)
+    diag_tbl.style = 'Table Grid'
+    diag_cell = diag_tbl.rows[0].cells[0]
+    diag_cell.width = int(18.6 * 360000)
+    trPr = diag_tbl.rows[0]._tr.get_or_add_trPr()
+    trH = OxmlElement('w:trHeight')
+    trH.set(qn('w:val'), '3969')
+    trH.set(qn('w:hRule'), 'atLeast')
+    trPr.append(trH)
+    note_p = diag_cell.paragraphs[0]
+    note_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    nr = note_p.add_run(
+        f"Grid Tied Solar Inverter System Electrical Single Line Diagram\n\n"
+        f"PV Array: {num_panels} x {sol_wp}Wp  |  Inverter: {inverter_make} ({inverter_kw})\n\n"
+        f"DC side: PV Array -> DCDB (Surge Arrester + DC Isolator) -> Inverter MPPT\n"
+        f"AC side: Inverter -> ACDB (MCB + RCBO) -> Net Meter -> DISCOM Grid\n"
+        f"Earthing: Separate earth pits for AC, DC and Lightning Arrester (IS 3043)"
+    )
+    nr.font.size = Pt(9)
+    nr.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+
+    _docx_add_spacer(doc, 6)
+    _docx_add_section_title(doc, "TECHNICAL SPECIFICATIONS", font_size=9.5)
+
+    tech_rows_data = [["PARAMETER", "SPECIFICATIONS", "MAKE", "KWP"]]
+    tech_rows_data.append(["PV MODULES", f"{sol_wp} Wp X {num_panels} Nos", panel_make, f"{sol_kw} KW"])
+    if inverter_list:
+        for idx, inv in enumerate(inverter_list):
+            inv_label = f"INVERTER #{idx+1}" if len(inverter_list) > 1 else "INVERTER"
+            c_val = inv.get("capacity") or ""
+            cap_str = c_val if "KW" in c_val.upper() else (f"{c_val} kW" if c_val else "")
+            q_val = inv.get("quantity") or "1"
+            spec_str = f"{cap_str} x {q_val} Nos" if cap_str else f"{q_val} Nos"
+            make_str = f"{inv.get('brand','')} {inv.get('model','')}".strip().upper()
+            tech_rows_data.append([inv_label, spec_str, make_str, c_val or inverter_kw])
+    else:
+        inv_kw_d = inverter_kw if "KW" in inverter_kw else (f"{inverter_kw} kW" if inverter_kw else "")
+        tech_rows_data.append(["INVERTER", f"{inv_kw_d} x 1 Nos", inverter_make, inverter_kw])
+
+    tech_tbl = doc.add_table(rows=len(tech_rows_data), cols=4)
+    tech_tbl.style = 'Table Grid'
+    for c_idx, w in enumerate([4.5, 5.5, 4.6, 4.0]):
+        tech_tbl.columns[c_idx].width = int(w * 360000)
+    for r_idx, row_data in enumerate(tech_rows_data):
+        for c_idx, text in enumerate(row_data):
+            cell = tech_tbl.rows[r_idx].cells[c_idx]
+            if r_idx == 0:
+                _docx_set_cell_bg(cell, 'f8fafc')
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(text)
+            run.bold = True; run.font.size = Pt(9)
+            run.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a) if r_idx == 0 else RGBColor(0x1e, 0x29, 0x3b)
+
+    _docx_add_spacer(doc, 10)
+    ftr_tbl = doc.add_table(rows=1, cols=2)
+    ftr_tbl.style = 'Table Grid'
+    _remove_tbl_borders(ftr_tbl)
+    ftr_tbl.rows[0].cells[0].width = int(9.3 * 360000)
+    ftr_tbl.rows[0].cells[1].width = int(9.3 * 360000)
+    lp = ftr_tbl.rows[0].cells[0].paragraphs[0]
+    lr = lp.add_run(company_name)
+    lr.bold = True; lr.font.size = Pt(8.5)
+    lr.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+    rp = ftr_tbl.rows[0].cells[1].paragraphs[0]
+    rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    rr = rp.add_run("___________________________\n\nConsumer / Authorized Signature")
+    rr.bold = True; rr.font.size = Pt(8.5)
+    rr.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def _generate_net_meter_docx(client: dict, company: dict) -> bytes:
+    """Net Meter Agreement Word document mirroring the PDF layout."""
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = _build_docx_document(left_cm=1.6, right_cm=1.6, top_cm=1.3, bottom_cm=1.3)
+    company_name = company.get("company_name") or ""
+    client_name  = (client.get("full_name") or client.get("name") or "").strip()
+    consumer_no  = str(client.get("consumer_number") or "").strip()
+    city         = (client.get("city") or "").strip()
+    client_addr  = (client.get("address") or "").strip()
+    pincode      = str(client.get("pincode") or "").strip()
+    full_address = f"{client_addr}{', ' + city if city else ''}{' - ' + pincode if pincode else ''}".strip(", -")
+    system_kw    = str(client.get("system_kw") or client.get("capacity") or "").strip()
+    date_str_raw = client.get("installation_date") or datetime.now().strftime("%d/%m/%Y")
+    date_str     = date_str_raw[:10] if len(date_str_raw) > 10 else date_str_raw
+    bu_no   = client.get("bu_number") or ""
+    bu_text = client.get("bu_text") or ""
+    sub_div = bu_text or client.get("sub_division") or ""
+    division = client.get("division") or ""
+
+    def _hdr(text, size=14, center=True):
+        p = doc.add_paragraph()
+        if center:
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(4)
+        p.paragraph_format.space_after  = Pt(3)
+        r = p.add_run(text)
+        r.bold = True; r.font.size = Pt(size)
+        r.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+
+    def _body(text, size=8.5, justify=True):
+        p = doc.add_paragraph()
+        if justify:
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(2)
+        r = p.add_run(text)
+        r.font.size = Pt(size)
+        r.font.color.rgb = RGBColor(0x1e, 0x29, 0x3b)
+
+    def _clause(text):
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(4)
+        p.paragraph_format.space_after  = Pt(1.5)
+        r = p.add_run(text)
+        r.bold = True; r.font.size = Pt(9.5)
+        r.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+
+    _hdr("ANNEXURE - 3", size=14)
+    _hdr("Net Metering Connection Agreement", size=12)
+    _docx_add_spacer(doc, 8)
+    _body(f"This Agreement is made and entered into at (location) {city} on this (date {date_str}) "
+          f"between the Eligible Consumer {client_name} having premises at {full_address} "
+          f"and Consumer No {consumer_no} as the first Party\nAND\n"
+          f"The Distribution Licensee Additional Executive Engineer, {sub_div}/ {bu_no}, MSEDCL, "
+          f"(hereinafter referred to as 'the Licensee') and having its Registered Office at {division} "
+          f"as second Party of this Agreement;")
+    _docx_add_spacer(doc, 4)
+    _body("Whereas, the Eligible Consumer has applied to the Licensee for approval of a Net Metering Arrangement "
+          "under the provisions of the Maharashtra Electricity Regulatory Commission (Net Metering for Roof-top "
+          "Solar Photo Voltaic Systems) Regulations, 2019 ('the Net Metering Regulations') and sought its "
+          "connectivity to the Licensee's Distribution Network;")
+    _docx_add_spacer(doc, 4)
+    _body(f"And whereas, the Licensee has agreed to provide Network connectivity to the Eligible Consumer for "
+          f"injection of electricity generated from its Roof-top Solar PV System of {system_kw} kilowatt;")
+    _docx_add_spacer(doc, 4)
+    _body("Both Parties hereby agree as follows")
+
+    _clause("1. Eligibility:")
+    _body("The Roof-top Solar PV System meets the applicable norms for being integrated into the Distribution Network, "
+          "and that the Eligible Consumer shall maintain the System accordingly for the duration of this Agreement.")
+    _clause("2. Technical and Inter-connection Requirements:")
+    _body("2.1. The metering arrangement and the inter-connection of the Roof-top Solar PV System with the Network of the "
+          "Licensee shall be as per the provisions of the Net Metering Regulations and the technical standards and norms "
+          "specified by the Central Electricity Authority.")
+    _body("2.2. The Eligible Consumer agrees, that he shall install, prior to connection of the Roof-top Solar PV System "
+          "to the Network of the Licensee, an isolation device (both automatic and in built within inverter and external "
+          "manual relays); and the Licensee shall have access to it if required for the repair and maintenance of the "
+          "Distribution Network.")
+    _body("2.3. The Licensee shall specify the interface/inter-connection point and metering point.")
+    _body("2.4. The Eligible Consumer shall specify relevant data, such as voltage, frequency, circuit breaker, isolator "
+          "position in his System, as and when required by the Licensee.")
+    _clause("3. Safety:")
+    _body("3.1 The equipment connected to the Licensee's Distribution System shall be compliant with relevant International "
+          "(IEEE/IEC) or Indian Standards (BIS), as the case may be.")
+    _body("3.2 The design, installation, maintenance and operation of the Roof-top Solar PV System shall be undertaken "
+          "in a manner conducive to the safety of the Roof-top Solar PV System as well as the Licensee's Network.")
+    _body("3.3 If, at any time, the Licensee determines that the Eligible Consumer's Roof-top Solar PV System is causing "
+          "or may cause damage to and/or results in the Licensee's other consumers or its assets, the Eligible Consumer "
+          "shall disconnect the Roof-top Solar PV System from the distribution Network upon direction from the Licensee.")
+    _body("3.4 The Licensee shall not be responsible for any accident resulting in injury to human beings or animals or "
+          "damage to property that may occur due to back-feeding from the Roof-top Solar PV System when the grid supply is off.")
+    _clause("Other Clearances and Approvals:")
+    _body("The Eligible Consumer shall obtain any statutory approvals and clearances that may be required, such as from "
+          "the Electrical Inspector or the municipal or other authorities, before connecting the Roof-top Solar PV System "
+          "to the distribution Network.")
+    _clause("4. Period of Agreement, and Termination:")
+    _body("This Agreement shall be for a period of 20 years, but may be terminated prematurely")
+    _body("(a) By mutual consent; or")
+    _body("(b) By the Eligible Consumer, by giving 30 days' notice to the Licensee ;")
+    _body("(c) By the Licensee, by giving 30 days' notice, if the Eligible Consumer breaches any terms of this Agreement "
+          "or the provisions of the Net Metering Regulations and does not remedy such breach within 30 days.")
+    _clause("6. Access and Disconnection:")
+    _body("6.1. The Eligible Consumer shall provide access to the Licensee to the metering equipment and disconnecting "
+          "devices of Roof-top Solar PV System, both automatic and manual, by the Eligible Consumer.")
+    _body("6.2. If, in an emergent or outage situation, the Licensee cannot access the disconnecting devices of the "
+          "Roof-top Solar PV System, both automatic and manual, it may disconnect power supply to the premises.")
+    _body("6.3 Upon termination of this Agreement under Clause 5, the Eligible Consumer shall disconnect the Roof-top "
+          "Solar PV System forthwith from the Network of the Licensee.")
+    _clause("7. Liabilities:")
+    _body("7.1. The Parties shall indemnify each other for damages or adverse effects of either Party's negligence or "
+          "misconduct during the installation of the Roof-top Solar PV System.")
+    _body("7.2. The Parties shall not be liable to each other for any loss of profits or revenues, business interruption "
+          "losses, loss of contract or goodwill, or for indirect, consequential, incidental or special damages.")
+    _clause("8. Commercial Settlement:")
+    _body("8.1. The commercial settlements under this Agreement shall be in accordance with the Net Metering Regulations.")
+    _body("8.2. The Licensee shall not be liable to compensate the Eligible Consumer if his Rooftop Solar PV System is "
+          "unable to inject surplus power generated into the Licensee's Network on account of failure of power supply.")
+    _body("8.3. The existing metering System, if not in accordance with the Net Metering Regulations, shall be replaced "
+          "by a bi-directional meter or a pair of meters.")
+    _body("8.4. The uni-directional and bi-directional or pair of meters shall be fixed in separate meter boxes in the same proximity.")
+    _body("8.5. The Licensee shall issue monthly electricity bill for the net metered energy on the scheduled date of "
+          "meter reading.")
+    _clause("9. Connection Costs:")
+    _body("The Eligible Consumer shall bear all costs related to the setting up of the Roof-top Solar PV System, "
+          "excluding the Net Metering Arrangement costs.")
+    _clause("10. Dispute Resolution:")
+    _body("10.1 Any dispute arising under this Agreement shall be resolved promptly, in good faith and in an equitable "
+          "manner by both the Parties.")
+    _body("10.2 The Eligible Consumer shall have recourse to the concerned Consumer Grievance Redressal Forum constituted "
+          "under the relevant Regulations in respect of any grievance regarding billing which has not been redressed by "
+          "the Licensee.")
+
+    _docx_add_spacer(doc, 4)
+    _body(f"In the witness where of {client_name} for and on behalf of Eligible Consumer and Shri. "
+          f"Additional Executive Engineer {sub_div}/ MSEDCL, for and on behalf of MSEDCL agree to this agreement.")
+    _docx_add_spacer(doc, 12)
+
+    sig_tbl = doc.add_table(rows=4, cols=2)
+    sig_tbl.style = 'Table Grid'
+    _remove_tbl_borders(sig_tbl)
+    sig_data = [
+        (f"Signature of Eligible Consumer\n\n\n___________________________\n{client_name}\nEligible Consumer",
+         "Signature of Licensee\n\n\nShri. ___________________________\nAdditional Executive Engineer\nfor and on behalf of MSEDCL"),
+        ("\nWitness 1: ___________________________", "\nWitness 1: ___________________________"),
+        ("Witness 2: ___________________________", "Witness 2: ___________________________"),
+        (f"\n\n{company_name}\nProprietor / Authorized Manager", "\n\nOfficial Stamp / Seal"),
+    ]
+    for r_idx, (lt, rt) in enumerate(sig_data):
+        row = sig_tbl.rows[r_idx]
+        row.cells[0].width = int(9.0 * 360000)
+        row.cells[1].width = int(9.0 * 360000)
+        lp = row.cells[0].paragraphs[0]
+        lp.add_run(lt).font.size = Pt(8.5)
+        rp = row.cells[1].paragraphs[0]
+        rp.add_run(rt).font.size = Pt(8.5)
+
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def _generate_vendor_docx(client: dict, company: dict) -> bytes:
+    """Vendor Agreement Word document mirroring the PDF layout."""
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = _build_docx_document(left_cm=1.6, right_cm=1.6, top_cm=1.3, bottom_cm=1.3)
+    company_name    = company.get("company_name") or ""
+    company_address = company.get("address") or ""
+    company_pincode = company.get("pincode") or ""
+    client_name  = (client.get("full_name") or client.get("name") or "").strip()
+    consumer_no  = str(client.get("consumer_number") or "").strip()
+    city         = (client.get("city") or "").strip()
+    client_addr  = (client.get("address") or "").strip()
+    pincode      = str(client.get("pincode") or "").strip()
+    full_address = f"{client_addr}{', ' + city if city else ''}{' - ' + pincode if pincode else ''}".strip(", -")
+    system_kw    = str(client.get("system_kw") or client.get("capacity") or "").strip()
+    panel_make   = (client.get("panel_brand") or client.get("panel_make") or "").strip()
+    panel_wattage = str(client.get("panel_wattage") or "").strip()
+    inverter_make = (client.get("inverter_make") or "").strip()
+    inverter_kw  = str(client.get("inverter_capacity") or client.get("system_kw") or "").strip()
+    total_cost   = str(client.get("total_cost") or client.get("quotation_amount") or "").strip()
+    date_obj = datetime.now()
+    day_str = date_obj.strftime("%d")
+    month_str = date_obj.strftime("%m")
+    year_str = date_obj.strftime("%Y")
+
+    def _hdr(text, size=14, center=True, underline=False):
+        p = doc.add_paragraph()
+        if center:
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(4)
+        p.paragraph_format.space_after  = Pt(3)
+        r = p.add_run(text)
+        r.bold = True; r.underline = underline; r.font.size = Pt(size)
+        r.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+
+    def _body(text, size=8.5, justify=True):
+        p = doc.add_paragraph()
+        if justify:
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(2)
+        r = p.add_run(text)
+        r.font.size = Pt(size)
+        r.font.color.rgb = RGBColor(0x1e, 0x29, 0x3b)
+
+    def _clause(text):
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(5)
+        p.paragraph_format.space_after  = Pt(2)
+        r = p.add_run(text)
+        r.bold = True; r.font.size = Pt(9.5)
+        r.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+
+    _hdr("Agreement Between", size=14, underline=True)
+    _hdr("Applicant and the registered/empaneled Vendor for installation of rooftop solar system in "
+         "residential house of the Applicant under simplified procedure of Rooftop Solar Program Ph-II",
+         size=9, center=True)
+    _docx_add_spacer(doc, 4)
+    _body(f"This agreement is executed on (Day) {day_str}, (Month) {month_str}, (Year) {year_str} "
+          "for design, installation, commissioning and five years comprehensive maintenance of rooftop "
+          "solar system to be installed under simplified procedure of Rooftop Solar Program Ph-II.")
+    _docx_add_spacer(doc, 4)
+    _hdr("Between", size=10)
+    _body(f"{client_name} has residential electricity connection with consumer number {consumer_no} "
+          f"from MSEDCL (DISCOM) at {full_address} PIN code : {pincode} (Hereinafter referred to as Applicant).")
+    _docx_add_spacer(doc, 4)
+    _hdr("And", size=10)
+    _body(f"{company_name} (Name of Vendor) is registered/empaneled with the MSEDCL (hereinafter referred "
+          f"as DISCOM) and is having registered/functional office at {company_address}. PIN CODE- {company_pincode}. "
+          "Both Applicant and the Vendor are jointly referred as Parties.")
+    _docx_add_spacer(doc, 4)
+    for wh in [
+        "- The Applicant intends to install rooftop solar system under simplified procedure of Rooftop Solar Programmed Ph-II of the MNRE.",
+        "- The Vendor is registered/empaneled vendor with DISCOM for installation of rooftop solar under MNRE Schemes. The Vendor satisfies all the existing regulation pertaining to electrical safety.",
+        "- Both the parties are mutually agreed and understand their roles and responsibilities and have no liability to any other agency/firm/stakeholder.",
+    ]:
+        _body(wh)
+    _docx_add_spacer(doc, 6)
+
+    _clause("1. GENERAL TERMS:")
+    _body("1.1. The Applicant hereby represents and warrants that the Applicant has the sole legal capacity to enter into "
+          "this Agreement and authorize the construction, installation and commissioning of the Rooftop Solar System "
+          "(\"RTS System\") which is inclusive of Balance of System (\"BoS\") on the Applicant's premises.")
+    _body("1.2. Vendor may propose changes to the scope, nature and or schedule of the services being performed under this Agreement.")
+    _body("1.3. The Applicant understands and agrees that future changes in load, electricity usage patterns and/or "
+          "electrical grid issues may affect the performance of the RTS System.")
+
+    _clause("2. RTS System:")
+    _body(f"2.1. Total capacity of RTS System will be minimum {system_kw} KWatt.")
+    _body("2.2. The Solar modules, inverters and BoS will confirm to minimum specifications and DCR requirement of MNRE.")
+    _body(f"2.3. Solar modules of {panel_make} make model, {panel_wattage} Wp capacity each and 21.13% efficiency will be procured and installed by the Vendor.")
+    _body(f"2.4. Solar inverter of {inverter_make} make, model {inverter_kw} KW rated output capacity will be procured and installed by the Vendor.")
+    _body("2.5. The module mounting structure must withstand minimum wind load pressure as specified by MNRE.")
+    _body("2.6. Other BoS installations shall be as per best industry practice with all safety and protection gears installed by the vendor.")
+
+    _clause("3. PRICE AND PAYMENT TERMS:")
+    _body(f"3.1. The cost of an RTS System will be Rs. {total_cost}/- (to be decided mutually). The Applicant shall pay the total cost to the Vendor as under:")
+    _body("(i) 50 % as an advance on confirmation of the order.")
+    _body("(ii) 40 % against Proforma Invoice (PI) before dispatch of solar panels, inverters and other BoS items.")
+    _body("(iii) 10 % after installation and commissioning of the RTS System.")
+
+    _clause("4. REPRESENTATIONS MADE BY THE APPLICANT:")
+    _body("4.1. any timeline or schedule shared by Vendor for the provision of services and delivery of the RTS System is only an estimate.")
+    _body("4.2. all information disclosed by the Applicant to Vendor in connection with the supply of the RTS System are true and accurate.")
+    _body("4.3. all descriptive specifications, illustrations, drawings, data, dimensions, quotation, fact sheets, price lists and any advertising material circulated/published/provided by Vendor are approximate only.")
+
+    _clause("5. MAINTENANCE:")
+    _body("5.1. Vendor shall provide five-year free workmanship maintenance. Vendor shall visit the Applicant's premises at least once every quarter after commissioning of the RTS System for maintenance purposes.")
+    _body("5.2. During such maintenance visit, Vendor shall check all nuts and bolts, fuses, earth resistance and other consumables in respect of the RTS System to ensure that it is in good working condition.")
+
+    _clause("7. WARRANTIES:")
+    _body("7.1. Product Warranty: The Applicant shall be entitled to manufacturers' warranty. Any warranty in relation to RTS System supplied to the Applicant by Vendor under this Agreement is limited to the warranty given by the manufacturer.")
+    _body("7.2. Installation Warranty: Vendor warrants that all installations shall be free from workmanship defects or BOS defects for a period of five years from the date of installation of the RTS System.")
+    _body("7.3. Subject to manufacturer warranty, Vendor warrants that the solar modules supplied herein shall have tolerance within a five-percentage range (+/-5%).")
+
+    _clause("8. PERFORMANCE GUARANTEE:")
+    _body("8.1. Vendor guarantees minimum system performance ratio of 75% as per performance ratio test carried out in adherence to IEC 61724 or equivalent BIS for a period of five years.")
+
+    _clause("9. INSURANCE:")
+    _body("9.1. Vendor may, at its sole discretion, obtain insurance covering risks of loss/damage to the RTS System during transit from Vendor's warehouse until delivery to the Applicant Site.")
+    _body("9.2. Thereafter, all risk shall pass on to the Applicant and the Applicant may accordingly procure relevant insurances.")
+
+    _clause("10. CANCELLATION:")
+    _body("10.1. The Applicant may cancel the order placed on Vendor within 7 days from the date of remittance of advance money.")
+    _body("10.2. If the Applicant cancels the order after the expiry of 7 days, the Applicant shall be liable to pay Vendor a cancellation fee of 30% of the total order value.")
+    _body("10.3. Notwithstanding the aforesaid, the Applicant shall not be entitled to cancel the Order Form after Vendor has dispatched the RTS System to the Applicant Site.")
+
+    _clause("15. GOVERNING LAW AND DISPUTE RESOLUTION:")
+    _body("15.1. The interpretation and enforcement of this Agreement shall be governed by the laws of India.")
+    _body("15.2. In the event of any dispute, controversy or difference between the Parties arising out of, or relating to this Agreement, both Parties shall make an effort to resolve the Dispute in good faith.")
+    _body("15.3. The arbitration proceeding shall be governed by the provisions of the Arbitration and Conciliation Act, 1996 and shall be settled by a sole arbitrator mutually appointed by the Parties.")
+
+    _docx_add_spacer(doc, 12)
+    sig_tbl = doc.add_table(rows=2, cols=2)
+    sig_tbl.style = 'Table Grid'
+    _remove_tbl_borders(sig_tbl)
+    sig_data = [
+        (f"\n\n___________________________\n(Applicant)\n{client_name}",
+         f"\n\n___________________________\n(Vendor)\n{company_name}"),
+        ("", "\n\nOfficial Stamp / Seal"),
+    ]
+    for r_idx, (lt, rt) in enumerate(sig_data):
+        row = sig_tbl.rows[r_idx]
+        row.cells[0].width = int(9.0 * 360000)
+        row.cells[1].width = int(9.0 * 360000)
+        lp = row.cells[0].paragraphs[0]
+        lp.add_run(lt).font.size = Pt(8.5)
+        rp = row.cells[1].paragraphs[0]
+        rp.add_run(rt).font.size = Pt(8.5)
+
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def _generate_meter_testing_docx(client: dict, company: dict) -> bytes:
+    """Meter Testing Request Word document mirroring the PDF layout."""
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = _build_docx_document(left_cm=1.2, right_cm=1.2, top_cm=1.0, bottom_cm=1.8)
+    company_name = (company.get('company_name') or company.get('name') or '').strip()
+    stages_dict = dict(client.get("stages") or {})
+    ob_dict = dict(stages_dict.get("onboarding_data") or {})
+    client_name  = (client.get('full_name') or client.get('name') or ob_dict.get('full_name') or '').strip()
+    consumer_num = str(client.get('consumer_number') or ob_dict.get('consumer_number') or '').strip()
+    client_addr  = (client.get('address') or ob_dict.get('address') or '').strip()
+    city         = (client.get('city') or ob_dict.get('city') or '').strip()
+    pincode      = str(client.get('pincode') or ob_dict.get('pincode') or '').strip()
+    location_parts = []
+    if client_addr:
+        location_parts.append(client_addr)
+    if city and pincode:
+        location_parts.append(f"{city} - {pincode}")
+    elif city:
+        location_parts.append(city)
+    elif pincode:
+        location_parts.append(pincode)
+    location_str = ", ".join(location_parts)
+
+    def _clean(val):
+        return "" if str(val).upper() in ("NA", "N/A", "0", "DEFAULT", "GROWATT", "NULL", "NONE") else val
+
+    gen_make   = _clean((client.get('gen_meter_make') or ob_dict.get('gen_meter_make') or '').strip())
+    gen_serial = _clean((client.get('gen_meter_serial') or ob_dict.get('gen_meter_serial') or '').strip())
+    net_make   = _clean((client.get('net_meter_make') or ob_dict.get('net_meter_make') or '').strip())
+    net_serial = _clean((client.get('net_meter_serial') or ob_dict.get('net_meter_serial') or '').strip())
+
+    _docx_header_block(doc, company)
+    _docx_add_spacer(doc, 8)
+
+    def _body_bold(text, size=10):
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(2)
+        r = p.add_run(text)
+        r.bold = True; r.font.size = Pt(size)
+        r.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+
+    def _body(text, size=10, justify=True):
+        p = doc.add_paragraph()
+        if justify:
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(6)
+        r = p.add_run(text)
+        r.font.size = Pt(size)
+        r.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+
+    city_line = f"MSEDCL Meter Lab {city}." if city else "MSEDCL Meter Lab."
+    _body_bold(f"To,\nAdditional Executive Engineer\n{city_line}" + (f"\n{pincode}" if pincode else ""))
+    _docx_add_spacer(doc, 6)
+    _body_bold("Sub: Request for Gen-meter Letter.")
+    _docx_add_spacer(doc, 4)
+    _body("Dear Sir,")
+    _docx_add_spacer(doc, 2)
+    _body("I hope this letter finds you well. I am writing to request meter testing services for my solar photovoltaic (PV) system. "
+          "As a responsible solar PV system owner, I understand the importance of accurate and reliable meter readings to ensure the "
+          "system's optimal performance and compliance with regulatory standards.")
+    _body(f"Customer Name: {client_name}  C NO. {consumer_num}  I currently have a solar PV system installed at the following "
+          f"location: {location_str}")
+    _body("To ensure the system's efficiency and adherence to industry standards, I am seeking a comprehensive meter testing service "
+          "for the following meters within the system:")
+
+    meter_tbl = doc.add_table(rows=2, cols=2)
+    meter_tbl.style = 'Table Grid'
+    _remove_tbl_borders(meter_tbl)
+    meter_data = [
+        (f"Generation Meter - Make- {gen_make}", f"SERIAL NO- {gen_serial}"),
+        (f"NET METER - MAKE - {net_make}", f"SERIAL NO - {net_serial}"),
+    ]
+    for r_idx, (lt, rt) in enumerate(meter_data):
+        row = meter_tbl.rows[r_idx]
+        row.cells[0].width = int(9.3 * 360000)
+        row.cells[1].width = int(9.3 * 360000)
+        lp = row.cells[0].paragraphs[0]
+        lp.add_run(lt).font.size = Pt(10)
+        rp = row.cells[1].paragraphs[0]
+        rp.add_run(rt).font.size = Pt(10)
+
+    _docx_add_spacer(doc, 6)
+    _body("I kindly request that the meter testing service be conducted by a certified and accredited organization, ensuring accurate "
+          "and unbiased results. The testing should include a thorough assessment of the meters' functionality, calibration, and accuracy, "
+          "as well as verification of their compliance with relevant industry standards and regulations.")
+    _body("Thank you for your attention to this matter. I look forward to receiving your response and arranging the necessary meter "
+          "testing for my solar PV system.")
+    _docx_add_spacer(doc, 8)
+    _body("Thanks & Regards,")
+    _docx_add_spacer(doc, 12)
+    _body_bold(company_name.upper())
+    _docx_add_spacer(doc, 16)
+    encl_p = doc.add_paragraph()
+    encl_run = encl_p.add_run("Encl:\n1. Gen-meter\n2. Test report of meter\n3. Electricity Bill\n4. Solar PV System Approval Latter Copy.")
+    encl_run.font.size = Pt(10)
+    encl_run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 def generate_docx(doc_type: str, client: dict, company: dict) -> bytes:
     """
     Generate a Word (.docx) document for the given doc_type.
-    Uses python-docx to build structured content matching the PDF layout.
+    Each document type has its own faithful DOCX generator that mirrors the PDF layout.
     Does NOT modify any existing PDF generator.
     """
     from docx import Document
-    from docx.shared import Pt, Inches, RGBColor
+    from docx.shared import Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     doc_type_clean = (doc_type or "").lower().strip()
 
-    # ── Annexure: use existing DOCX template flow ──────────────────────────────
+    # Annexure: use DOCX template flow (unchanged)
     if doc_type_clean == "annexure":
         try:
             import annexure_generator
-            _, content_type = annexure_generator.generate_annexure(client, company)
-            # Call the internal DOCX-only path: fill template without PDF conversion
             template_bytes = annexure_generator._load_template_bytes()
             replacements = annexure_generator.resolve_annexure_values(client, company)
             filled_docx = annexure_generator._fill_template(template_bytes, replacements)
             return filled_docx
         except Exception as _e:
             import logging as _logging
-            _logging.getLogger(__name__).warning(f"Annexure DOCX template path failed: {_e}. Building from scratch.")
+            _logging.getLogger(__name__).warning(f"Annexure DOCX template path failed: {_e}.")
 
-    doc = Document()
+    # Per-document faithful DOCX generators
+    if doc_type_clean == "wcr":
+        return _generate_wcr_docx(client, company)
+    if doc_type_clean == "sldr":
+        return _generate_sldr_docx(client, company)
+    if doc_type_clean == "net_meter_agreement":
+        return _generate_net_meter_docx(client, company)
+    if doc_type_clean in ("vendor_agreement", "vendor"):
+        return _generate_vendor_docx(client, company)
+    if doc_type_clean in ("meter_testing_request", "meter_testing"):
+        return _generate_meter_testing_docx(client, company)
 
-    # ── Common: company header ─────────────────────────────────────────────────
-    _docx_company_header(doc, company)
-    doc.add_paragraph()
-
-    # ── Title ─────────────────────────────────────────────────────────────────
+    # Generic fallback for unknown types
+    doc = _build_docx_document()
+    _docx_header_block(doc, company)
     title_map = {
         "wcr": "WORK COMPLETION REPORT (WCR)",
         "sldr": "SINGLE LINE DIAGRAM REPORT (SLDR)",
@@ -2425,19 +3420,15 @@ def generate_docx(doc_type: str, client: dict, company: dict) -> bytes:
         "vendor_agreement": "VENDOR AGREEMENT",
         "meter_testing_request": "METER TESTING REQUEST",
         "meter_testing": "METER TESTING REQUEST",
-        "annexure": "ANNEXURE — Material & Site Details",
+        "annexure": "ANNEXURE - Material & Site Details",
     }
     title = title_map.get(doc_type_clean, doc_type_clean.upper())
     title_para = doc.add_heading(title, level=1)
     title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
     date_str = datetime.now(timezone.utc).strftime("%d %b %Y")
     date_para = doc.add_paragraph(f"Date: {date_str}")
     date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph()
-
-    # ── Client Details ─────────────────────────────────────────────────────────
-    doc.add_heading("Client Details", level=2)
     client_name = client.get("full_name") or client.get("name") or ""
     address_parts = [client.get("address") or "", client.get("city") or "",
                      client.get("state") or "", client.get("pincode") or ""]
@@ -2445,157 +3436,14 @@ def generate_docx(doc_type: str, client: dict, company: dict) -> bytes:
     pan_num = str(client.get("pan_number") or client.get("pan_card_number") or "").strip()
     aadhaar_num = str(client.get("aadhaar") or client.get("aadhaar_number") or "").strip()
     id_label = "PAN Card" if pan_num else "Aadhaar (last 4)"
-    id_val = pan_num if pan_num else ((aadhaar_num[-4:] if aadhaar_num else "—"))
-
+    id_val = pan_num if pan_num else (aadhaar_num[-4:] if aadhaar_num else "-")
     _docx_kv_table(doc, [
         ["Client Name", client_name],
-        ["Mobile", client.get("mobile") or "—"],
-        ["Consumer Number", client.get("consumer_number") or "—"],
-        ["Address", full_address or "—"],
+        ["Mobile", client.get("mobile") or "-"],
+        ["Consumer Number", client.get("consumer_number") or "-"],
+        ["Address", full_address or "-"],
         [id_label, id_val],
     ])
-    doc.add_paragraph()
-
-    # ── System Specifications ──────────────────────────────────────────────────
-    doc.add_heading("System Specifications", level=2)
-    inv_list = _get_inverters_list(client)
-    inv_rows = []
-    if inv_list:
-        for i, inv in enumerate(inv_list):
-            lbl = "Inverter" if len(inv_list) == 1 else f"Inverter #{i+1}"
-            brand = str(inv.get("brand") or client.get("inverter_make") or "").strip()
-            cap = str(inv.get("capacity") or "").strip()
-            qty = str(inv.get("quantity") or "1").strip()
-            inv_rows.append([lbl, f"{brand} · {cap} kW × {qty}".strip(" ·")])
-    else:
-        inv_make = str(client.get("inverter_make") or "").strip()
-        inv_cap = str(client.get("inverter_capacity") or "").strip()
-        inv_rows.append(["Inverter", f"{inv_make} · {inv_cap}".strip(" ·")])
-
-    _docx_kv_table(doc, [
-        ["System Size", f"{client.get('system_kw', 0)} kW"],
-        ["Phase Type", client.get("phase_type") or "—"],
-        ["Subsidy Eligible", "Yes" if client.get("subsidy_eligible") else "No"],
-        ["Panel", f"{client.get('panel_make') or client.get('panel_brand') or ''} · {client.get('panel_wattage') or ''}W × {client.get('num_panels') or ''}".strip(" ·")],
-        *inv_rows,
-        ["Inverter Serial", client.get("inverter_serial") or "—"],
-        ["Inverter Year", client.get("inverter_year") or "—"],
-        ["Consumer Category", client.get("consumer_type") or "—"],
-        ["Section Number", client.get("section_number") or client.get("section_no") or "—"],
-        ["Sanction Number", client.get("sanction_number") or "—"],
-    ])
-    doc.add_paragraph()
-
-    # ── Document-specific sections ─────────────────────────────────────────────
-    if doc_type_clean == "wcr":
-        doc.add_heading("Work Completion Details", level=2)
-        _docx_kv_table(doc, [
-            ["Consumer Number", client.get("consumer_number") or "—"],
-            ["Net Meter Number", client.get("net_meter_number") or "—"],
-            ["Section/BU Number", client.get("bu_number") or client.get("section_number") or "—"],
-            ["Installation Date", client.get("installation_date") or date_str],
-        ])
-        doc.add_paragraph()
-        doc.add_heading("Technical Observations", level=2)
-        doc.add_paragraph("Structural certification, earthing, DC/AC wiring, surge protection, DCDB and ACDB installations verified and compliant as per IS:732 and IS:3043 standards.")
-        doc.add_paragraph()
-        doc.add_heading("Declaration", level=2)
-        co = company.get("company_name") or "the Vendor"
-        doc.add_paragraph(
-            f"This Work Completion Report certifies that the solar PV system of {client.get('system_kw', 0)} kW capacity "
-            f"has been installed at the premises of {client_name} by {co}. "
-            "All materials used conform to the approved Bill of Materials. "
-            "The system has been commissioned and is ready for net-metering connection."
-        )
-
-    elif doc_type_clean == "sldr":
-        doc.add_heading("Single Line Diagram – Technical Summary", level=2)
-        doc.add_paragraph(
-            "DC side: Solar panels → DCDB (with surge arrester & DC isolator) → Inverter MPPT input. "
-            "AC side: Inverter AC output → ACDB (with MCB + RCBO) → Net Meter → DISCOM grid. "
-            "Earthing: Separate earth pits for AC, DC and lightning arrester as per IS 3043."
-        )
-        doc.add_paragraph()
-        doc.add_heading("Technical Specifications", level=2)
-        sol_kw = str(client.get("system_kw") or "")
-        panel_make = client.get("panel_brand") or client.get("panel_make") or ""
-        sol_wp = str(client.get("panel_wattage") or "")
-        num_panels = str(client.get("num_panels") or "")
-        inv_cap = str(client.get("inverter_capacity") or sol_kw)
-        tbl_rows = [["PARAMETER", "SPECIFICATIONS", "MAKE", "kWp"]]
-        tbl_rows.append(["PV MODULES", f"{sol_wp} Wp × {num_panels} Nos", panel_make.upper(), f"{sol_kw} kW"])
-        if inv_list:
-            for i, inv in enumerate(inv_list):
-                lbl = "INVERTER" if len(inv_list) == 1 else f"INVERTER #{i+1}"
-                cap = str(inv.get("capacity") or inv_cap)
-                qty = str(inv.get("quantity") or "1")
-                make = str(inv.get("brand") or client.get("inverter_make") or "").upper()
-                tbl_rows.append([lbl, f"{cap} kW × {qty} Nos", make, cap])
-        else:
-            make = str(client.get("inverter_make") or "").upper()
-            tbl_rows.append(["INVERTER", f"{inv_cap} kW × 1 Nos", make, inv_cap])
-        tbl = doc.add_table(rows=len(tbl_rows), cols=4)
-        tbl.style = "Table Grid"
-        for i, row in enumerate(tbl_rows):
-            for j, cell_text in enumerate(row):
-                cell = tbl.rows[i].cells[j]
-                cell.text = str(cell_text)
-                if i == 0:
-                    for run in cell.paragraphs[0].runs:
-                        run.bold = True
-
-    elif doc_type_clean == "net_meter_agreement":
-        doc.add_heading("Net Meter Agreement Terms", level=2)
-        doc.add_paragraph("1. The consumer agrees to install a bi-directional net meter at their premises.")
-        doc.add_paragraph("2. Excess generation will be credited as per the prevailing DISCOM tariff.")
-        doc.add_paragraph("3. Annual settlement will be carried out by the DISCOM as per state regulations.")
-        doc.add_paragraph("4. The vendor agrees to provide 5-year Comprehensive Maintenance Contract (CMC) coverage.")
-        doc.add_paragraph()
-        _docx_kv_table(doc, [
-            ["Net Meter Number", client.get("net_meter_number") or "—"],
-            ["Agreement Date", date_str],
-            ["Company", company.get("company_name") or "—"],
-            ["GSTIN", company.get("gst_number") or company.get("gst") or "—"],
-        ])
-
-    elif doc_type_clean in ("vendor_agreement", "vendor"):
-        doc.add_heading("Vendor Agreement Terms", level=2)
-        inv_make = str(client.get("inverter_make") or "").strip()
-        inv_kw = str(client.get("inverter_capacity") or client.get("system_kw") or "").strip()
-        doc.add_paragraph(f"1. The vendor will procure and install a solar PV system of {client.get('system_kw', 0)} kW capacity.")
-        doc.add_paragraph(f"2. Solar panel of {client.get('panel_make') or ''} make, {client.get('panel_wattage') or ''} Wp rated, {client.get('num_panels') or ''} Nos will be installed.")
-        doc.add_paragraph(f"3. Solar inverter of {inv_make} make, model {inv_kw} KW rated output capacity will be procured and installed.")
-        doc.add_paragraph("4. The vendor agrees to provide a 5-year Comprehensive Maintenance Contract (CMC).")
-        doc.add_paragraph("5. All materials shall conform to the approved Bill of Materials and relevant BIS standards.")
-        doc.add_paragraph()
-        _docx_kv_table(doc, [
-            ["Agreement Date", date_str],
-            ["Vendor", company.get("company_name") or "—"],
-            ["GSTIN", company.get("gst_number") or company.get("gst") or "—"],
-        ])
-
-    elif doc_type_clean in ("meter_testing_request", "meter_testing"):
-        doc.add_heading("Meter Testing Request Details", level=2)
-        _docx_kv_table(doc, [
-            ["Consumer Name", client_name],
-            ["Consumer Number", client.get("consumer_number") or "—"],
-            ["Mobile", client.get("mobile") or "—"],
-            ["Address", full_address or "—"],
-            ["Meter Number", client.get("meter_number") or "—"],
-            ["Request Date", date_str],
-            ["Company", company.get("company_name") or "—"],
-        ])
-        doc.add_paragraph()
-        doc.add_paragraph(
-            "This is a formal request for meter testing at the DISCOM meter testing laboratory. "
-            "The existing meter is suspected to be faulty. Kindly arrange for meter testing at the earliest."
-        )
-
-    else:
-        doc.add_heading("Document Details", level=2)
-        doc.add_paragraph(f"Document Type: {doc_type_clean.upper()}")
-
-    # ── Signature block ────────────────────────────────────────────────────────
     doc.add_paragraph()
     doc.add_paragraph()
     sig_tbl = doc.add_table(rows=2, cols=2)
@@ -2603,7 +3451,6 @@ def generate_docx(doc_type: str, client: dict, company: dict) -> bytes:
     sig_tbl.rows[0].cells[1].text = f"Vendor Signature ({company.get('company_name') or ''})"
     sig_tbl.rows[1].cells[0].text = "\n\n_________________________"
     sig_tbl.rows[1].cells[1].text = "\n\n_________________________"
-
     buf = BytesIO()
     doc.save(buf)
     return buf.getvalue()

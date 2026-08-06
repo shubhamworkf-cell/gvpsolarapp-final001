@@ -4167,17 +4167,15 @@ async def download_direct_document(payload: Dict[str, Any], user=Depends(get_cur
     client_doc = _enrich_client_doc(client_doc)
 
     if doc_format == "docx":
-        # Generate Word document
+        # Generate Word document — always returns DOCX bytes
         doc_bytes = pdf_generator.generate_docx(doc_type, client_doc, company_doc)
         media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ext = ".docx"
     else:
-        # Generate PDF (existing behavior, unchanged)
+        # Generate PDF — always returns PDF bytes (no MIME sniffing needed)
         doc_bytes = pdf_generator.generate(doc_type, client_doc, company_doc)
-        # Detect if result is DOCX (starts with PK) or PDF (starts with %PDF)
-        is_docx = doc_bytes[:2] == b"PK"
-        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if is_docx else "application/pdf"
-        ext = ".docx" if is_docx else ".pdf"
+        media_type = "application/pdf"
+        ext = ".pdf"
 
     client_name = client_doc.get("full_name") or "Client"
     safe_name = "".join(c for c in client_name if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
