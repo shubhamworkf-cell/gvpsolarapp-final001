@@ -493,33 +493,32 @@ export default function ClientDetail() {
 
             {/* Installed High Value Assets */}
             <div className="mt-6 pt-6 border-t border-slate-200">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Installed High Value Assets</div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">High Value Goods & Serial Tracking</div>
               {(!client.high_value_assets || client.high_value_assets.length === 0) ? (
-                <div className="text-sm text-slate-500 bg-slate-50 rounded-lg p-4 border border-dashed border-slate-200">
-                  No high-value assets (Solar Panel, Inverter, Battery, etc.) installed for this client yet.
+                <div className="text-sm text-slate-500 bg-slate-50 rounded-lg p-4 border border-dashed border-slate-200 text-center italic">
+                  No High Value Goods Allocated
                 </div>
               ) : (
-                <div className="overflow-x-auto border border-slate-100 rounded-lg">
+                <div className="overflow-x-auto border border-slate-200 rounded-lg">
                   <table className="w-full text-xs text-left border-collapse">
                     <thead>
                       <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200">
                         <th className="p-3 font-semibold">Product</th>
-                        <th className="p-3 font-semibold">Qty</th>
+                        <th className="p-3 font-semibold">Specification</th>
                         <th className="p-3 font-semibold">Serial Number</th>
-                        <th className="p-3 font-semibold">Installation Date</th>
-                        <th className="p-3 font-semibold">Warranty Status</th>
                         <th className="p-3 font-semibold">Current Status</th>
+                        <th className="p-3 font-semibold">Current Site</th>
+                        <th className="p-3 font-semibold">Outward / Install Date</th>
+                        <th className="p-3 font-semibold">Current Allocation</th>
+                        <th className="p-3 font-semibold text-right">Warranty Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {client.high_value_assets.map((a) => (
-                        <tr key={a.id} className="hover:bg-slate-50/50">
-                          <td className="p-3 font-semibold text-slate-800">
-                            <div>{a.product_name}</div>
-                            {a.size_model && <div className="text-[10px] text-slate-400 font-normal mt-0.5">{a.size_model}</div>}
-                          </td>
-                          <td className="p-3 font-medium text-slate-800">{a.quantity !== undefined && a.quantity !== null ? a.quantity : 1}</td>
-                          <td className="p-3 font-mono font-medium text-slate-600">
+                      {client.high_value_assets.map((a, i) => (
+                        <tr key={a.id || i} className="hover:bg-slate-50/50">
+                          <td className="p-3 font-semibold text-slate-900">{a.product_name || a.product || "High Value Product"}</td>
+                          <td className="p-3 text-slate-600 font-mono text-[11px]">{a.size_model || a.size || "—"}</td>
+                          <td className="p-3 font-mono font-bold text-slate-900">
                             <div className="flex items-center gap-1.5">
                               <span>{a.serial_number || "—"}</span>
                               {a.serial_number && (
@@ -527,26 +526,30 @@ export default function ClientDetail() {
                                   type="button"
                                   onClick={() => {
                                     navigator.clipboard.writeText(a.serial_number);
-                                    toast.success("Serial number copied");
+                                    toast.success(`Copied serial number: ${a.serial_number}`);
                                   }}
-                                  className="text-slate-400 hover:text-blue-600 p-0.5 rounded"
+                                  className="text-slate-400 hover:text-blue-600 p-0.5 rounded transition"
                                   title="Copy Serial Number"
                                 >
-                                  <Copy className="w-3 h-3" />
+                                  <Copy className="w-3.5 h-3.5" />
                                 </button>
                               )}
                             </div>
                           </td>
-                          <td className="p-3 text-slate-700">{a.installation_date || "—"}</td>
                           <td className="p-3">
-                            <span className={`font-semibold ${a.warranty_status === "Active" ? "text-emerald-600" : "text-rose-600"}`}>
-                              {a.warranty_status || "—"}
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                              a.status === "Installed" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                              a.status === "Available" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                              "bg-amber-50 text-amber-700 border-amber-200"
+                            }`}>
+                              {a.status || "Installed"}
                             </span>
                           </td>
-                          <td className="p-3">
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-100">
-                              {a.status}
-                            </span>
+                          <td className="p-3 text-slate-700">{a.current_site || a.site_location || `${client.full_name} Site`}</td>
+                          <td className="p-3 font-mono text-slate-600">{a.installation_date || a.outward_date || "—"}</td>
+                          <td className="p-3 font-medium text-slate-800">{a.current_allocation || client.full_name}</td>
+                          <td className="p-3 text-right font-semibold text-emerald-600">
+                            {a.warranty_status || "Active"}
                           </td>
                         </tr>
                       ))}

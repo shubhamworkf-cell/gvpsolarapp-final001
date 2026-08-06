@@ -3303,6 +3303,79 @@ async def create_client(data: ClientIn, user=Depends(get_current_user)):
     await push_notification(user["company_id"], "admin", "New Client Added", f"{data.full_name} ({sol_id})")
     return _enrich_client_doc(inserted) if inserted else _enrich_client_doc(full_doc)
 
+async def _get_client_high_value_assets(client_doc: dict, company_id: str) -> list:
+    if not isinstance(client_doc, dict):
+        return []
+    cid = client_doc.get("id")
+    sol_id = client_doc.get("sol_id")
+    c_name = (client_doc.get("full_name") or "").strip().lower()
+    c_addr = f"{client_doc.get('address') or ''}, {client_doc.get('city') or ''}".strip(", ")
+
+    all_assets = _load_local_assets()
+    matched = []
+    seen_ids = set()
+    seen_serials = set()
+
+    for a in all_assets:
+        if a.get("company_id") and a.get("company_id") != company_id:
+            continue
+        asset_cid = a.get("client_id")
+        asset_cname = (a.get("client_name") or "").strip().lower()
+
+        is_match = False
+        if asset_cid and asset_cid in (cid, sol_id):
+            is_match = True
+        elif c_name and asset_cname and (asset_cname == c_name or c_name in asset_cname or asset_cname in c_name):
+            is_match = True
+
+        if is_match and a.get("id") not in seen_ids:
+            seen_ids.add(a.get("id"))
+            sn = (a.get("serial_number") or "").strip().upper()
+            if sn:
+                seen_serials.add(sn)
+
+            site = a.get("site_location") or (f"{client_doc.get('full_name')} Site ({c_addr})" if c_addr else f"{client_doc.get('full_name')} Site")
+            item = dict(a)
+            item["product_name"] = a.get("product_name") or a.get("product") or "High Value Product"
+            item["size_model"] = a.get("size_model") or a.get("size") or "—"
+            item["current_site"] = site
+            item["current_allocation"] = client_doc.get("full_name") or a.get("client_name") or "Allocated Client"
+            item["installation_date"] = a.get("installation_date") or a.get("outward_date") or (a.get("created_at")[:10] if a.get("created_at") else "—")
+            item["outward_date"] = a.get("outward_date") or item["installation_date"]
+            item["warranty_status"] = a.get("warranty_status") or "Active"
+            item["status"] = a.get("status") or "Installed"
+            matched.append(item)
+
+    # Secondary lookup: Check db.outward_entries for any outward serial allocations for this client
+    try:
+        outwards = await db.outward_entries.find({"company_id": company_id}, {"_id": 0}).to_list(500)
+        for o in outwards:
+            o_cid = o.get("client_id")
+            o_cname = (o.get("client_name") or "").strip().lower()
+            if (o_cid and o_cid in (cid, sol_id)) or (c_name and o_cname and (o_cname == c_name or c_name in o_cname or o_cname in c_name)):
+                serials = o.get("serial_numbers") or o.get("serials") or ([o.get("serial_number")] if o.get("serial_number") else [])
+                for s in serials:
+                    sn = (s or "").strip().upper()
+                    if sn and sn not in seen_serials:
+                        seen_serials.add(sn)
+                        matched.append({
+                            "id": f"outward-{o.get('id')}-{sn}",
+                            "product_name": o.get("product") or o.get("product_name") or "Solar Product",
+                            "size_model": o.get("size") or o.get("size_model") or "—",
+                            "serial_number": sn,
+                            "quantity": 1,
+                            "status": o.get("status") or "Installed",
+                            "current_site": f"{client_doc.get('full_name')} Site",
+                            "current_allocation": client_doc.get("full_name"),
+                            "installation_date": (o.get("outward_date") or o.get("created_at") or "")[:10],
+                            "outward_date": (o.get("outward_date") or o.get("created_at") or "")[:10],
+                            "warranty_status": "Active"
+                        })
+    except Exception as e:
+        logger.warning(f"Secondary outward matching error: {e}")
+
+    return matched
+
 @api_router.get("/clients/{client_id}")
 async def get_client(client_id: str, user=Depends(get_current_user)):
     logger.info(f"[CLIENT-GET DIAG] GET /clients/{client_id} | company_id={user.get('company_id')} user_id={user.get('id')}")
@@ -3325,7 +3398,7 @@ async def get_client(client_id: str, user=Depends(get_current_user)):
         logger.error(f"[CLIENT-GET DIAG] ✗ Client {client_id} NOT FOUND in Supabase or local — returning 404")
         raise HTTPException(status_code=404, detail="Not found")
     c = _enrich_client_doc(c)
-    c["high_value_assets"] = [a for a in _load_local_assets() if a.get("client_id") == client_id and a.get("company_id") == user["company_id"]]
+    c["high_value_assets"] = await _get_client_high_value_assets(c, user["company_id"])
     return c
 
 def _normalize_client_payload(payload: dict) -> dict:
