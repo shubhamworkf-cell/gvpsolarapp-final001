@@ -1622,10 +1622,10 @@ def generate_vendor_agreement_pdf(client: dict, company: dict) -> bytes:
     pdf = SimpleDocTemplate(
         buf,
         pagesize=A4,
-        leftMargin=1.6 * cm,
-        rightMargin=1.6 * cm,
-        topMargin=1.3 * cm,
-        bottomMargin=1.3 * cm
+        leftMargin=1.5 * cm,
+        rightMargin=1.5 * cm,
+        topMargin=1.1 * cm,
+        bottomMargin=1.1 * cm
     )
     story = []
 
@@ -1653,12 +1653,12 @@ def generate_vendor_agreement_pdf(client: dict, company: dict) -> bytes:
     company_address = company.get("address") or ""
     company_pincode = company.get("pincode") or ""
 
-    # Define Styles
-    style_h1 = ParagraphStyle('VA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=17, alignment=1, spaceBefore=4, spaceAfter=3)
-    style_sub = ParagraphStyle('VA_Sub', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, leading=12, alignment=1, spaceAfter=6)
-    style_center_b = ParagraphStyle('VA_CenterB', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, leading=13, alignment=1, spaceBefore=4, spaceAfter=4)
-    style_clause_h = ParagraphStyle('VA_ClauseH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9.5, leading=12.5, spaceBefore=5, spaceAfter=2)
-    style_body = ParagraphStyle('VA_Body', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, leading=11.0, alignment=4, spaceBefore=0, spaceAfter=2)
+    # Define Styles (Optimized spacing to ensure 3-page layout with signature on Page 3)
+    style_h1 = ParagraphStyle('VA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=17, alignment=1, spaceBefore=3, spaceAfter=2)
+    style_sub = ParagraphStyle('VA_Sub', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, leading=12, alignment=1, spaceAfter=4)
+    style_center_b = ParagraphStyle('VA_CenterB', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, leading=13, alignment=1, spaceBefore=3, spaceAfter=3)
+    style_clause_h = ParagraphStyle('VA_ClauseH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9.5, leading=12.0, spaceBefore=4, spaceAfter=1.5)
+    style_body = ParagraphStyle('VA_Body', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, leading=11.0, alignment=4, spaceBefore=0, spaceAfter=1.5)
     style_body_bold = ParagraphStyle('VA_BodyBold', parent=style_body, fontName='Helvetica-Bold')
 
     # ==================== PREAMBLE & TITLES ====================
