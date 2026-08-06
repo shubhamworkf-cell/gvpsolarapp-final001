@@ -1105,43 +1105,31 @@ def _get_inverters_list(client: dict) -> list[dict]:
     return []
 
 
-def _get_vendor_inverter_clause_text(client: dict):
+def _get_vendor_inverter_clause_text(client: dict) -> str:
     """
-    Returns (inverter_clause_data, is_multiple).
-    For single inverter: returns ((brand, capacity_str), False).
-    For multiple inverters: returns (formatted_combined_str, True).
+    Returns '<Model Name> make <Brand Name> <Total Capacity> kW' string for Vendor Agreement.
+    Rules:
+      Brand = inverter brand
+      Model = inverter model
+      Capacity = Total inverter/system capacity from onboarding
+      Do NOT enumerate multiple inverter rows.
     """
-    inverter_list = _get_inverters_list(client)
-    has_multiple = len(inverter_list) > 1 or any(int(inv.get("quantity") or 1) > 1 for inv in inverter_list)
+    stages_dict = dict(client.get("stages") or {})
+    ob_dict = dict(stages_dict.get("onboarding_data") or {})
 
-    if not has_multiple and inverter_list:
-        inv = inverter_list[0]
-        brand = str(inv.get("brand") or client.get("inverter_make") or "").strip()
-        cap = str(inv.get("capacity") or client.get("inverter_capacity") or "").strip()
-        if cap and not ("KW" in cap.upper() or "KWATT" in cap.upper()):
-            cap = f"{cap} kW"
-        return (brand, cap), False
+    model = str(client.get("inverter_model") or ob_dict.get("inverter_model") or "").strip()
+    brand = str(client.get("inverter_make") or client.get("inverter_brand") or ob_dict.get("inverter_make") or ob_dict.get("inverter_brand") or "").strip()
+    cap   = str(client.get("inverter_capacity") or client.get("system_kw") or client.get("capacity") or ob_dict.get("inverter_capacity") or ob_dict.get("system_kw") or "").strip()
 
-    if has_multiple:
-        items = []
-        for inv in inverter_list:
-            b = str(inv.get("brand") or "").strip()
-            c = str(inv.get("capacity") or "").strip()
-            if c and not ("KW" in c.upper() or "KWATT" in c.upper()):
-                c = f"{c} kW"
-            q = str(inv.get("quantity") or "1").strip()
-            base = f"{b} {c}".strip()
-            if base:
-                items.append(f"{base} × {q}")
-        if items:
-            return ", ".join(items), True
-
-    # Fallback to single inverter fields from client object
-    brand = str(client.get("inverter_make") or client.get("inverter_brand") or "").strip()
-    cap = str(client.get("inverter_capacity") or "").strip()
     if cap and not ("KW" in cap.upper() or "KWATT" in cap.upper()):
         cap = f"{cap} kW"
-    return (brand, cap), False
+
+    model_part = f"{model} make" if model else ""
+    brand_part = brand if brand else ""
+    cap_part   = cap if cap else ""
+
+    parts = [p for p in [model_part, brand_part, cap_part] if p]
+    return " ".join(parts)
 
 
 
@@ -1340,7 +1328,11 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
         
     company_name = company.get("company_name") or ""
     # BU Number and BU Text from onboarding (enriched via _enrich_client_doc before this call)
-    bu_no = client.get("bu_number") or client.get("bu_no") or client.get("bu") or ""
+    raw_bu = str(client.get("bu_number") or client.get("bu_no") or client.get("bu") or "").strip()
+    if raw_bu:
+        bu_no = raw_bu if raw_bu.upper().startswith("BU-") else f"BU-{raw_bu}"
+    else:
+        bu_no = ""
     bu_text = client.get("bu_text") or ""
     sub_div = bu_text or client.get("sub_division") or ""
     division = client.get("division") or ""
@@ -1715,16 +1707,9 @@ def generate_vendor_agreement_pdf(client: dict, company: dict) -> bytes:
     story.append(Paragraph(f"2.1. Total capacity of RTS System will be minimum <b>{system_kw} KWatt</b>.", style_body))
     story.append(Paragraph("2.2. The Solar modules, inverters and BoS will confirm to minimum specifications and DCR requirement of MNRE.", style_body))
     story.append(Paragraph(f"2.3. Solar modules of <b>{panel_make}</b> make model, <b>{panel_wattage} Wp</b> capacity each and <b>21.13%</b> efficiency will be procured and installed by the Vendor", style_body))
-    inv_data, is_multi = _get_vendor_inverter_clause_text(client)
-    if is_multi:
-        inv_clause_p = f"2.4. Solar inverter of <b>{inv_data}</b> rated output capacity will be procured and installed by the Vendor"
-    else:
-        brand, cap = inv_data
-        brand_str = f"<b>{brand}</b> make" if brand else ""
-        cap_str = f"model <b>{cap}</b>" if cap else ""
-        parts = [p for p in [brand_str, cap_str] if p]
-        mid = ", ".join(parts) if parts else "standard"
-        inv_clause_p = f"2.4. Solar inverter of {mid} rated output capacity will be procured and installed by the Vendor"
+    inv_mid = _get_vendor_inverter_clause_text(client)
+    inv_str = f" <b>{inv_mid}</b>" if inv_mid else ""
+    inv_clause_p = f"2.4. Solar inverter of{inv_str} rated output capacity will be procured and installed by the Vendor"
     story.append(Paragraph(inv_clause_p, style_body))
     story.append(Paragraph("2.5. The module mounting structure must withstand minimum wind load pressure as specified by MNRE.", style_body))
     story.append(Paragraph("2.6. Other BoS installations shall be as per best industry practice with all safety and protection gears installed by the vendor.", style_body))
@@ -3013,7 +2998,11 @@ def _generate_net_meter_docx(client: dict, company: dict) -> bytes:
     system_kw    = str(client.get("system_kw") or client.get("capacity") or "").strip()
     date_str_raw = client.get("installation_date") or datetime.now().strftime("%d/%m/%Y")
     date_str     = date_str_raw[:10] if len(date_str_raw) > 10 else date_str_raw
-    bu_no   = client.get("bu_number") or client.get("bu_no") or client.get("bu") or ""
+    raw_bu = str(client.get("bu_number") or client.get("bu_no") or client.get("bu") or "").strip()
+    if raw_bu:
+        bu_no = raw_bu if raw_bu.upper().startswith("BU-") else f"BU-{raw_bu}"
+    else:
+        bu_no = ""
     bu_text = client.get("bu_text") or ""
     sub_div = bu_text or client.get("sub_division") or ""
     division = client.get("division") or ""
@@ -3256,16 +3245,9 @@ def _generate_vendor_docx(client: dict, company: dict) -> bytes:
     _body(f"2.1. Total capacity of RTS System will be minimum {system_kw} KWatt.")
     _body("2.2. The Solar modules, inverters and BoS will confirm to minimum specifications and DCR requirement of MNRE.")
     _body(f"2.3. Solar modules of {panel_make} make model, {panel_wattage} Wp capacity each and 21.13% efficiency will be procured and installed by the Vendor.")
-    inv_data, is_multi = _get_vendor_inverter_clause_text(client)
-    if is_multi:
-        inv_clause_p = f"2.4. Solar inverter of {inv_data} rated output capacity will be procured and installed by the Vendor."
-    else:
-        brand, cap = inv_data
-        brand_str = f"{brand} make" if brand else ""
-        cap_str = f"model {cap}" if cap else ""
-        parts = [p for p in [brand_str, cap_str] if p]
-        mid = ", ".join(parts) if parts else "standard"
-        inv_clause_p = f"2.4. Solar inverter of {mid} rated output capacity will be procured and installed by the Vendor."
+    inv_mid = _get_vendor_inverter_clause_text(client)
+    inv_str = f" {inv_mid}" if inv_mid else ""
+    inv_clause_p = f"2.4. Solar inverter of{inv_str} rated output capacity will be procured and installed by the Vendor."
     _body(inv_clause_p)
     _body("2.5. The module mounting structure must withstand minimum wind load pressure as specified by MNRE.")
     _body("2.6. Other BoS installations shall be as per best industry practice with all safety and protection gears installed by the vendor.")
