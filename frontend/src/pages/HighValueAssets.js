@@ -12,6 +12,8 @@ import { Search, ShieldCheck, ArrowUpRight, ArrowDownLeft, RotateCcw, Package, D
 export default function HighValueAssets() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [tab, setTab] = useState("all");
+  const [stockFilter, setStockFilter] = useState("all"); // "all" | "normal" | "low" | "out_of_stock"
   const [serials, setSerials] = useState([]);
   const [loadingSerials, setLoadingSerials] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState(null);
@@ -52,7 +54,6 @@ export default function HighValueAssets() {
       setLoadingHistory(false);
     }
   };
-  const [stockFilter, setStockFilter] = useState("all"); // "all" | "normal" | "low" | "out_of_stock"
 
   useEffect(() => {
     const t = setTimeout(() => {
