@@ -5439,6 +5439,11 @@ class OutwardIn(BaseModel):
     warranty_start_date: Optional[str] = ""
     asset_remarks: Optional[str] = ""
 
+class AssetEditIn(BaseModel):
+    serial_number: Optional[str] = None
+    site_location: Optional[str] = None
+    remarks: Optional[str] = None
+
 class ProductIn(BaseModel):
     name: str
     size: Optional[str] = ""
@@ -7264,6 +7269,26 @@ async def delete_asset(asset_id: str, user=Depends(get_current_user)):
     
     await log_activity(cid, user["id"], user["name"], "Asset Deleted", f"Deleted high value asset: {existing.get('serial_number') or asset_id}")
     return {"ok": True}
+
+
+@api_router.patch("/assets/{asset_id}")
+async def edit_asset(asset_id: str, data: AssetEditIn, user=Depends(get_current_user)):
+    cid = user["company_id"]
+    all_assets = _load_local_assets()
+    target = next((a for a in all_assets if a.get("id") == asset_id and a.get("company_id") == cid), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    if data.serial_number is not None:
+        target["serial_number"] = data.serial_number.strip().upper()
+    if data.site_location is not None:
+        target["site_location"] = data.site_location.strip()
+    if data.remarks is not None:
+        target["remarks"] = data.remarks.strip()
+    
+    _save_local_assets(all_assets)
+    await log_activity(cid, user["id"], user["name"], "Asset Updated", f"Updated high value asset serial/site for {target.get('serial_number')}")
+    return {"ok": True, "asset": target}
 
 
 # ---------- Inventory Defaults ----------

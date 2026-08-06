@@ -1,60 +1,47 @@
-import React, { useEffect, useState, useMemo } from "react";
-import { useHighValueLedger } from "@/hooks/useAssets";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import api, { formatApiError } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Search, ShieldCheck, ArrowUpRight, ArrowDownLeft, RotateCcw, Package, Download, Filter, Copy, History, Eye, FileText } from "lucide-react";
+import {
+  Search,
+  ShieldCheck,
+  Package,
+  Download,
+  Copy,
+  History,
+  Pencil,
+  Eye,
+  MapPin,
+  User,
+  CheckCircle2
+} from "lucide-react";
 
 export default function HighValueAssets() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [tab, setTab] = useState("all");
-  const [stockFilter, setStockFilter] = useState("all"); // "all" | "normal" | "low" | "out_of_stock"
-  const [serials, setSerials] = useState([]);
-  const [loadingSerials, setLoadingSerials] = useState(false);
-  const [selectedAsset, setSelectedAsset] = useState(null);
-  const [historyModalOpen, setHistoryModalOpen] = useState(false);
-  const [historyRecords, setHistoryRecords] = useState([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
 
-  const fetchSerials = React.useCallback(async () => {
-    setLoadingSerials(true);
-    try {
-      const { data } = await api.get("/assets", { params: { search: debouncedSearch } });
-      setSerials(Array.isArray(data) ? data : []);
-    } catch (e) {
-      toast.error(formatApiError(e));
-    } finally {
-      setLoadingSerials(false);
-    }
-  }, [debouncedSearch]);
+  // Assets list
+  const [assets, setAssets] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (tab === "serials") {
-      fetchSerials();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, fetchSerials]);
+  // Modals state
+  const [productPopupItem, setProductPopupItem] = useState(null);
+  const [timelineAsset, setTimelineAsset] = useState(null);
+  const [timelineEvents, setTimelineEvents] = useState([]);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
 
-  const handleOpenHistory = async (asset) => {
-    setSelectedAsset(asset);
-    setHistoryModalOpen(true);
-    setLoadingHistory(true);
-    try {
-      const pName = asset.product_name || asset.product || "";
-      const { data } = await api.get("/inventory/history", { params: { product: pName } });
-      setHistoryRecords(Array.isArray(data.records) ? data.records : (Array.isArray(data) ? data : []));
-    } catch (e) {
-      toast.error("Failed to load transaction history");
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
+  const [editAsset, setEditAsset] = useState(null);
+  const [editForm, setEditForm] = useState({ serial_number: "", site_location: "", remarks: "" });
+  const [savingEdit, setSavingEdit] = useState(false);
 
+  // Debounce search input
   useEffect(() => {
     const t = setTimeout(() => {
       setDebouncedSearch(search);
@@ -62,123 +49,177 @@ export default function HighValueAssets() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const { data: ledger, isLoading: loading } = useHighValueLedger(debouncedSearch);
-
-  const rawAllGoods = ledger.all_goods || [];
-  const availableGoods = ledger.available || [];
-  const dispatchedTransactions = ledger.dispatched || [];
-  const returnedTransactions = ledger.returned || [];
-
-  // Filter & Sort All Goods based on Stock Status (All / Normal Stock / Low Stock / Out Of Stock) and Product Name A -> Z
-  const filteredAllGoods = useMemo(() => {
-    let list = Array.isArray(ledger?.all_goods) ? [...ledger.all_goods] : [];
-
-    // Stock status filtering
-    if (stockFilter === "normal") {
-      list = list.filter((r) => r.available_qty > (r.minimum_stock || 0));
-    } else if (stockFilter === "low") {
-      list = list.filter((r) => r.available_qty > 0 && r.available_qty <= (r.minimum_stock || 0));
-    } else if (stockFilter === "out_of_stock") {
-      list = list.filter((r) => r.available_qty <= 0);
+  // Fetch all serial tracking assets
+  const fetchAssets = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/assets", { params: { search: debouncedSearch } });
+      setAssets(Array.isArray(data) ? data : []);
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setLoading(false);
     }
+  }, [debouncedSearch]);
 
-    // Always sort Product Name Ascending (A -> Z) using locale-aware comparison
-    list.sort((a, b) => (a.product || "").localeCompare(b.product || "", undefined, { sensitivity: "base", numeric: true }));
+  useEffect(() => {
+    fetchAssets();
+  }, [fetchAssets]);
 
+  // Filtered Assets list
+  const filteredAssets = useMemo(() => {
+    let list = [...assets];
+    if (statusFilter !== "all") {
+      list = list.filter(
+        (a) => (a.status || "Available").toLowerCase() === statusFilter.toLowerCase()
+      );
+    }
     return list;
-  }, [ledger?.all_goods, stockFilter]);
+  }, [assets, statusFilter]);
 
-  const handleExportCSV = () => {
-    let headers = [];
-    let rows = [];
-    let filename = "High_Value_Goods.csv";
+  // Group assets by product for Product Popup calculation
+  const productSummaryMap = useMemo(() => {
+    const map = {};
+    assets.forEach((a) => {
+      const name = a.product_name || a.product || "Unknown Product";
+      if (!map[name]) {
+        map[name] = {
+          name,
+          spec: a.size_model || a.size || "—",
+          category: a.category || "Solar Equipment",
+          total: 0,
+          available: 0,
+          installed: 0,
+          items: []
+        };
+      }
+      map[name].total += 1;
+      if ((a.status || "Available") === "Available") map[name].available += 1;
+      if ((a.status || "") === "Installed") map[name].installed += 1;
+      map[name].items.push(a);
+    });
+    return map;
+  }, [assets]);
 
-    if (tab === "all") {
-      if (!filteredAllGoods || filteredAllGoods.length === 0) {
-        toast.error("No High Value Goods data matching the selected filter to export");
-        return;
+  // Handle Copy Serial
+  const handleCopySerial = (sn) => {
+    if (!sn) return;
+    navigator.clipboard.writeText(sn);
+    toast.success(`Copied serial number: ${sn}`);
+  };
+
+  // Open Serial Timeline Popup
+  const handleOpenTimeline = async (asset) => {
+    setTimelineAsset(asset);
+    setLoadingTimeline(true);
+    setTimelineEvents([]);
+    try {
+      const pName = asset.product_name || asset.product || "";
+      const { data } = await api.get("/inventory/history", { params: { product: pName } });
+      const rawRecords = Array.isArray(data.records) ? data.records : (Array.isArray(data) ? data : []);
+
+      // Filter timeline events matching asset's serial number or purchase/inward record
+      const sn = (asset.serial_number || "").toUpperCase();
+      const events = [];
+
+      // 1. Inward Event
+      events.push({
+        type: "Inward",
+        title: "Inward Entry Recorded",
+        date: asset.purchase_date || asset.inward_date || asset.created_at || "—",
+        site: "Central Warehouse",
+        client: asset.vendor || "Supplier",
+        detail: `Challan / Bill: ${asset.challan_number || "N/A"}`
+      });
+
+      // 2. Client Allocation / Installation Event
+      if (asset.client_name || asset.status === "Installed" || asset.status === "Dispatched") {
+        events.push({
+          type: asset.status === "Installed" ? "Installed" : "Allocated",
+          title: asset.status === "Installed" ? "Installed at Client Site" : "Outward Dispatched to Client",
+          date: asset.installation_date || asset.last_movement_date || "—",
+          site: asset.site_location || asset.client_name || "Client Site",
+          client: asset.client_name || "Client",
+          detail: `Serial #${sn} allocated to project`
+        });
       }
-      const filterSuffix = stockFilter === "low" ? "_Low_Stock" : stockFilter === "out_of_stock" ? "_Out_Of_Stock" : stockFilter === "normal" ? "_Normal_Stock" : "_All";
-      filename = `High_Value_Goods${filterSuffix}.csv`;
-      headers = ["Product Name", "Size / Spec", "Total Inward", "Total Outward", "Returned", "Available Qty", "Min Stock", "Unit", "Last Movement", "Status"];
-      rows = filteredAllGoods.map((row) => [
-        `"${(row.product || "").replace(/"/g, '""')}"`,
-        `"${(row.size || "").replace(/"/g, '""')}"`,
-        row.total_in || 0,
-        row.total_out || 0,
-        row.returned || 0,
-        row.available_qty || 0,
-        row.minimum_stock || 0,
-        `"${(row.unit || "Nos").replace(/"/g, '""')}"`,
-        `"${(row.last_movement || "").replace(/"/g, '""')}"`,
-        `"${(row.status || "").replace(/"/g, '""')}"`
-      ]);
-    } else if (tab === "available") {
-      if (!availableGoods || availableGoods.length === 0) {
-        toast.error("No available High Value Goods to export");
-        return;
-      }
-      filename = "High_Value_Goods_Available.csv";
-      headers = ["Product Name", "Size / Spec", "Available Qty", "Unit", "Last Inward", "Challan / Vendor", "Status"];
-      rows = availableGoods.map((row) => [
-        `"${(row.product || "").replace(/"/g, '""')}"`,
-        `"${(row.size || "").replace(/"/g, '""')}"`,
-        row.available_qty || 0,
-        `"${(row.unit || "Nos").replace(/"/g, '""')}"`,
-        `"${(row.last_inward || "").replace(/"/g, '""')}"`,
-        `"${(row.challan_vendor || "").replace(/"/g, '""')}"`,
-        `"${(row.status || "Available").replace(/"/g, '""')}"`
-      ]);
-    } else if (tab === "dispatched") {
-      if (!dispatchedTransactions || dispatchedTransactions.length === 0) {
-        toast.error("No dispatched High Value Goods to export");
-        return;
-      }
-      filename = "High_Value_Goods_Dispatched.csv";
-      headers = ["Date", "Product Name", "Size / Spec", "Quantity", "Unit", "Challan No.", "Client / Project", "Site", "Requested By / Issued To", "Reference", "Status"];
-      rows = dispatchedTransactions.map((row) => [
-        `"${(row.date || "").replace(/"/g, '""')}"`,
-        `"${(row.product || "").replace(/"/g, '""')}"`,
-        `"${(row.size || "").replace(/"/g, '""')}"`,
-        row.quantity || 0,
-        `"${(row.unit || "Nos").replace(/"/g, '""')}"`,
-        `"${(row.challan_number || "").replace(/"/g, '""')}"`,
-        `"${(row.client_name || "").replace(/"/g, '""')}"`,
-        `"${(row.site || "").replace(/"/g, '""')}"`,
-        `"${(row.requested_by || "").replace(/"/g, '""')}"`,
-        `"${(row.reference || "").replace(/"/g, '""')}"`,
-        `"${(row.status || "Dispatched").replace(/"/g, '""')}"`
-      ]);
-    } else if (tab === "returned") {
-      if (!returnedTransactions || returnedTransactions.length === 0) {
-        toast.error("No returned High Value Goods to export");
-        return;
-      }
-      filename = "High_Value_Goods_Returned.csv";
-      headers = ["Return Date", "Product Name", "Size / Spec", "Quantity", "Unit", "Client / Project", "Site", "Original Challan", "Return Reason / Remark", "Status"];
-      rows = returnedTransactions.map((row) => [
-        `"${(row.return_date || "").replace(/"/g, '""')}"`,
-        `"${(row.product || "").replace(/"/g, '""')}"`,
-        `"${(row.size || "").replace(/"/g, '""')}"`,
-        row.quantity || 0,
-        `"${(row.unit || "Nos").replace(/"/g, '""')}"`,
-        `"${(row.client_name || "").replace(/"/g, '""')}"`,
-        `"${(row.site || "").replace(/"/g, '""')}"`,
-        `"${(row.original_challan || "").replace(/"/g, '""')}"`,
-        `"${(row.return_reason || "").replace(/"/g, '""')}"`,
-        `"${(row.status || "Returned").replace(/"/g, '""')}"`
-      ]);
+
+      // 3. Check extra history records from ledger
+      rawRecords.forEach((rec) => {
+        const recType = (rec.type || rec.entry_type || "").toLowerCase();
+        if (recType.includes("transfer") || recType.includes("return")) {
+          events.push({
+            type: recType.includes("return") ? "Returned" : "Transferred",
+            title: recType.includes("return") ? "Material Returned to Stock" : "Site-to-Site Transfer",
+            date: (rec.date || rec.created_at || "").slice(0, 10),
+            site: rec.site || rec.location || "Site Location",
+            client: rec.client_name || rec.source_name || "Client",
+            detail: rec.remarks || rec.reference_number || "Movement logged"
+          });
+        }
+      });
+
+      events.sort((a, b) => new Date(a.date) - new Date(b.date));
+      setTimelineEvents(events);
+    } catch (e) {
+      toast.error("Failed to load serial movement timeline");
+    } finally {
+      setLoadingTimeline(false);
     }
+  };
+
+  // Open Edit Asset Modal
+  const handleOpenEdit = (asset) => {
+    setEditAsset(asset);
+    setEditForm({
+      serial_number: asset.serial_number || "",
+      site_location: asset.site_location || asset.site || "",
+      remarks: asset.remarks || asset.asset_remarks || ""
+    });
+  };
+
+  // Save Edit Asset
+  const handleSaveEdit = async () => {
+    if (!editAsset) return;
+    setSavingEdit(true);
+    try {
+      await api.patch(`/assets/${editAsset.id}`, editForm);
+      toast.success("Serial & Site details updated");
+      setEditAsset(null);
+      fetchAssets();
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // Export Serial List to CSV
+  const handleExportCSV = () => {
+    if (!filteredAssets || filteredAssets.length === 0) {
+      toast.error("No serial tracking data to export");
+      return;
+    }
+    const headers = ["Serial Number", "Product Name", "Size / Spec", "Current Status", "Current Site", "Allocated Client", "Date"];
+    const rows = filteredAssets.map((a) => [
+      `"${(a.serial_number || "").replace(/"/g, '""')}"`,
+      `"${(a.product_name || a.product || "").replace(/"/g, '""')}"`,
+      `"${(a.size_model || "").replace(/"/g, '""')}"`,
+      `"${(a.status || "Available").replace(/"/g, '""')}"`,
+      `"${(a.site_location || "Warehouse").replace(/"/g, '""')}"`,
+      `"${(a.client_name || "Unallocated").replace(/"/g, '""')}"`,
+      `"${(a.installation_date || a.purchase_date || "").replace(/"/g, '""')}"`
+    ]);
 
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", filename);
+    link.setAttribute("download", `Serial_Tracking_${statusFilter}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast.success("High Value Goods data exported successfully");
+    toast.success(`Exported ${filteredAssets.length} serial records`);
   };
 
   return (
@@ -187,11 +228,16 @@ export default function HighValueAssets() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>High Value Goods Ledger</h2>
-            <Badge className="bg-amber-100 text-amber-900 border-amber-300 font-semibold text-xs">Live Inventory View</Badge>
+            <h2 className="text-xl font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>High Value Goods</h2>
+            <Badge className="bg-amber-100 text-amber-900 border-amber-300 font-semibold text-xs flex items-center gap-1">
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-600" /> Serial Tracking Ledger
+            </Badge>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">Real-time inventory tracking for high-value materials synchronized with Balance Sheet & Product Master.</p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Single source of truth for individual High Value serial numbers, sites, client allocations, and movement timelines.
+          </p>
         </div>
+
         <Button
           variant="outline"
           size="sm"
@@ -199,436 +245,454 @@ export default function HighValueAssets() {
           onClick={handleExportCSV}
           data-testid="hv-download-btn"
         >
-          <Download className="w-4 h-4 mr-1.5 text-blue-600" /> Export CSV
+          <Download className="w-4 h-4 mr-1.5 text-blue-600" /> Export Serial CSV
         </Button>
       </div>
 
-      {/* Tabs + Stock Filter + Search Bar */}
-      <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
-        <div className="flex flex-wrap gap-1 border-b border-slate-200 w-full md:w-auto">
+      {/* Filter Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+        {/* Status Filter Pills */}
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none py-0.5">
           {[
-            { id: "all", label: "All Goods", count: filteredAllGoods.length },
-            { id: "available", label: "Available", count: availableGoods.length },
-            { id: "dispatched", label: "Dispatched", count: dispatchedTransactions.length },
-            { id: "returned", label: "Returned", count: returnedTransactions.length },
-            { id: "serials", label: "Serial Tracking", count: serials.length }
-          ].map((t) => (
+            { id: "all", label: "All Statuses", count: assets.length },
+            { id: "available", label: "Available", count: assets.filter(a => (a.status || "Available") === "Available").length },
+            { id: "installed", label: "Installed", count: assets.filter(a => a.status === "Installed").length },
+            { id: "dispatched", label: "Dispatched", count: assets.filter(a => a.status === "Dispatched").length },
+            { id: "returned", label: "Returned", count: assets.filter(a => a.status === "Returned").length },
+            { id: "scrapped", label: "Scrapped", count: assets.filter(a => a.status === "Scrapped").length }
+          ].map((sf) => (
             <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-4 py-2.5 text-xs font-semibold uppercase tracking-wider border-b-2 -mb-[2px] transition flex items-center gap-1.5 ${
-                tab === t.id
-                  ? "border-amber-600 text-amber-900 font-bold"
-                  : "border-transparent text-slate-500 hover:text-slate-900"
+              key={sf.id}
+              onClick={() => setStatusFilter(sf.id)}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 ${
+                statusFilter === sf.id
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
               }`}
-              data-testid={`tab-${t.id}`}
+              data-testid={`status-filter-${sf.id}`}
             >
-              <span>{t.label}</span>
-              <Badge variant="outline" className={`ml-1 text-[10px] px-1.5 py-0 ${tab === t.id ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-slate-100 text-slate-600"}`}>
-                {t.count}
-              </Badge>
+              <span>{sf.label}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${statusFilter === sf.id ? "bg-slate-800 text-slate-200" : "bg-slate-200 text-slate-700"}`}>
+                {sf.count}
+              </span>
             </button>
           ))}
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
-          {/* Stock Filter Sub-Pills (Shown when Tab === 'all') */}
-          {tab === "all" && (
-            <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-medium shrink-0">
-              {[
-                { id: "all", label: "All Stock" },
-                { id: "normal", label: "Normal Stock" },
-                { id: "low", label: "Low Stock" },
-                { id: "out_of_stock", label: "Out Of Stock" }
-              ].map((sf) => (
-                <button
-                  key={sf.id}
-                  onClick={() => setStockFilter(sf.id)}
-                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
-                    stockFilter === sf.id
-                      ? "bg-white text-slate-900 shadow-sm"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                  data-testid={`stock-filter-${sf.id}`}
-                >
-                  {sf.label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-            <Input
-              placeholder="Search product, size, client..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 bg-white text-xs h-9"
-              data-testid="hv-search-input"
-            />
-          </div>
+        {/* Global Search Input */}
+        <div className="relative w-full sm:w-80 shrink-0">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <Input
+            placeholder="Search Serial Number, Client, Site..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 bg-white text-xs h-9"
+            data-testid="hv-search-input"
+          />
         </div>
       </div>
 
-      {/* Content Table Card */}
+      {/* Main Serial Ledger Table */}
       <Card className="border-slate-200 shadow-sm">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-
-            {/* TAB 1: ALL GOODS */}
-            {tab === "all" && (
-              <table className="w-full text-sm text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
-                    <th className="p-4 font-semibold">Product (A-Z)</th>
-                    <th className="p-4 font-semibold">Size / Spec</th>
-                    <th className="p-4 font-semibold text-center">Total Inward</th>
-                    <th className="p-4 font-semibold text-center">Total Outward</th>
-                    <th className="p-4 font-semibold text-center">Returned</th>
-                    <th className="p-4 font-semibold text-center">Available Qty</th>
-                    <th className="p-4 font-semibold text-center">Min Stock</th>
-                    <th className="p-4 font-semibold">Last Movement</th>
-                    <th className="p-4 font-semibold text-right">Status</th>
+            <table className="w-full text-sm text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
+                  <th className="p-4 font-semibold">Serial Number</th>
+                  <th className="p-4 font-semibold">Product Name & Spec</th>
+                  <th className="p-4 font-semibold">Current Status</th>
+                  <th className="p-4 font-semibold">Current Site</th>
+                  <th className="p-4 font-semibold">Allocated Client</th>
+                  <th className="p-4 font-semibold">Last Movement / Date</th>
+                  <th className="p-4 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {loading ? (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-slate-500 text-xs">
+                      Loading high-value serial tracking ledger...
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? (
-                    <tr><td colSpan={9} className="p-8 text-center text-slate-500 text-xs">Loading live High Value Goods ledger...</td></tr>
-                  ) : filteredAllGoods.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} className="p-12 text-center text-slate-500 text-xs">
-                        <Package className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-                        No high value products matching the selected stock filter.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredAllGoods.map((row) => {
-                      const isOut = row.available_qty <= 0;
-                      const isLow = !isOut && row.available_qty <= (row.minimum_stock || 0);
-                      return (
-                        <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="p-4 font-semibold text-slate-900 flex items-center gap-2">
-                            <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
-                            <span>{row.product}</span>
-                          </td>
-                          <td className="p-4 text-slate-700 text-xs font-mono">{row.size || "—"}</td>
-                          <td className="p-4 text-center font-medium text-slate-800">{row.total_in} {row.unit}</td>
-                          <td className="p-4 text-center font-medium text-slate-800">{row.total_out} {row.unit}</td>
-                          <td className="p-4 text-center font-medium text-emerald-700">{row.returned} {row.unit}</td>
-                          <td className="p-4 text-center font-bold text-base">
-                            <span className={isOut ? "text-red-600" : isLow ? "text-amber-600" : "text-emerald-700"}>
-                              {row.available_qty} {row.unit}
-                            </span>
-                          </td>
-                          <td className="p-4 text-center text-xs text-slate-500">{row.minimum_stock || 0} {row.unit}</td>
-                          <td className="p-4 text-xs text-slate-600">
-                            <div className="flex items-center gap-1.5">
-                              {row.last_movement.includes("Outward") ? (
-                                <ArrowUpRight className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                              ) : row.last_movement.includes("Inward") ? (
-                                <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                              ) : null}
-                              <span>{row.last_movement}</span>
-                            </div>
-                          </td>
-                          <td className="p-4 text-right">
-                            <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
-                              isOut ? "bg-red-50 text-red-700 border-red-200" : isLow ? "bg-amber-50 text-amber-800 border-amber-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                            }`}>
-                              {isOut ? "Out Of Stock" : isLow ? "Low Stock" : "Normal Stock"}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            )}
-
-            {/* TAB 2: AVAILABLE */}
-            {tab === "available" && (
-              <table className="w-full text-sm text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
-                    <th className="p-4 font-semibold">Product (A-Z)</th>
-                    <th className="p-4 font-semibold">Size / Spec</th>
-                    <th className="p-4 font-semibold text-center">Available Qty</th>
-                    <th className="p-4 font-semibold">Last Inward</th>
-                    <th className="p-4 font-semibold">Challan / Vendor</th>
-                    <th className="p-4 font-semibold text-right">Status</th>
+                ) : filteredAssets.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-12 text-center text-slate-500 text-xs">
+                      <Package className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                      No serial tracking records found matching the filter.
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? (
-                    <tr><td colSpan={6} className="p-8 text-center text-slate-500 text-xs">Loading available high value goods...</td></tr>
-                  ) : availableGoods.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-12 text-center text-slate-500 text-xs">
-                        <Package className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-                        No available High Value Goods in stock.
-                      </td>
-                    </tr>
-                  ) : (
-                    availableGoods.map((row) => (
-                      <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-4 font-semibold text-slate-900 flex items-center gap-2">
-                          <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
-                          <span>{row.product}</span>
-                        </td>
-                        <td className="p-4 text-slate-700 text-xs font-mono">{row.size || "—"}</td>
-                        <td className="p-4 text-center font-bold text-emerald-700 text-base">{row.available_qty} {row.unit}</td>
-                        <td className="p-4 text-xs text-slate-700">{row.last_inward || "—"}</td>
-                        <td className="p-4 text-xs text-slate-700 font-medium">{row.challan_vendor}</td>
-                        <td className="p-4 text-right">
-                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">
-                            Available
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            )}
+                ) : (
+                  filteredAssets.map((asset, idx) => {
+                    const pName = asset.product_name || asset.product || "Unknown Product";
+                    const summary = productSummaryMap[pName];
 
-            {/* TAB 3: DISPATCHED */}
-            {tab === "dispatched" && (
-              <table className="w-full text-sm text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
-                    <th className="p-4 font-semibold">Date</th>
-                    <th className="p-4 font-semibold">Product</th>
-                    <th className="p-4 font-semibold">Size / Spec</th>
-                    <th className="p-4 font-semibold text-center">Dispatched Qty</th>
-                    <th className="p-4 font-semibold">Challan No.</th>
-                    <th className="p-4 font-semibold">Client / Project</th>
-                    <th className="p-4 font-semibold">Site / Location</th>
-                    <th className="p-4 font-semibold">Requested By</th>
-                    <th className="p-4 font-semibold text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? (
-                    <tr><td colSpan={9} className="p-8 text-center text-slate-500 text-xs">Loading dispatched goods...</td></tr>
-                  ) : dispatchedTransactions.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} className="p-12 text-center text-slate-500 text-xs">
-                        <Package className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-                        No High Value Goods outward/dispatch transactions found.
-                      </td>
-                    </tr>
-                  ) : (
-                    dispatchedTransactions.map((row, idx) => (
-                      <tr key={row.id || idx} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-4 text-xs font-mono text-slate-600">{row.date}</td>
-                        <td className="p-4 font-semibold text-slate-900">{row.product}</td>
-                        <td className="p-4 text-slate-700 text-xs font-mono">{row.size || "—"}</td>
-                        <td className="p-4 text-center font-bold text-blue-700">{row.quantity} {row.unit}</td>
-                        <td className="p-4 text-xs font-mono text-slate-700">{row.challan_number}</td>
-                        <td className="p-4 text-xs font-medium text-slate-900">{row.client_name}</td>
-                        <td className="p-4 text-xs text-slate-600">{row.site}</td>
-                        <td className="p-4 text-xs text-slate-600">{row.requested_by}</td>
-                        <td className="p-4 text-right">
-                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold border bg-blue-50 text-blue-700 border-blue-200">
-                            Dispatched
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            )}
-
-            {/* TAB 4: RETURNED */}
-            {tab === "returned" && (
-              <table className="w-full text-sm text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
-                    <th className="p-4 font-semibold">Return Date</th>
-                    <th className="p-4 font-semibold">Product</th>
-                    <th className="p-4 font-semibold">Size / Spec</th>
-                    <th className="p-4 font-semibold text-center">Returned Qty</th>
-                    <th className="p-4 font-semibold">Client / Project</th>
-                    <th className="p-4 font-semibold">Original Challan</th>
-                    <th className="p-4 font-semibold">Reason / Remark</th>
-                    <th className="p-4 font-semibold text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? (
-                    <tr><td colSpan={8} className="p-8 text-center text-slate-500 text-xs">Loading returned goods...</td></tr>
-                  ) : returnedTransactions.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="p-12 text-center text-slate-500 text-xs">
-                        <Package className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-                        No High Value Goods return transactions found.
-                      </td>
-                    </tr>
-                  ) : (
-                    returnedTransactions.map((row, idx) => (
-                      <tr key={row.id || idx} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-4 text-xs font-mono text-slate-600">{row.return_date}</td>
-                        <td className="p-4 font-semibold text-slate-900">{row.product}</td>
-                        <td className="p-4 text-slate-700 text-xs font-mono">{row.size || "—"}</td>
-                        <td className="p-4 text-center font-bold text-emerald-700">{row.quantity} {row.unit}</td>
-                        <td className="p-4 text-xs font-medium text-slate-900">{row.client_name}</td>
-                        <td className="p-4 text-xs font-mono text-slate-700">{row.original_challan}</td>
-                        <td className="p-4 text-xs text-slate-600">{row.return_reason}</td>
-                        <td className="p-4 text-right">
-                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">
-                            Returned
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            )}
-
-            {/* TAB 5: SERIAL TRACKING */}
-            {tab === "serials" && (
-              <table className="w-full text-sm text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
-                    <th className="p-4 font-semibold">Serial Number</th>
-                    <th className="p-4 font-semibold">Product & Spec</th>
-                    <th className="p-4 font-semibold">Current Site</th>
-                    <th className="p-4 font-semibold">Current Status</th>
-                    <th className="p-4 font-semibold">Allocated Client</th>
-                    <th className="p-4 font-semibold">Transaction Date</th>
-                    <th className="p-4 font-semibold text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loadingSerials ? (
-                    <tr><td colSpan={7} className="p-8 text-center text-slate-500 text-xs">Loading serial tracking...</td></tr>
-                  ) : serials.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-12 text-center text-slate-500 text-xs">
-                        <Package className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-                        No high value serial number records found.
-                      </td>
-                    </tr>
-                  ) : (
-                    serials.map((asset, idx) => (
+                    return (
                       <tr key={asset.id || idx} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-4 text-xs font-mono font-bold text-slate-900">
+                        {/* Serial Number + Copy */}
+                        <td className="p-4 font-mono font-bold text-slate-900 text-xs">
                           <div className="flex items-center gap-1.5">
                             <span>{asset.serial_number || "—"}</span>
                             {asset.serial_number && (
                               <button
-                                onClick={() => {
-                                  navigator.clipboard.writeText(asset.serial_number);
-                                  toast.success("Serial number copied");
-                                }}
-                                className="text-slate-400 hover:text-blue-600 p-0.5 rounded"
+                                type="button"
+                                onClick={() => handleCopySerial(asset.serial_number)}
+                                className="text-slate-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50 transition"
                                 title="Copy Serial Number"
                               >
-                                <Copy className="w-3 h-3" />
+                                <Copy className="w-3.5 h-3.5" />
                               </button>
                             )}
                           </div>
                         </td>
-                        <td className="p-4 font-semibold text-slate-900">
-                          <div>{asset.product_name || asset.product}</div>
-                          {asset.size_model && <div className="text-[10px] text-slate-400 font-normal">{asset.size_model}</div>}
-                        </td>
-                        <td className="p-4 text-xs text-slate-700">{asset.site_location || asset.site || "Warehouse"}</td>
+
+                        {/* Product & Spec */}
                         <td className="p-4">
-                          <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
-                            asset.status === "Installed" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                            asset.status === "Available" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                            asset.status === "Dispatched" ? "bg-amber-50 text-amber-700 border-amber-200" :
-                            "bg-slate-100 text-slate-700 border-slate-200"
-                          }`}>
+                          <button
+                            type="button"
+                            onClick={() => setProductPopupItem(summary || { name: pName, spec: asset.size_model || "—", items: [asset] })}
+                            className="font-semibold text-slate-900 hover:text-blue-600 text-left hover:underline block"
+                          >
+                            {pName}
+                          </button>
+                          <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                            {asset.size_model || asset.size || "—"}
+                          </div>
+                        </td>
+
+                        {/* Current Status */}
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
+                              asset.status === "Installed"
+                                ? "bg-blue-50 text-blue-700 border-blue-200"
+                                : asset.status === "Available"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : asset.status === "Dispatched"
+                                ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : "bg-slate-100 text-slate-700 border-slate-200"
+                            }`}
+                          >
                             {asset.status || "Available"}
                           </span>
                         </td>
-                        <td className="p-4 text-xs font-medium text-slate-900">{asset.client_name || "Unallocated"}</td>
-                        <td className="p-4 text-xs font-mono text-slate-600">{asset.installation_date || asset.purchase_date || (asset.created_at ? asset.created_at.slice(0, 10) : "—")}</td>
+
+                        {/* Current Site */}
+                        <td className="p-4 text-xs text-slate-700">
+                          <div className="flex items-center gap-1">
+                            <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span>{asset.site_location || (asset.client_name ? `${asset.client_name} Site` : "Warehouse")}</span>
+                          </div>
+                        </td>
+
+                        {/* Allocated Client */}
+                        <td className="p-4 text-xs font-medium text-slate-900">
+                          <div className="flex items-center gap-1">
+                            <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span>{asset.client_name || "Unallocated"}</span>
+                          </div>
+                        </td>
+
+                        {/* Last Movement Date */}
+                        <td className="p-4 text-xs font-mono text-slate-600">
+                          {asset.installation_date || asset.purchase_date || (asset.created_at ? asset.created_at.slice(0, 10) : "—")}
+                        </td>
+
+                        {/* Actions */}
                         <td className="p-4 text-right">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleOpenHistory(asset)}
-                            className="h-7 text-xs border-slate-300 text-slate-700 hover:bg-slate-50"
-                          >
-                            <History className="w-3.5 h-3.5 mr-1 text-amber-600" /> Related History
-                          </Button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setProductPopupItem(summary || { name: pName, spec: asset.size_model || "—", items: [asset] })}
+                              className="h-7 px-2 text-xs text-slate-600 hover:text-blue-600 hover:bg-blue-50"
+                              title="View Product Popup"
+                            >
+                              <Eye className="w-3.5 h-3.5 mr-1" /> Product
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleOpenTimeline(asset)}
+                              className="h-7 px-2 text-xs border-amber-300 text-amber-800 hover:bg-amber-50"
+                              title="View Serial History Timeline"
+                            >
+                              <History className="w-3.5 h-3.5 mr-1 text-amber-600" /> History
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleOpenEdit(asset)}
+                              className="h-7 px-2 text-xs border-slate-300 text-slate-700 hover:bg-slate-50"
+                              title="Edit Serial & Site"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            )}
-
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </CardContent>
       </Card>
 
-      {/* Related Transactions Modal */}
-      <Dialog open={historyModalOpen} onOpenChange={setHistoryModalOpen}>
-        <DialogContent className="max-w-3xl">
+      {/* ONE PRODUCT POPUP MODAL */}
+      <Dialog open={!!productPopupItem} onOpenChange={(open) => !open && setProductPopupItem(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          {productPopupItem && (
+            <div className="space-y-4">
+              {/* Header: Product Name, Spec, Current Balance, Category, High Value Badge */}
+              <div className="border-b border-slate-200 pb-4">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <h3 className="text-xl font-bold text-slate-900" style={{ fontFamily: "Outfit" }}>
+                      {productPopupItem.name}
+                    </h3>
+                    <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                      <span className="text-xs font-mono font-medium text-slate-600">
+                        Spec: {productPopupItem.spec}
+                      </span>
+                      <span className="text-slate-300">•</span>
+                      <Badge className="bg-blue-100 text-blue-800 border-blue-200 font-semibold text-xs">
+                        {productPopupItem.category || "Solar Equipment"}
+                      </Badge>
+                      <Badge className="bg-amber-100 text-amber-900 border-amber-300 font-semibold text-xs">
+                        High Value Goods
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 px-4 py-2 rounded-lg text-right">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Current Balance</div>
+                    <div className="text-lg font-bold text-emerald-700 font-mono">
+                      {productPopupItem.available ?? productPopupItem.items?.length ?? 0} Nos
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Serial Number Ledger Table */}
+              <div>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                  Serial Number Ledger ({productPopupItem.items?.length || 0} tracked serials)
+                </h4>
+
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-xs text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200">
+                        <th className="p-3 font-semibold">Serial Number</th>
+                        <th className="p-3 font-semibold">Current Status</th>
+                        <th className="p-3 font-semibold">Current Site</th>
+                        <th className="p-3 font-semibold">Allocated Client</th>
+                        <th className="p-3 font-semibold">Last Transaction</th>
+                        <th className="p-3 font-semibold text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(!productPopupItem.items || productPopupItem.items.length === 0) ? (
+                        <tr>
+                          <td colSpan={6} className="p-6 text-center text-slate-400 italic">
+                            No serial number entries registered for this product.
+                          </td>
+                        </tr>
+                      ) : (
+                        productPopupItem.items.map((sub, i) => (
+                          <tr key={sub.id || i} className="hover:bg-slate-50/50">
+                            <td className="p-3 font-mono font-bold text-slate-900">
+                              <div className="flex items-center gap-1.5">
+                                <span>{sub.serial_number || "—"}</span>
+                                {sub.serial_number && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopySerial(sub.serial_number)}
+                                    className="text-slate-400 hover:text-blue-600 p-0.5 rounded"
+                                    title="Copy Serial Number"
+                                  >
+                                    <Copy className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                                sub.status === "Installed" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                                sub.status === "Available" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                                "bg-slate-100 text-slate-700 border-slate-200"
+                              }`}>
+                                {sub.status || "Available"}
+                              </span>
+                            </td>
+                            <td className="p-3 text-slate-700">{sub.site_location || "Warehouse"}</td>
+                            <td className="p-3 font-medium text-slate-900">{sub.client_name || "Unallocated"}</td>
+                            <td className="p-3 font-mono text-slate-600">{sub.installation_date || sub.purchase_date || "—"}</td>
+                            <td className="p-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleOpenTimeline(sub)}
+                                  className="h-6 px-2 text-[11px] border-amber-300 text-amber-800 hover:bg-amber-50"
+                                >
+                                  History
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleOpenEdit(sub)}
+                                  className="h-6 px-2 text-[11px] border-slate-300 text-slate-700 hover:bg-slate-50"
+                                >
+                                  Edit
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" size="sm" onClick={() => setProductPopupItem(null)}>
+                  Close
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* SERIAL HISTORY TIMELINE MODAL */}
+      <Dialog open={!!timelineAsset} onOpenChange={(open) => !open && setTimelineAsset(null)}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <History className="w-5 h-5 text-amber-600" />
-              Related Transactions History
+              Serial Movement Timeline
             </DialogTitle>
-            {selectedAsset && (
+            {timelineAsset && (
               <p className="text-xs text-slate-500">
-                Product: <b className="text-slate-800">{selectedAsset.product_name || selectedAsset.product}</b> | Serial: <b className="font-mono text-slate-800">{selectedAsset.serial_number || "N/A"}</b>
+                Product: <b className="text-slate-800">{timelineAsset.product_name || timelineAsset.product}</b> | Serial: <b className="font-mono text-slate-900">{timelineAsset.serial_number || "N/A"}</b>
               </p>
             )}
           </DialogHeader>
 
-          <div className="max-h-[60vh] overflow-y-auto space-y-2 py-2">
-            {loadingHistory ? (
-              <div className="p-8 text-center text-xs text-slate-500">Loading related transaction history...</div>
-            ) : historyRecords.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-500">No related inward/outward history records found.</div>
+          <div className="py-4">
+            {loadingTimeline ? (
+              <div className="p-8 text-center text-xs text-slate-500">Loading movement timeline...</div>
+            ) : timelineEvents.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-400 italic">No movement events logged for this serial number.</div>
             ) : (
-              <div className="border border-slate-200 rounded-lg overflow-hidden">
-                <table className="w-full text-xs text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200">
-                      <th className="p-3 font-semibold">Date</th>
-                      <th className="p-3 font-semibold">Type</th>
-                      <th className="p-3 font-semibold">Source / Client</th>
-                      <th className="p-3 font-semibold text-center">Qty</th>
-                      <th className="p-3 font-semibold">Challan / Bill</th>
-                      <th className="p-3 font-semibold">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {historyRecords.map((rec, i) => (
-                      <tr key={rec.id || i} className="hover:bg-slate-50/50">
-                        <td className="p-3 font-mono text-slate-600">{(rec.date || rec.created_at || "").slice(0, 10)}</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                            (rec.type || "").toLowerCase() === "inward" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-                          }`}>
-                            {rec.type || rec.entry_type || "Transaction"}
+              <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
+                {timelineEvents.map((ev, idx) => (
+                  <div key={idx} className="relative flex items-start gap-4">
+                    <div className={`absolute -left-6 top-1 w-5 h-5 rounded-full border-2 bg-white flex items-center justify-center ${
+                      ev.type === "Inward" ? "border-emerald-500 text-emerald-600" :
+                      ev.type === "Installed" || ev.type === "Allocated" ? "border-blue-500 text-blue-600" :
+                      "border-amber-500 text-amber-600"
+                    }`}>
+                      <CheckCircle2 className="w-3 h-3" />
+                    </div>
+
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 w-full space-y-1">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="font-bold text-xs text-slate-900">{ev.title}</span>
+                        <span className="text-[10px] font-mono text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
+                          {ev.date}
+                        </span>
+                      </div>
+
+                      <div className="text-xs text-slate-700 flex flex-wrap gap-x-4 gap-y-1 pt-1">
+                        <span className="flex items-center gap-1">
+                          <MapPin className="w-3 h-3 text-slate-400" /> {ev.site}
+                        </span>
+                        {ev.client && (
+                          <span className="flex items-center gap-1">
+                            <User className="w-3 h-3 text-slate-400" /> {ev.client}
                           </span>
-                        </td>
-                        <td className="p-3 font-medium text-slate-800">{rec.source_name || rec.client_name || rec.vendor || "—"}</td>
-                        <td className="p-3 text-center font-bold text-slate-900">{rec.quantity || 1}</td>
-                        <td className="p-3 font-mono text-slate-600">{rec.reference_number || rec.bill_number || "—"}</td>
-                        <td className="p-3 text-slate-600">{rec.status || "Completed"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        )}
+                      </div>
+
+                      {ev.detail && (
+                        <div className="text-[11px] text-slate-500 pt-1 font-mono border-t border-slate-100">
+                          {ev.detail}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
 
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setHistoryModalOpen(false)}>
+            <Button variant="outline" size="sm" onClick={() => setTimelineAsset(null)}>
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* EDIT SERIAL MODAL */}
+      <Dialog open={!!editAsset} onOpenChange={(open) => !open && setEditAsset(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <Pencil className="w-4 h-4 text-blue-600" />
+              Edit Serial & Current Site
+            </DialogTitle>
+            {editAsset && (
+              <p className="text-xs text-slate-500">
+                Product: <b className="text-slate-800">{editAsset.product_name || editAsset.product}</b>
+              </p>
+            )}
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs font-semibold text-slate-700">Serial Number</Label>
+              <Input
+                value={editForm.serial_number}
+                onChange={(e) => setEditForm({ ...editForm, serial_number: e.target.value })}
+                placeholder="e.g. UTL-00021"
+                className="mt-1 text-xs font-mono"
+              />
+            </div>
+
+            <div>
+              <Label className="text-xs font-semibold text-slate-700">Current Site / Location</Label>
+              <Input
+                value={editForm.site_location}
+                onChange={(e) => setEditForm({ ...editForm, site_location: e.target.value })}
+                placeholder="e.g. Central Warehouse or Client Site Address"
+                className="mt-1 text-xs"
+              />
+            </div>
+
+            <div>
+              <Label className="text-xs font-semibold text-slate-700">Remarks / Notes</Label>
+              <Textarea
+                value={editForm.remarks}
+                onChange={(e) => setEditForm({ ...editForm, remarks: e.target.value })}
+                placeholder="Optional movement or condition notes..."
+                rows={3}
+                className="mt-1 text-xs"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setEditAsset(null)} disabled={savingEdit}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSaveEdit} disabled={savingEdit} className="bg-blue-600 hover:bg-blue-700">
+              {savingEdit ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
         </DialogContent>
