@@ -440,15 +440,17 @@ export default function DocumentTemplates() {
                           <p className="text-xs text-slate-600 leading-relaxed max-w-xl">{doc.desc}</p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <Button
-                            disabled={anyGenerating || loadingDetail}
-                            onClick={() => handleGeneratePdf(doc.type, doc.title, "pdf")}
-                            className="bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs px-3 py-2"
-                            data-testid={`generate-${doc.type}-pdf-btn`}
-                          >
-                            <Download className="w-3.5 h-3.5 mr-1.5" />
-                            {isGenPdf ? "Generating..." : "PDF"}
-                          </Button>
+                          {doc.type !== "annexure" && (
+                            <Button
+                              disabled={anyGenerating || loadingDetail}
+                              onClick={() => handleGeneratePdf(doc.type, doc.title, "pdf")}
+                              className="bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs px-3 py-2"
+                              data-testid={`generate-${doc.type}-pdf-btn`}
+                            >
+                              <Download className="w-3.5 h-3.5 mr-1.5" />
+                              {isGenPdf ? "Generating..." : "PDF"}
+                            </Button>
+                          )}
                           {doc.type !== "sldr" && (
                             <Button
                               disabled={anyGenerating || loadingDetail}

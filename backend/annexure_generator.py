@@ -151,17 +151,21 @@ def resolve_annexure_values(client: dict, company: dict) -> Dict[str, str]:
                 if brand or model or cap:
                     inverter_list.append({"brand": brand, "model": model, "capacity": cap, "quantity": qty})
 
-    manual_inverter_kw = _get("inverter_capacity", "inverter_kw")
-    if len(inverter_list) > 1:
-        inverter_in_kw_kw = f"{manual_inverter_kw} KW" if (manual_inverter_kw and "kw" not in manual_inverter_kw.lower()) else (manual_inverter_kw or ", ".join(f"{inv['capacity']} × {inv['quantity']}" for inv in inverter_list))
-        inverter_brand = ", ".join(f"{inv['capacity']} × {inv['quantity']} ({inv['brand']} {inv['model']})".strip() for inv in inverter_list)
-    elif len(inverter_list) == 1:
-        inv = inverter_list[0]
-        inverter_in_kw_kw = f"{inv['capacity']} KW" if (inv['capacity'] and "kw" not in inv['capacity'].lower()) else (inv['capacity'] or manual_inverter_kw)
-        inverter_brand = f"{inv['brand']} {inv['model']}".strip()
-    else:
-        inverter_in_kw_kw = f"{manual_inverter_kw} KW" if manual_inverter_kw and "kw" not in manual_inverter_kw.lower() else (manual_inverter_kw or "")
-        inverter_brand = _get("inverter_brand", "inverter_make")
+    manual_inverter_kw = _get("inverter_capacity", "inverter_kw", "system_kw")
+    inverter_in_kw_kw = f"{manual_inverter_kw} KW" if (manual_inverter_kw and "kw" not in manual_inverter_kw.lower()) else (manual_inverter_kw or "")
+
+    unique_brands = []
+    if inverter_list:
+        for inv in inverter_list:
+            b = _s(inv.get("brand") or inv.get("make") or "").strip()
+            if b and b not in unique_brands:
+                unique_brands.append(b)
+    if not unique_brands:
+        fb = _get("inverter_brand", "inverter_make")
+        if fb:
+            unique_brands.append(fb)
+
+    inverter_brand = ", ".join(unique_brands)
 
     installation_date = _resolve_installation_date(client)
 
