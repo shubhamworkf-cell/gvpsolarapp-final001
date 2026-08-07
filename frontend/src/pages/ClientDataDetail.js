@@ -36,7 +36,7 @@ import {
   ArrowLeft, Phone, MessageCircle, Download, MapPin, User, FileImage, Image as ImageIcon,
   Plus, Save, Eye, EyeOff, ExternalLink, Calendar, Wrench, AlertTriangle, Paperclip,
   Clock, CheckCircle2, ChevronRight, Activity, Megaphone, ClipboardList,
-  Truck, FileText, Gauge, Package, ScrollText, Check, Trash2, Edit3, Wifi, WifiOff, Settings, AlertCircle
+  Truck, FileText, Gauge, Package, ScrollText, Check, Trash2, Edit3, Wifi, WifiOff, Settings, AlertCircle, XCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
@@ -440,7 +440,7 @@ export default function ClientDataDetail() {
           {loading ? <TabSkeleton /> : <WorkflowDetailsSection title="Verification" icon={CheckCircle2} records={verifications} onZoom={setZoom} />}
         </div>
         <div style={{ display: tab === "handover" ? "block" : "none" }}>
-          {loading ? <TabSkeleton /> : <WorkflowDetailsSection title="Handover" icon={CheckCircle2} records={handovers} onZoom={setZoom} />}
+          {loading ? <TabSkeleton /> : <HandoverDetailsSection client={c} records={handovers} assets={assets} onZoom={setZoom} />}
         </div>
         <div style={{ display: tab === "assets" ? "block" : "none" }}>
           {loading ? <TabSkeleton /> : <AssetsSection assets={assets} onZoom={setZoom} />}
@@ -1788,6 +1788,354 @@ function WorkflowDetailsSection({ title, icon: Icon, records = [], onZoom }) {
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function HandoverDetailsSection({ client = {}, records = [], assets = [], onZoom }) {
+  const [selectedIdx, setSelectedIdx] = useState(0);
+
+  const handoverRecords = records && records.length > 0 ? records : [];
+
+  if (handoverRecords.length === 0) {
+    return (
+      <Card className="border-dashed border-slate-300 bg-slate-50/50">
+        <CardContent className="p-12 text-center text-sm text-slate-500">
+          <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+          No handover reports submitted for this client yet.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const s = handoverRecords[selectedIdx] || {};
+  const details = s.details || {};
+  const checklist = details.checklist || [];
+
+  const customerName = client.full_name || details.customer_name || details.owner_name || "";
+  const handoverDateRaw = details.handover_date || details.completed_date || s.created_at;
+  const handoverDateFormatted = handoverDateRaw ? dayjs(handoverDateRaw).format("DD MMM YYYY HH:mm") : "";
+  const engineerName = details.completed_by || s.employee_name || details.assigned_to_name || details.engineer_name || "";
+  const remarks = details.notes || details.remarks || s.notes || s.remarks || "";
+
+  // Checkboxes & Yes/No fields
+  const checkboxList = [];
+  if (Array.isArray(checklist)) {
+    checklist.forEach((item) => {
+      if (item && item.label) {
+        checkboxList.push({
+          label: item.label,
+          checked: !!item.checked,
+        });
+      }
+    });
+  }
+
+  const knownBoolKeys = {
+    declaration_confirmed: "Owner Declaration Confirmed",
+    installer_confirmed: "Installer Confirmed",
+    physical_inspection: "Physical Inspection Completed",
+    system_verified: "System Verification Completed",
+    docs_signed: "Documents Signed & Handed Over",
+  };
+
+  Object.entries(details).forEach(([key, val]) => {
+    if (typeof val === "boolean") {
+      const label = knownBoolKeys[key] || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      if (!checkboxList.some((c) => c.label.toLowerCase() === label.toLowerCase())) {
+        checkboxList.push({ label, checked: val });
+      }
+    }
+  });
+
+  // Entered Text Fields
+  const internalKeys = new Set([
+    "id", "company_id", "client_id", "task_id", "project_id", "created_at", "updated_at",
+    "notes", "remarks", "photos", "attachments", "documents", "checklist", "completed_by",
+    "completed_date", "handover_date", "assigned_by", "task_status", "gps", "manual_location",
+    "customer_name", "owner_name", "declaration_confirmed", "installer_confirmed",
+    "physical_inspection", "system_verified", "docs_signed", "handover_photo_id", "photo_id",
+  ]);
+
+  const textFields = [];
+  if (details.owner_name && details.owner_name !== customerName) {
+    textFields.push({ label: "Owner Name", value: details.owner_name });
+  }
+
+  Object.entries(details).forEach(([key, val]) => {
+    if (!internalKeys.has(key) && typeof val !== "object" && typeof val !== "boolean" && val != null && String(val).trim() !== "") {
+      const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      textFields.push({ label, value: String(val) });
+    }
+  });
+
+  // Uploaded Assets (Photos, PDFs, Documents, Signatures, Attachments)
+  const imageAssets = [];
+  const docAssets = [];
+  const seenFileIds = new Set();
+
+  const addFileAsset = (fileId, label, filename, date) => {
+    if (!fileId || seenFileIds.has(fileId)) return;
+    seenFileIds.add(fileId);
+
+    const lname = (label || "").toLowerCase();
+    const fname = (filename || label || "").toLowerCase();
+    const isDoc = fname.endsWith(".pdf") || fname.endsWith(".doc") || fname.endsWith(".docx") ||
+                  fname.endsWith(".xls") || fname.endsWith(".xlsx") || fname.endsWith(".txt") ||
+                  fname.endsWith(".csv") || lname.includes("pdf") || lname.includes("document");
+
+    const assetObj = {
+      fileId,
+      label: label || "Handover Attachment",
+      filename: filename || label || `handover_file_${fileId.slice(0, 6)}`,
+      uploadDate: date ? dayjs(date).format("DD MMM YYYY HH:mm") : handoverDateFormatted,
+    };
+
+    if (isDoc) {
+      docAssets.push(assetObj);
+    } else {
+      imageAssets.push(assetObj);
+    }
+  };
+
+  const attachmentsDict = details.photos || details.attachments || {};
+  Object.entries(attachmentsDict).forEach(([lbl, val]) => {
+    const fid = typeof val === "string" ? val : (val?.file_id || val?.id || "");
+    const fname = typeof val === "object" ? val?.filename : "";
+    addFileAsset(fid, lbl, fname, s.created_at);
+  });
+
+  if (details.handover_photo_id) addFileAsset(details.handover_photo_id, "Handover Photo", "", s.created_at);
+  if (details.photo_id) addFileAsset(details.photo_id, "Handover Photo", "", s.created_at);
+  if (details.signature_id) addFileAsset(details.signature_id, "Handover Signature", "", s.created_at);
+
+  if (Array.isArray(checklist)) {
+    checklist.forEach((item) => {
+      if (item && item.file_id) {
+        addFileAsset(item.file_id, item.label || "Checklist Attachment", item.filename, s.created_at);
+      }
+    });
+  }
+
+  if (Array.isArray(assets)) {
+    assets.forEach((ast) => {
+      const src = (ast.source || "").toLowerCase();
+      const lbl = (ast.label || "").toLowerCase();
+      if (src === "handover" || lbl.includes("handover")) {
+        const fid = ast.file_id || ast.id;
+        addFileAsset(fid, ast.label || "Handover Asset", ast.filename, ast.created_at);
+      }
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      {handoverRecords.length > 1 && (
+        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Select Submission:</Label>
+          <Select value={String(selectedIdx)} onValueChange={(val) => setSelectedIdx(Number(val))}>
+            <SelectTrigger className="w-[280px] bg-white">
+              <SelectValue placeholder="Choose report" />
+            </SelectTrigger>
+            <SelectContent>
+              {handoverRecords.map((item, idx) => (
+                <SelectItem key={item.id || idx} value={String(idx)}>
+                  {dayjs(item.details?.handover_date || item.details?.completed_date || item.created_at).format("DD MMM YYYY HH:mm")} · By {item.details?.completed_by || "Staff"}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      <Card className="border-slate-200">
+        <CardContent className="p-5 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="text-sm font-semibold text-slate-900 flex items-center gap-2" style={{ fontFamily: "Outfit" }}>
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Handover Report Summary
+            </div>
+            <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs px-2.5 py-0.5">
+              {details.task_status || "Handover Complete"}
+            </Badge>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <InfoRow label="Customer Name" value={customerName || <span className="text-slate-400">—</span>} />
+            <InfoRow label="Handover Date" value={handoverDateFormatted || <span className="text-slate-400">—</span>} />
+            <InfoRow label="Engineer Name" value={engineerName || <span className="text-slate-400">—</span>} />
+          </div>
+
+          <div className="pt-2 border-t border-slate-100">
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Remarks / Notes</div>
+            <div className="text-sm text-slate-700 bg-slate-50 rounded-xl p-3 border border-slate-100 min-h-[50px] whitespace-pre-wrap">
+              {remarks ? remarks : <span className="text-slate-400 italic">No remarks entered.</span>}
+            </div>
+          </div>
+
+          {textFields.length > 0 && (
+            <div className="pt-3 border-t border-slate-100 space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Entered Details</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {textFields.map((tf, i) => (
+                  <div key={i} className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
+                    <div className="text-[10px] text-slate-400 font-medium uppercase">{tf.label}</div>
+                    <div className="text-xs text-slate-800 font-medium mt-0.5">{tf.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200">
+        <CardContent className="p-5 space-y-3">
+          <div className="text-sm font-semibold text-slate-900 flex items-center justify-between" style={{ fontFamily: "Outfit" }}>
+            <span>Checkboxes &amp; Confirmations</span>
+            <Badge variant="outline" className="text-[10px] bg-slate-50">{checkboxList.length} items</Badge>
+          </div>
+
+          {checkboxList.length === 0 ? (
+            <div className="text-xs text-slate-400 italic py-4 text-center">No checkboxes or confirmations saved.</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {checkboxList.map((chk, idx) => (
+                <div
+                  key={idx}
+                  className={`flex items-center justify-between border rounded-xl px-3.5 py-2.5 text-xs ${
+                    chk.checked
+                      ? "border-emerald-200 bg-emerald-50/50 text-emerald-900"
+                      : "border-slate-200 bg-slate-50/50 text-slate-600"
+                  }`}
+                >
+                  <span className="font-medium pr-2">{chk.label}</span>
+                  {chk.checked ? (
+                    <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded text-[11px] shrink-0">
+                      <Check className="w-3.5 h-3.5" /> ☑ Checked
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 font-semibold text-slate-500 bg-slate-200/80 px-2 py-0.5 rounded text-[11px] shrink-0">
+                      ☐ Unchecked
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {imageAssets.length > 0 && (
+        <Card className="border-slate-200">
+          <CardContent className="p-5 space-y-3">
+            <div className="text-sm font-semibold text-slate-900 flex items-center gap-2" style={{ fontFamily: "Outfit" }}>
+              <ImageIcon className="w-4 h-4 text-blue-600" /> Uploaded Photos &amp; Images ({imageAssets.length})
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {imageAssets.map((img) => (
+                <div key={img.fileId} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50 flex flex-col justify-between group">
+                  <button
+                    type="button"
+                    onClick={() => onZoom({ file_id: img.fileId, label: img.label })}
+                    className="relative aspect-video w-full overflow-hidden bg-slate-100 hover:opacity-95 transition flex items-center justify-center"
+                  >
+                    <img
+                      src={fileUrl(img.fileId)}
+                      alt={img.label}
+                      loading="lazy"
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        e.target.style.display = "none";
+                      }}
+                    />
+                    <div className="absolute top-2 left-2">
+                      <Badge className="bg-black/60 text-white border-none text-[9px] truncate max-w-[150px]">{img.label}</Badge>
+                    </div>
+                  </button>
+                  <div className="p-2.5 bg-white flex items-center justify-between border-t border-slate-100">
+                    <span className="text-xs text-slate-700 font-medium truncate max-w-[140px]">{img.filename}</span>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 text-slate-600 hover:text-blue-600"
+                        title="View Photo"
+                        onClick={() => onZoom({ file_id: img.fileId, label: img.label })}
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </Button>
+                      <a
+                        href={fileUrl(img.fileId)}
+                        download={img.filename || "handover_photo"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-1.5 text-slate-600 hover:text-emerald-600 rounded-md hover:bg-slate-100 transition"
+                        title="Download Photo"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {docAssets.length > 0 && (
+        <Card className="border-slate-200">
+          <CardContent className="p-5 space-y-3">
+            <div className="text-sm font-semibold text-slate-900 flex items-center gap-2" style={{ fontFamily: "Outfit" }}>
+              <FileText className="w-4 h-4 text-rose-600" /> Uploaded Documents &amp; PDFs ({docAssets.length})
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {docAssets.map((doc) => (
+                <div key={doc.fileId} className="border border-slate-200 rounded-xl p-3.5 bg-slate-50/50 flex flex-col justify-between space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-rose-50 border border-rose-200 flex items-center justify-center shrink-0 text-rose-600">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold text-slate-900 truncate">{doc.filename}</div>
+                      <div className="text-[10px] text-slate-400 font-medium mt-0.5 truncate">{doc.label}</div>
+                      {doc.uploadDate && <div className="text-[9px] text-slate-400 font-mono mt-0.5">{doc.uploadDate}</div>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-200/60">
+                    <a
+                      href={fileUrl(doc.fileId)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg py-1.5 transition"
+                    >
+                      <Eye className="w-3.5 h-3.5 text-slate-500" /> View
+                    </a>
+                    <a
+                      href={fileUrl(doc.fileId)}
+                      download={doc.filename}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-blue-50 border border-blue-200 hover:bg-blue-100 text-blue-700 rounded-lg py-1.5 transition"
+                    >
+                      <Download className="w-3.5 h-3.5 text-blue-600" /> Download
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {imageAssets.length === 0 && docAssets.length === 0 && (
+        <Card className="border-slate-200">
+          <CardContent className="p-6 text-center text-xs text-slate-400 italic">
+            No uploaded images or documents for this handover submission.
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

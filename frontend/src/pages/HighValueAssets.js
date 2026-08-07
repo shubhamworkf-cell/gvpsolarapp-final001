@@ -19,27 +19,43 @@ import {
   Eye,
   MapPin,
   User,
-  CheckCircle2
+  CheckCircle2,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  RotateCcw,
+  Clock,
+  Activity,
+  Check,
+  Building,
+  SlidersHorizontal
 } from "lucide-react";
+import dayjs from "dayjs";
 
 export default function HighValueAssets() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  // Assets list
+  // Assets list (one item per serial number)
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Modals state
-  const [productPopupItem, setProductPopupItem] = useState(null);
-  const [timelineAsset, setTimelineAsset] = useState(null);
-  const [timelineEvents, setTimelineEvents] = useState([]);
-  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  // View Popup Modal (Contains Section 1 Dashboard, Section 2 Editable Info, Section 3 Timeline)
+  const [viewAsset, setViewAsset] = useState(null);
+  const [viewForm, setViewForm] = useState({ serial_number: "", site_location: "", remarks: "" });
+  const [savingViewEdit, setSavingViewEdit] = useState(false);
+  const [viewTimeline, setViewTimeline] = useState([]);
+  const [loadingViewTimeline, setLoadingViewTimeline] = useState(false);
 
+  // Edit Serial Modal
   const [editAsset, setEditAsset] = useState(null);
   const [editForm, setEditForm] = useState({ serial_number: "", site_location: "", remarks: "" });
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Quick Serial Movement Timeline Modal
+  const [timelineAsset, setTimelineAsset] = useState(null);
+  const [timelineEvents, setTimelineEvents] = useState([]);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
 
   // Debounce search input
   useEffect(() => {
@@ -49,12 +65,23 @@ export default function HighValueAssets() {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Fetch all serial tracking assets
+  // Fetch all serial tracking assets (1 entry per serial number)
   const fetchAssets = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get("/assets", { params: { search: debouncedSearch } });
-      setAssets(Array.isArray(data) ? data : []);
+      const rawAssets = Array.isArray(data) ? data : [];
+      
+      // Ensure every asset has valid serial representation
+      const validSerials = rawAssets.map((a) => ({
+        ...a,
+        serial_number: a.serial_number || "NO-SERIAL",
+        status: a.status || "Available",
+        site_location: a.site_location || (a.client_name ? `${a.client_name} Site` : "Central Warehouse"),
+        client_name: a.client_name || "Unallocated",
+      }));
+
+      setAssets(validSerials);
     } catch (e) {
       toast.error(formatApiError(e));
     } finally {
@@ -66,115 +93,168 @@ export default function HighValueAssets() {
     fetchAssets();
   }, [fetchAssets]);
 
-  // Filtered Assets list
+  // Filter Assets list by status & search
   const filteredAssets = useMemo(() => {
     let list = [...assets];
+
     if (statusFilter !== "all") {
+      list = list.filter((a) => {
+        const st = (a.status || "Available").toLowerCase();
+        const sf = statusFilter.toLowerCase();
+        if (sf === "dispatched" || sf === "installed") {
+          return st === "dispatched" || st === "installed";
+        }
+        return st === sf;
+      });
+    }
+
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
       list = list.filter(
-        (a) => (a.status || "Available").toLowerCase() === statusFilter.toLowerCase()
+        (a) =>
+          (a.serial_number || "").toLowerCase().includes(q) ||
+          (a.product_name || a.product || "").toLowerCase().includes(q) ||
+          (a.client_name || "").toLowerCase().includes(q) ||
+          (a.site_location || "").toLowerCase().includes(q) ||
+          (a.size_model || a.size || "").toLowerCase().includes(q)
       );
     }
+
     return list;
-  }, [assets, statusFilter]);
+  }, [assets, statusFilter, debouncedSearch]);
 
-  // Group assets by product for Product Popup calculation
-  const productSummaryMap = useMemo(() => {
-    const map = {};
-    assets.forEach((a) => {
-      const name = a.product_name || a.product || "Unknown Product";
-      if (!map[name]) {
-        map[name] = {
-          name,
-          spec: a.size_model || a.size || "—",
-          category: a.category || "Solar Equipment",
-          total: 0,
-          available: 0,
-          installed: 0,
-          items: []
-        };
-      }
-      map[name].total += 1;
-      if ((a.status || "Available") === "Available") map[name].available += 1;
-      if ((a.status || "") === "Installed") map[name].installed += 1;
-      map[name].items.push(a);
-    });
-    return map;
-  }, [assets]);
-
-  // Handle Copy Serial
+  // Copy Serial Helper
   const handleCopySerial = (sn) => {
     if (!sn) return;
     navigator.clipboard.writeText(sn);
     toast.success(`Copied serial number: ${sn}`);
   };
 
-  // Open Serial Timeline Popup
+  // ── Open View Popup Modal ──
+  const handleOpenView = async (asset) => {
+    setViewAsset(asset);
+    setViewForm({
+      serial_number: asset.serial_number || "",
+      site_location: asset.site_location || asset.site || "",
+      remarks: asset.remarks || asset.asset_remarks || "",
+    });
+    setLoadingViewTimeline(true);
+    setViewTimeline([]);
+
+    try {
+      // Fetch full serial timeline from backend
+      const res = await api.get(`/assets/${asset.id}/timeline`);
+      const timelineData = res.data;
+      if (timelineData && Array.isArray(timelineData.events) && timelineData.events.length > 0) {
+        setViewTimeline(timelineData.events);
+      } else {
+        // Fallback: construct from asset metadata
+        const events = [];
+        events.push({
+          type: "Inward",
+          title: "Inward Entry Recorded",
+          date: asset.purchase_date || asset.inward_date || (asset.created_at ? asset.created_at.slice(0, 10) : "—"),
+          site: "Central Warehouse",
+          client: asset.vendor || "Supplier",
+          detail: `Challan / Bill: ${asset.challan_number || "N/A"}`,
+        });
+
+        if (asset.client_name && asset.client_name !== "Unallocated") {
+          events.push({
+            type: asset.status === "Installed" ? "Installed" : "Outward",
+            title: "Outward Dispatched to Client",
+            date: asset.installation_date || asset.outward_date || "—",
+            site: asset.site_location || `${asset.client_name} Site`,
+            client: asset.client_name,
+            detail: `Serial #${asset.serial_number} allocated to client`,
+          });
+        }
+
+        if (asset.status === "Returned") {
+          events.push({
+            type: "Returned",
+            title: "Material Returned to Warehouse",
+            date: asset.last_movement_date || asset.updated_at || "—",
+            site: "Central Warehouse",
+            client: asset.client_name || "Client",
+            detail: "Returned to stock",
+          });
+        }
+
+        setViewTimeline(events);
+      }
+    } catch (err) {
+      console.error("Error fetching serial timeline:", err);
+    } finally {
+      setLoadingViewTimeline(false);
+    }
+  };
+
+  // Save changes inside View Popup
+  const handleSaveViewEdit = async () => {
+    if (!viewAsset) return;
+    setSavingViewEdit(true);
+    try {
+      await api.patch(`/assets/${viewAsset.id}`, viewForm);
+      toast.success("Serial details updated successfully");
+      setViewAsset((prev) => (prev ? { ...prev, ...viewForm } : null));
+      fetchAssets();
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setSavingViewEdit(false);
+    }
+  };
+
+  // ── Open Quick History Timeline Modal ──
   const handleOpenTimeline = async (asset) => {
     setTimelineAsset(asset);
     setLoadingTimeline(true);
     setTimelineEvents([]);
+
     try {
-      const pName = asset.product_name || asset.product || "";
-      const { data } = await api.get("/inventory/history", { params: { product: pName } });
-      const rawRecords = Array.isArray(data.records) ? data.records : (Array.isArray(data) ? data : []);
-
-      // Filter timeline events matching asset's serial number or purchase/inward record
-      const sn = (asset.serial_number || "").toUpperCase();
-      const events = [];
-
-      // 1. Inward Event
-      events.push({
-        type: "Inward",
-        title: "Inward Entry Recorded",
-        date: asset.purchase_date || asset.inward_date || asset.created_at || "—",
-        site: "Central Warehouse",
-        client: asset.vendor || "Supplier",
-        detail: `Challan / Bill: ${asset.challan_number || "N/A"}`
-      });
-
-      // 2. Client Allocation / Installation Event
-      if (asset.client_name || asset.status === "Installed" || asset.status === "Dispatched") {
+      const res = await api.get(`/assets/${asset.id}/timeline`);
+      const timelineData = res.data;
+      if (timelineData && Array.isArray(timelineData.events) && timelineData.events.length > 0) {
+        setTimelineEvents(timelineData.events);
+      } else {
+        // Fallback
+        const events = [];
         events.push({
-          type: asset.status === "Installed" ? "Installed" : "Allocated",
-          title: asset.status === "Installed" ? "Installed at Client Site" : "Outward Dispatched to Client",
-          date: asset.installation_date || asset.last_movement_date || "—",
-          site: asset.site_location || asset.client_name || "Client Site",
-          client: asset.client_name || "Client",
-          detail: `Serial #${sn} allocated to project`
+          type: "Inward",
+          title: "Inward Entry Recorded",
+          date: asset.purchase_date || asset.inward_date || (asset.created_at ? asset.created_at.slice(0, 10) : "—"),
+          site: "Central Warehouse",
+          client: asset.vendor || "Supplier",
+          detail: `Challan / Bill: ${asset.challan_number || "N/A"}`,
         });
-      }
 
-      // 3. Check extra history records from ledger
-      rawRecords.forEach((rec) => {
-        const recType = (rec.type || rec.entry_type || "").toLowerCase();
-        if (recType.includes("transfer") || recType.includes("return")) {
+        if (asset.client_name && asset.client_name !== "Unallocated") {
           events.push({
-            type: recType.includes("return") ? "Returned" : "Transferred",
-            title: recType.includes("return") ? "Material Returned to Stock" : "Site-to-Site Transfer",
-            date: (rec.date || rec.created_at || "").slice(0, 10),
-            site: rec.site || rec.location || "Site Location",
-            client: rec.client_name || rec.source_name || "Client",
-            detail: rec.remarks || rec.reference_number || "Movement logged"
+            type: "Outward",
+            title: "Outward Dispatched to Client",
+            date: asset.installation_date || asset.outward_date || "—",
+            site: asset.site_location || `${asset.client_name} Site`,
+            client: asset.client_name,
+            detail: `Serial #${asset.serial_number} allocated`,
           });
         }
-      });
-
-      events.sort((a, b) => new Date(a.date) - new Date(b.date));
-      setTimelineEvents(events);
+        setTimelineEvents(events);
+      }
     } catch (e) {
-      toast.error("Failed to load serial movement timeline");
+      toast.error("Failed to load serial timeline");
     } finally {
       setLoadingTimeline(false);
     }
   };
 
-  // Open Edit Asset Modal
+  // ── Open Edit Modal ──
   const handleOpenEdit = (asset) => {
     setEditAsset(asset);
     setEditForm({
       serial_number: asset.serial_number || "",
       site_location: asset.site_location || asset.site || "",
-      remarks: asset.remarks || asset.asset_remarks || ""
+      remarks: asset.remarks || asset.asset_remarks || "",
     });
   };
 
@@ -194,47 +274,58 @@ export default function HighValueAssets() {
     }
   };
 
-  // Export Serial List to CSV
+  // Export Serial List CSV
   const handleExportCSV = () => {
     if (!filteredAssets || filteredAssets.length === 0) {
       toast.error("No serial tracking data to export");
       return;
     }
-    const headers = ["Serial Number", "Product Name", "Size / Spec", "Current Status", "Current Site", "Allocated Client", "Date"];
+    const headers = ["Serial Number", "Product Name", "Size / Spec", "Current Status", "Current Site", "Allocated Client", "Last Movement Date"];
     const rows = filteredAssets.map((a) => [
       `"${(a.serial_number || "").replace(/"/g, '""')}"`,
       `"${(a.product_name || a.product || "").replace(/"/g, '""')}"`,
-      `"${(a.size_model || "").replace(/"/g, '""')}"`,
+      `"${(a.size_model || a.size || "").replace(/"/g, '""')}"`,
       `"${(a.status || "Available").replace(/"/g, '""')}"`,
       `"${(a.site_location || "Warehouse").replace(/"/g, '""')}"`,
       `"${(a.client_name || "Unallocated").replace(/"/g, '""')}"`,
-      `"${(a.installation_date || a.purchase_date || "").replace(/"/g, '""')}"`
+      `"${(a.installation_date || a.purchase_date || a.last_movement_date || "").replace(/"/g, '""')}"`
     ]);
 
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Serial_Tracking_${statusFilter}.csv`);
+    link.setAttribute("download", `Serial_Tracking_${statusFilter}_${dayjs().format("YYYYMMDD")}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     toast.success(`Exported ${filteredAssets.length} serial records`);
   };
 
+  // Filter Count Calculations
+  const counts = useMemo(() => {
+    const avail = assets.filter((a) => (a.status || "Available").toLowerCase() === "available").length;
+    const disp = assets.filter((a) => {
+      const st = (a.status || "").toLowerCase();
+      return st === "dispatched" || st === "installed";
+    }).length;
+    const ret = assets.filter((a) => (a.status || "").toLowerCase() === "returned").length;
+    return { all: assets.length, available: avail, dispatched: disp, returned: ret };
+  }, [assets]);
+
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      {/* Top Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-xl font-semibold text-slate-900" style={{ fontFamily: "Outfit" }}>High Value Goods</h2>
+            <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: "Outfit" }}>High Value Goods</h2>
             <Badge className="bg-amber-100 text-amber-900 border-amber-300 font-semibold text-xs flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-amber-600" /> Serial Tracking Ledger
             </Badge>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Single source of truth for individual High Value serial numbers, sites, client allocations, and movement timelines.
+          <p className="text-xs text-slate-500 mt-1">
+            Pure serial number ledger. Each row represents a single tracked serial unit, site location, allocated client, and complete movement history.
           </p>
         </div>
 
@@ -249,41 +340,44 @@ export default function HighValueAssets() {
         </Button>
       </div>
 
-      {/* Filter Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+      {/* Filter & Search Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
         {/* Status Filter Pills */}
-        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none py-0.5">
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
           {[
-            { id: "all", label: "All Statuses", count: assets.length },
-            { id: "available", label: "Available", count: assets.filter(a => (a.status || "Available") === "Available").length },
-            { id: "installed", label: "Installed", count: assets.filter(a => a.status === "Installed").length },
-            { id: "dispatched", label: "Dispatched", count: assets.filter(a => a.status === "Dispatched").length },
-            { id: "returned", label: "Returned", count: assets.filter(a => a.status === "Returned").length },
-            { id: "scrapped", label: "Scrapped", count: assets.filter(a => a.status === "Scrapped").length }
-          ].map((sf) => (
-            <button
-              key={sf.id}
-              onClick={() => setStatusFilter(sf.id)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 ${
-                statusFilter === sf.id
-                  ? "bg-slate-900 text-white shadow-sm"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
-              }`}
-              data-testid={`status-filter-${sf.id}`}
-            >
-              <span>{sf.label}</span>
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${statusFilter === sf.id ? "bg-slate-800 text-slate-200" : "bg-slate-200 text-slate-700"}`}>
-                {sf.count}
-              </span>
-            </button>
-          ))}
+            { id: "all", label: "All Serials", count: counts.all, icon: SlidersHorizontal },
+            { id: "available", label: "Available", count: counts.available, icon: ArrowDownToLine },
+            { id: "dispatched", label: "Dispatched / Installed", count: counts.dispatched, icon: ArrowUpFromLine },
+            { id: "returned", label: "Returned", count: counts.returned, icon: RotateCcw }
+          ].map((sf) => {
+            const Ic = sf.icon;
+            const isActive = statusFilter === sf.id;
+            return (
+              <button
+                key={sf.id}
+                onClick={() => setStatusFilter(sf.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 ${
+                  isActive
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+                }`}
+                data-testid={`status-filter-${sf.id}`}
+              >
+                <Ic className={`w-3.5 h-3.5 ${isActive ? "text-amber-400" : "text-slate-500"}`} />
+                <span>{sf.label}</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${isActive ? "bg-slate-800 text-slate-200" : "bg-slate-200 text-slate-700"}`}>
+                  {sf.count}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Global Search Input */}
         <div className="relative w-full sm:w-80 shrink-0">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <Input
-            placeholder="Search Serial Number, Client, Site..."
+            placeholder="Search Serial, Product, Client, Site..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 bg-white text-xs h-9"
@@ -292,27 +386,27 @@ export default function HighValueAssets() {
         </div>
       </div>
 
-      {/* Main Serial Ledger Table */}
-      <Card className="border-slate-200 shadow-sm">
+      {/* MAIN SERIAL TRACKING LEDGER TABLE (ONE ROW PER SERIAL NUMBER) */}
+      <Card className="border-slate-200 shadow-sm overflow-hidden">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
+                  <th className="p-4 font-semibold">Product Name &amp; Spec</th>
                   <th className="p-4 font-semibold">Serial Number</th>
-                  <th className="p-4 font-semibold">Product Name & Spec</th>
-                  <th className="p-4 font-semibold">Current Status</th>
+                  <th className="p-4 font-semibold">Status</th>
                   <th className="p-4 font-semibold">Current Site</th>
                   <th className="p-4 font-semibold">Allocated Client</th>
-                  <th className="p-4 font-semibold">Last Movement / Date</th>
+                  <th className="p-4 font-semibold">Last Movement</th>
                   <th className="p-4 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-500 text-xs">
-                      Loading high-value serial tracking ledger...
+                    <td colSpan={7} className="p-12 text-center text-slate-500 text-xs">
+                      Loading serial tracking ledger...
                     </td>
                   </tr>
                 ) : filteredAssets.length === 0 ? (
@@ -325,15 +419,26 @@ export default function HighValueAssets() {
                 ) : (
                   filteredAssets.map((asset, idx) => {
                     const pName = asset.product_name || asset.product || "Unknown Product";
-                    const summary = productSummaryMap[pName];
+                    const spec = asset.size_model || asset.size || "—";
+                    const isInstalled = asset.status === "Installed" || asset.status === "Dispatched";
+                    const isReturned = asset.status === "Returned";
+                    const lastMoveDate = asset.last_movement_date || asset.installation_date || asset.purchase_date || (asset.created_at ? asset.created_at.slice(0, 10) : "—");
 
                     return (
                       <tr key={asset.id || idx} className="hover:bg-slate-50/80 transition-colors">
-                        {/* Serial Number + Copy */}
+                        {/* Product & Spec */}
+                        <td className="p-4">
+                          <div className="font-semibold text-slate-900 text-xs">{pName}</div>
+                          <div className="text-[11px] text-slate-500 font-mono mt-0.5">{spec}</div>
+                        </td>
+
+                        {/* Serial Number + 1-Click Copy */}
                         <td className="p-4 font-mono font-bold text-slate-900 text-xs">
                           <div className="flex items-center gap-1.5">
-                            <span>{asset.serial_number || "—"}</span>
-                            {asset.serial_number && (
+                            <span className="bg-slate-100 text-slate-900 px-2 py-1 rounded border border-slate-200">
+                              {asset.serial_number}
+                            </span>
+                            {asset.serial_number && asset.serial_number !== "NO-SERIAL" && (
                               <button
                                 type="button"
                                 onClick={() => handleCopySerial(asset.serial_number)}
@@ -346,76 +451,61 @@ export default function HighValueAssets() {
                           </div>
                         </td>
 
-                        {/* Product & Spec */}
-                        <td className="p-4">
-                          <button
-                            type="button"
-                            onClick={() => setProductPopupItem(summary || { name: pName, spec: asset.size_model || "—", items: [asset] })}
-                            className="font-semibold text-slate-900 hover:text-blue-600 text-left hover:underline block"
-                          >
-                            {pName}
-                          </button>
-                          <div className="text-[11px] text-slate-500 font-mono mt-0.5">
-                            {asset.size_model || asset.size || "—"}
-                          </div>
-                        </td>
-
-                        {/* Current Status */}
+                        {/* Status Badge */}
                         <td className="p-4">
                           <span
-                            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
-                              asset.status === "Installed"
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
+                              isInstalled
                                 ? "bg-blue-50 text-blue-700 border-blue-200"
-                                : asset.status === "Available"
-                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                : asset.status === "Dispatched"
-                                ? "bg-amber-50 text-amber-700 border-amber-200"
-                                : "bg-slate-100 text-slate-700 border-slate-200"
+                                : isReturned
+                                ? "bg-purple-50 text-purple-700 border-purple-200"
+                                : "bg-emerald-50 text-emerald-700 border-emerald-200"
                             }`}
                           >
+                            <span className={`w-1.5 h-1.5 rounded-full ${isInstalled ? "bg-blue-500" : isReturned ? "bg-purple-500" : "bg-emerald-500"}`} />
                             {asset.status || "Available"}
                           </span>
                         </td>
 
                         {/* Current Site */}
                         <td className="p-4 text-xs text-slate-700">
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1.5">
                             <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span>{asset.site_location || (asset.client_name ? `${asset.client_name} Site` : "Warehouse")}</span>
+                            <span className="truncate max-w-[160px]">{asset.site_location || "Warehouse"}</span>
                           </div>
                         </td>
 
                         {/* Allocated Client */}
                         <td className="p-4 text-xs font-medium text-slate-900">
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1.5">
                             <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span>{asset.client_name || "Unallocated"}</span>
+                            <span className="truncate max-w-[160px]">{asset.client_name || "Unallocated"}</span>
                           </div>
                         </td>
 
                         {/* Last Movement Date */}
-                        <td className="p-4 text-xs font-mono text-slate-600">
-                          {asset.installation_date || asset.purchase_date || (asset.created_at ? asset.created_at.slice(0, 10) : "—")}
+                        <td className="p-4 text-xs font-mono text-slate-600 whitespace-nowrap">
+                          {lastMoveDate}
                         </td>
 
-                        {/* Actions */}
-                        <td className="p-4 text-right">
+                        {/* Actions: View, Edit, History */}
+                        <td className="p-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             <Button
                               size="sm"
-                              variant="ghost"
-                              onClick={() => setProductPopupItem(summary || { name: pName, spec: asset.size_model || "—", items: [asset] })}
-                              className="h-7 px-2 text-xs text-slate-600 hover:text-blue-600 hover:bg-blue-50"
-                              title="View Product Popup"
+                              variant="outline"
+                              onClick={() => handleOpenView(asset)}
+                              className="h-7 px-2.5 text-xs border-blue-200 bg-blue-50/50 text-blue-700 hover:bg-blue-100"
+                              title="View Serial Details Popup"
                             >
-                              <Eye className="w-3.5 h-3.5 mr-1" /> Product
+                              <Eye className="w-3.5 h-3.5 mr-1 text-blue-600" /> View
                             </Button>
                             <Button
                               size="sm"
                               variant="outline"
                               onClick={() => handleOpenTimeline(asset)}
-                              className="h-7 px-2 text-xs border-amber-300 text-amber-800 hover:bg-amber-50"
-                              title="View Serial History Timeline"
+                              className="h-7 px-2.5 text-xs border-amber-300 text-amber-800 hover:bg-amber-50"
+                              title="View Full Serial History Timeline"
                             >
                               <History className="w-3.5 h-3.5 mr-1 text-amber-600" /> History
                             </Button>
@@ -423,10 +513,10 @@ export default function HighValueAssets() {
                               size="sm"
                               variant="outline"
                               onClick={() => handleOpenEdit(asset)}
-                              className="h-7 px-2 text-xs border-slate-300 text-slate-700 hover:bg-slate-50"
-                              title="Edit Serial & Site"
+                              className="h-7 px-2.5 text-xs border-slate-300 text-slate-700 hover:bg-slate-50"
+                              title="Edit Serial Number & Site"
                             >
-                              <Pencil className="w-3.5 h-3.5" />
+                              <Pencil className="w-3.5 h-3.5 mr-1 text-slate-500" /> Edit
                             </Button>
                           </div>
                         </td>
@@ -440,126 +530,234 @@ export default function HighValueAssets() {
         </CardContent>
       </Card>
 
-      {/* ONE PRODUCT POPUP MODAL */}
-      <Dialog open={!!productPopupItem} onOpenChange={(open) => !open && setProductPopupItem(null)}>
-        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
-          {productPopupItem && (
-            <div className="space-y-4">
-              {/* Header: Product Name, Spec, Current Balance, Category, High Value Badge */}
-              <div className="border-b border-slate-200 pb-4">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div>
-                    <h3 className="text-xl font-bold text-slate-900" style={{ fontFamily: "Outfit" }}>
-                      {productPopupItem.name}
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                      <span className="text-xs font-mono font-medium text-slate-600">
-                        Spec: {productPopupItem.spec}
-                      </span>
-                      <span className="text-slate-300">•</span>
-                      <Badge className="bg-blue-100 text-blue-800 border-blue-200 font-semibold text-xs">
-                        {productPopupItem.category || "Solar Equipment"}
-                      </Badge>
-                      <Badge className="bg-amber-100 text-amber-900 border-amber-300 font-semibold text-xs">
-                        High Value Goods
-                      </Badge>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 border border-slate-200 px-4 py-2 rounded-lg text-right">
-                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Current Balance</div>
-                    <div className="text-lg font-bold text-emerald-700 font-mono">
-                      {productPopupItem.available ?? productPopupItem.items?.length ?? 0} Nos
-                    </div>
-                  </div>
+      {/* VIEW POPUP MODAL (SECTION 1 DASHBOARD + SECTION 2 EDITABLE INFO + SECTION 3 TIMELINE) */}
+      <Dialog open={!!viewAsset} onOpenChange={(open) => !open && setViewAsset(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          {viewAsset && (
+            <div className="space-y-6 py-2">
+              <DialogHeader className="border-b border-slate-100 pb-3">
+                <div className="flex items-center justify-between">
+                  <DialogTitle className="text-xl font-bold text-slate-900 flex items-center gap-2" style={{ fontFamily: "Outfit" }}>
+                    <ShieldCheck className="w-5 h-5 text-amber-600" />
+                    Serial Unit Details
+                  </DialogTitle>
+                  <Badge className="bg-slate-100 text-slate-800 font-mono text-xs border-slate-200">
+                    Serial #{viewAsset.serial_number}
+                  </Badge>
                 </div>
-              </div>
+              </DialogHeader>
 
-              {/* Serial Number Ledger Table */}
+              {/* SECTION 1: SMALL DASHBOARD (4-5 SMALL CARDS) */}
               <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
-                  Serial Number Ledger ({productPopupItem.items?.length || 0} tracked serials)
-                </h4>
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2.5">
+                  Section 1 — Serial Dashboard Overview
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {/* Card 1: Current Status */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <Activity className="w-3 h-3 text-slate-400" /> Current Status
+                    </div>
+                    <div>
+                      <Badge className={`text-xs ${
+                        viewAsset.status === "Installed" || viewAsset.status === "Dispatched"
+                          ? "bg-blue-100 text-blue-800 border-blue-200"
+                          : viewAsset.status === "Returned"
+                          ? "bg-purple-100 text-purple-800 border-purple-200"
+                          : "bg-emerald-100 text-emerald-800 border-emerald-200"
+                      }`}>
+                        {viewAsset.status || "Available"}
+                      </Badge>
+                    </div>
+                  </div>
 
-                <div className="border border-slate-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-xs text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200">
-                        <th className="p-3 font-semibold">Serial Number</th>
-                        <th className="p-3 font-semibold">Current Status</th>
-                        <th className="p-3 font-semibold">Current Site</th>
-                        <th className="p-3 font-semibold">Allocated Client</th>
-                        <th className="p-3 font-semibold">Last Transaction</th>
-                        <th className="p-3 font-semibold text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {(!productPopupItem.items || productPopupItem.items.length === 0) ? (
-                        <tr>
-                          <td colSpan={6} className="p-6 text-center text-slate-400 italic">
-                            No serial number entries registered for this product.
-                          </td>
-                        </tr>
-                      ) : (
-                        productPopupItem.items.map((sub, i) => (
-                          <tr key={sub.id || i} className="hover:bg-slate-50/50">
-                            <td className="p-3 font-mono font-bold text-slate-900">
-                              <div className="flex items-center gap-1.5">
-                                <span>{sub.serial_number || "—"}</span>
-                                {sub.serial_number && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleCopySerial(sub.serial_number)}
-                                    className="text-slate-400 hover:text-blue-600 p-0.5 rounded"
-                                    title="Copy Serial Number"
-                                  >
-                                    <Copy className="w-3 h-3" />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                            <td className="p-3">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
-                                sub.status === "Installed" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                                sub.status === "Available" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                                "bg-slate-100 text-slate-700 border-slate-200"
-                              }`}>
-                                {sub.status || "Available"}
-                              </span>
-                            </td>
-                            <td className="p-3 text-slate-700">{sub.site_location || "Warehouse"}</td>
-                            <td className="p-3 font-medium text-slate-900">{sub.client_name || "Unallocated"}</td>
-                            <td className="p-3 font-mono text-slate-600">{sub.installation_date || sub.purchase_date || "—"}</td>
-                            <td className="p-3 text-right">
-                              <div className="flex items-center justify-end gap-1">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleOpenTimeline(sub)}
-                                  className="h-6 px-2 text-[11px] border-amber-300 text-amber-800 hover:bg-amber-50"
-                                >
-                                  History
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleOpenEdit(sub)}
-                                  className="h-6 px-2 text-[11px] border-slate-300 text-slate-700 hover:bg-slate-50"
-                                >
-                                  Edit
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                  {/* Card 2: Current Site */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-slate-400" /> Current Site
+                    </div>
+                    <div className="text-xs font-bold text-slate-900 truncate">
+                      {viewAsset.site_location || "Central Warehouse"}
+                    </div>
+                  </div>
+
+                  {/* Card 3: Allocated Client */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <User className="w-3 h-3 text-slate-400" /> Allocated Client
+                    </div>
+                    <div className="text-xs font-bold text-slate-900 truncate">
+                      {viewAsset.client_name || "Unallocated"}
+                    </div>
+                  </div>
+
+                  {/* Card 4: Last Movement Date */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-slate-400" /> Last Movement
+                    </div>
+                    <div className="text-xs font-bold font-mono text-slate-900">
+                      {viewAsset.last_movement_date || viewAsset.installation_date || viewAsset.purchase_date || (viewAsset.created_at ? viewAsset.created_at.slice(0, 10) : "—")}
+                    </div>
+                  </div>
+
+                  {/* Card 5: Total Movements */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <History className="w-3 h-3 text-slate-400" /> Total Movements
+                    </div>
+                    <div className="text-sm font-extrabold font-mono text-blue-700">
+                      {viewTimeline.length || 1} Movements
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <DialogFooter>
-                <Button variant="outline" size="sm" onClick={() => setProductPopupItem(null)}>
+              {/* SECTION 2: EDITABLE INFORMATION */}
+              <div className="border-t border-slate-200 pt-4">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
+                  Section 2 — Editable Serial Information
+                </div>
+
+                <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-200 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs font-semibold text-slate-600">Product Name</Label>
+                      <Input
+                        value={viewAsset.product_name || viewAsset.product || ""}
+                        disabled
+                        className="mt-1 text-xs bg-slate-100 text-slate-700 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs font-semibold text-slate-600">Specification / Size</Label>
+                      <Input
+                        value={viewAsset.size_model || viewAsset.size || ""}
+                        disabled
+                        className="mt-1 text-xs bg-slate-100 text-slate-700 cursor-not-allowed"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs font-semibold text-slate-700">Serial Number *</Label>
+                      <Input
+                        value={viewForm.serial_number}
+                        onChange={(e) => setViewForm({ ...viewForm, serial_number: e.target.value })}
+                        placeholder="e.g. UTL-100-00021"
+                        className="mt-1 text-xs font-mono bg-white"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs font-semibold text-slate-700">Current Site / Location *</Label>
+                      <Input
+                        value={viewForm.site_location}
+                        onChange={(e) => setViewForm({ ...viewForm, site_location: e.target.value })}
+                        placeholder="e.g. ABC Factory or Central Warehouse"
+                        className="mt-1 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label className="text-xs font-semibold text-slate-700">Remarks / Condition Notes</Label>
+                    <Textarea
+                      value={viewForm.remarks}
+                      onChange={(e) => setViewForm({ ...viewForm, remarks: e.target.value })}
+                      placeholder="Enter optional serial notes or remarks..."
+                      rows={2}
+                      className="mt-1 text-xs bg-white"
+                    />
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <Button
+                      size="sm"
+                      onClick={handleSaveViewEdit}
+                      disabled={savingViewEdit}
+                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-8"
+                    >
+                      <Check className="w-3.5 h-3.5 mr-1" />
+                      {savingViewEdit ? "Saving..." : "Save Editable Information"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 3: MOVEMENT TIMELINE (EVERY MOVEMENT IN CHRONOLOGICAL ORDER) */}
+              <div className="border-t border-slate-200 pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    Section 3 — Complete Serial Movement Timeline
+                  </div>
+                  <Badge variant="outline" className="text-[10px] bg-slate-50">
+                    {viewTimeline.length} Events Logged
+                  </Badge>
+                </div>
+
+                {loadingViewTimeline ? (
+                  <div className="p-8 text-center text-xs text-slate-500">Loading complete serial timeline...</div>
+                ) : viewTimeline.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-slate-400 italic bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                    No movement events logged for this serial number.
+                  </div>
+                ) : (
+                  <div className="relative pl-6 space-y-4 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
+                    {viewTimeline.map((ev, idx) => (
+                      <div key={idx} className="relative flex items-start gap-4">
+                        <div className={`absolute -left-6 top-1 w-5 h-5 rounded-full border-2 bg-white flex items-center justify-center ${
+                          ev.type === "Inward" ? "border-emerald-500 text-emerald-600" :
+                          ev.type === "Returned" ? "border-purple-500 text-purple-600" :
+                          "border-blue-500 text-blue-600"
+                        }`}>
+                          {ev.type === "Inward" ? <ArrowDownToLine className="w-3 h-3" /> :
+                           ev.type === "Returned" ? <RotateCcw className="w-3 h-3" /> :
+                           <ArrowUpFromLine className="w-3 h-3" />}
+                        </div>
+
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 w-full space-y-1.5">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                              <span>{ev.title}</span>
+                              <Badge className={`text-[10px] px-1.5 py-0 ${
+                                ev.type === "Inward" ? "bg-emerald-100 text-emerald-800" :
+                                ev.type === "Returned" ? "bg-purple-100 text-purple-800" :
+                                "bg-blue-100 text-blue-800"
+                              }`}>
+                                {ev.type}
+                              </Badge>
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
+                              {ev.date}
+                            </span>
+                          </div>
+
+                          <div className="text-xs text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                            <span className="flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-slate-400" /> {ev.site}
+                            </span>
+                            {ev.client && (
+                              <span className="flex items-center gap-1">
+                                <User className="w-3 h-3 text-slate-400" /> {ev.client}
+                              </span>
+                            )}
+                          </div>
+
+                          {ev.detail && (
+                            <div className="text-[11px] text-slate-500 pt-1 font-mono border-t border-slate-100">
+                              {ev.detail}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="pt-2 border-t border-slate-100">
+                <Button variant="outline" size="sm" onClick={() => setViewAsset(null)}>
                   Close
                 </Button>
               </DialogFooter>
@@ -568,9 +766,9 @@ export default function HighValueAssets() {
         </DialogContent>
       </Dialog>
 
-      {/* SERIAL HISTORY TIMELINE MODAL */}
+      {/* QUICK TIMELINE MODAL */}
       <Dialog open={!!timelineAsset} onOpenChange={(open) => !open && setTimelineAsset(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <History className="w-5 h-5 text-amber-600" />
@@ -578,29 +776,31 @@ export default function HighValueAssets() {
             </DialogTitle>
             {timelineAsset && (
               <p className="text-xs text-slate-500">
-                Product: <b className="text-slate-800">{timelineAsset.product_name || timelineAsset.product}</b> | Serial: <b className="font-mono text-slate-900">{timelineAsset.serial_number || "N/A"}</b>
+                Product: <b className="text-slate-800">{timelineAsset.product_name || timelineAsset.product}</b> | Serial: <b className="font-mono text-slate-900">#{timelineAsset.serial_number}</b>
               </p>
             )}
           </DialogHeader>
 
-          <div className="py-4">
+          <div className="py-2">
             {loadingTimeline ? (
-              <div className="p-8 text-center text-xs text-slate-500">Loading movement timeline...</div>
+              <div className="p-8 text-center text-xs text-slate-500">Loading timeline...</div>
             ) : timelineEvents.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-400 italic">No movement events logged for this serial number.</div>
             ) : (
-              <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
+              <div className="relative pl-6 space-y-4 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
                 {timelineEvents.map((ev, idx) => (
                   <div key={idx} className="relative flex items-start gap-4">
                     <div className={`absolute -left-6 top-1 w-5 h-5 rounded-full border-2 bg-white flex items-center justify-center ${
                       ev.type === "Inward" ? "border-emerald-500 text-emerald-600" :
-                      ev.type === "Installed" || ev.type === "Allocated" ? "border-blue-500 text-blue-600" :
-                      "border-amber-500 text-amber-600"
+                      ev.type === "Returned" ? "border-purple-500 text-purple-600" :
+                      "border-blue-500 text-blue-600"
                     }`}>
-                      <CheckCircle2 className="w-3 h-3" />
+                      {ev.type === "Inward" ? <ArrowDownToLine className="w-3 h-3" /> :
+                       ev.type === "Returned" ? <RotateCcw className="w-3 h-3" /> :
+                       <ArrowUpFromLine className="w-3 h-3" />}
                     </div>
 
-                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 w-full space-y-1">
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 w-full space-y-1">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <span className="font-bold text-xs text-slate-900">{ev.title}</span>
                         <span className="text-[10px] font-mono text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
@@ -608,7 +808,7 @@ export default function HighValueAssets() {
                         </span>
                       </div>
 
-                      <div className="text-xs text-slate-700 flex flex-wrap gap-x-4 gap-y-1 pt-1">
+                      <div className="text-xs text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
                         <span className="flex items-center gap-1">
                           <MapPin className="w-3 h-3 text-slate-400" /> {ev.site}
                         </span>
@@ -645,7 +845,7 @@ export default function HighValueAssets() {
           <DialogHeader>
             <DialogTitle className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Pencil className="w-4 h-4 text-blue-600" />
-              Edit Serial & Current Site
+              Edit Serial &amp; Current Site
             </DialogTitle>
             {editAsset && (
               <p className="text-xs text-slate-500">
@@ -656,17 +856,17 @@ export default function HighValueAssets() {
 
           <div className="space-y-3 py-2">
             <div>
-              <Label className="text-xs font-semibold text-slate-700">Serial Number</Label>
+              <Label className="text-xs font-semibold text-slate-700">Serial Number *</Label>
               <Input
                 value={editForm.serial_number}
                 onChange={(e) => setEditForm({ ...editForm, serial_number: e.target.value })}
-                placeholder="e.g. UTL-00021"
+                placeholder="e.g. UTL-100-00021"
                 className="mt-1 text-xs font-mono"
               />
             </div>
 
             <div>
-              <Label className="text-xs font-semibold text-slate-700">Current Site / Location</Label>
+              <Label className="text-xs font-semibold text-slate-700">Current Site / Location *</Label>
               <Input
                 value={editForm.site_location}
                 onChange={(e) => setEditForm({ ...editForm, site_location: e.target.value })}

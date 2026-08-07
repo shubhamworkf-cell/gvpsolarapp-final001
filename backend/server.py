@@ -7364,6 +7364,76 @@ async def edit_asset(asset_id: str, data: AssetEditIn, user=Depends(get_current_
     return {"ok": True, "asset": target}
 
 
+@api_router.get("/assets/{asset_id}/timeline")
+async def get_asset_timeline(asset_id: str, user=Depends(get_current_user)):
+    cid = user["company_id"]
+    all_assets = _load_local_assets()
+    target_asset = next((a for a in all_assets if a.get("id") == asset_id and a.get("company_id") == cid), None)
+    if not target_asset:
+        target_asset = next((a for a in all_assets if a.get("company_id") == cid and (a.get("serial_number") or "").strip().upper() == asset_id.strip().upper()), None)
+
+    sn = (target_asset.get("serial_number") if target_asset else asset_id).strip().upper()
+    p_name = target_asset.get("product_name") if target_asset else ""
+
+    inwards = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(10000)
+    outwards = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).to_list(10000)
+
+    events = []
+
+    for ie in inwards:
+        sns = [s.strip().upper() for s in (ie.get("serial_numbers") or []) if s.strip()]
+        matches = (sn in sns) or (sn and (ie.get("serial_number") or "").strip().upper() == sn)
+        if not matches and target_asset and target_asset.get("inward_entry_id") == ie.get("id"):
+            matches = True
+
+        if matches:
+            is_return = ie.get("source_type") == "Return From Client" or "return" in (ie.get("entry_type") or "").lower()
+            date_str = (ie.get("date") or ie.get("created_at") or "")[:10]
+            if is_return:
+                events.append({
+                    "type": "Returned",
+                    "title": "Material Returned to Warehouse",
+                    "date": date_str,
+                    "site": "Central Warehouse",
+                    "client": ie.get("source_name") or ie.get("client_name") or "Client",
+                    "detail": f"Return Ref: {ie.get('reference_number') or 'N/A'}"
+                })
+            else:
+                events.append({
+                    "type": "Inward",
+                    "title": "Inward Entry Recorded",
+                    "date": date_str,
+                    "site": "Central Warehouse",
+                    "client": ie.get("source_name") or ie.get("vendor") or "Supplier",
+                    "detail": f"Challan / Bill: {ie.get('reference_number') or 'N/A'}"
+                })
+
+    for oe in outwards:
+        sns = [s.strip().upper() for s in (oe.get("serial_numbers") or []) if s.strip()]
+        matches = (sn in sns) or (sn and (oe.get("serial_number") or "").strip().upper() == sn)
+        if matches:
+            date_str = (oe.get("date") or oe.get("created_at") or "")[:10]
+            site_val = oe.get("target_name") or oe.get("site_name") or (f"{oe.get('client_name')} Site" if oe.get("client_name") else "Client Site")
+            events.append({
+                "type": "Outward",
+                "title": "Outward Dispatched to Client",
+                "date": date_str,
+                "site": site_val,
+                "client": oe.get("client_name") or "Client",
+                "detail": f"Gate Pass / Challan: {oe.get('reference_number') or oe.get('outward_challan_no') or 'N/A'}"
+            })
+
+    events.sort(key=lambda e: e.get("date") or "")
+
+    return {
+        "ok": True,
+        "serial_number": sn,
+        "product_name": p_name or (target_asset.get("product_name") if target_asset else ""),
+        "total_movements": len(events),
+        "events": events
+    }
+
+
 # ---------- Inventory Defaults ----------
 @api_router.get("/inventory/defaults")
 async def get_inv_defaults(user=Depends(get_current_user)):
@@ -8832,6 +8902,70 @@ async def get_client_data_detail(
     material_requests   = await _enrich_requests_with_stock_batch(material_requests_raw, cid) if material_requests_raw else []
     hva = [a for a in _load_local_assets() if a.get("client_id") == client_id and a.get("company_id") == cid] if tab in ("all", "hva") else []
         
+    handovers_list = list(results.get("handovers") or [])
+    if not handovers_list and c.get("handover_data"):
+        hd = c.get("handover_data") or {}
+        synth_photos = {}
+        if hd.get("handover_photo_id"):
+            synth_photos["Handover Photo"] = hd.get("handover_photo_id")
+        synth_chk = []
+        if hd.get("declaration"):
+            synth_chk.append({"label": "Owner Declaration Confirmed", "checked": True})
+        if hd.get("owner_name"):
+            synth_chk.append({"label": f"Owner: {hd.get('owner_name')}", "checked": True})
+        handovers_list.append({
+            "id": f"handover-{client_id}",
+            "company_id": cid,
+            "client_id": client_id,
+            "created_at": hd.get("handover_date") or c.get("updated_at") or now_iso(),
+            "details": {
+                "completed_date": hd.get("handover_date"),
+                "completed_by": c.get("assigned_engineer_name") or c.get("engineer_name") or "",
+                "notes": hd.get("declaration") or "",
+                "photos": synth_photos,
+                "attachments": synth_photos,
+                "checklist": synth_chk,
+                "owner_name": hd.get("owner_name") or "",
+                "declaration_confirmed": True if hd.get("declaration") else False,
+            }
+        })
+
+    existing_tids = {h.get("task_id") for h in handovers_list if h.get("task_id")}
+    for t in (results.get("tasks") or []):
+        if (t.get("task_type") == "Handover" or t.get("workflow") == "handover") and t.get("status") == "completed" and t.get("id") not in existing_tids:
+            sub = t.get("submission") or {}
+            if sub:
+                t_photos = {}
+                h_photo = sub.get("handover_photo_id") or sub.get("photo_id") or sub.get("file_id")
+                if h_photo:
+                    t_photos["Handover Photo"] = h_photo
+                t_chk = list(sub.get("checklist") or [])
+                if sub.get("declaration_confirmed"):
+                    t_chk.append({"label": "Owner Declaration Confirmed", "checked": True})
+                if sub.get("installer_confirmed"):
+                    t_chk.append({"label": "Installer Confirmed", "checked": True})
+                if sub.get("owner_name"):
+                    t_chk.append({"label": f"Owner: {sub.get('owner_name')}", "checked": True})
+                handovers_list.append({
+                    "id": f"handover-task-{t.get('id')}",
+                    "company_id": cid,
+                    "client_id": client_id,
+                    "task_id": t.get("id"),
+                    "created_at": sub.get("handover_date") or t.get("updated_at") or now_iso(),
+                    "details": {
+                        "completed_date": sub.get("handover_date") or sub.get("submitted_at") or t.get("updated_at"),
+                        "completed_by": t.get("assigned_to_name") or "",
+                        "assigned_by": t.get("assigned_by_name") or "",
+                        "notes": sub.get("notes") or sub.get("remarks") or t.get("remarks") or "",
+                        "photos": t_photos,
+                        "attachments": t_photos,
+                        "checklist": t_chk,
+                        "owner_name": sub.get("owner_name") or "",
+                        "declaration_confirmed": sub.get("declaration_confirmed"),
+                        "installer_confirmed": sub.get("installer_confirmed"),
+                    }
+                })
+
     return {
         "client": c,
         "monitoring": monitoring,
@@ -8844,7 +8978,7 @@ async def get_client_data_detail(
         "meter_testings": meter_testings,
         "installations": installations,
         "verifications": verifications,
-        "handovers": results.get("handovers", []),
+        "handovers": handovers_list,
         "material_requests": material_requests,
         "tasks": results.get("tasks", []),
         "inward": results.get("inward", []),
