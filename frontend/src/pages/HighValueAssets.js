@@ -604,6 +604,18 @@ export default function HighValueAssets() {
                               >
                                 <Pencil className="w-3.5 h-3.5 mr-1 text-slate-500" /> Edit Product
                               </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  handleOpenDetailPopup(group);
+                                  setDetailTab("history");
+                                }}
+                                className="h-7 px-2.5 text-xs border-amber-200 bg-amber-50/50 text-amber-800 hover:bg-amber-100"
+                                title="View Product Transaction History"
+                              >
+                                <History className="w-3.5 h-3.5 mr-1 text-amber-600" /> History
+                              </Button>
                             </div>
                           </td>
                         </tr>
