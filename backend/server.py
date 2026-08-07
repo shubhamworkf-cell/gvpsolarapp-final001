@@ -7247,6 +7247,24 @@ async def list_assets(
     # Build list for user company
     cid_assets = [a for a in all_assets if a.get("company_id") == cid]
 
+    # Join Product Master for missing specifications / size models
+    try:
+        products = await db.products.find({"company_id": cid}, {"_id": 0}).to_list(100000)
+        prod_spec_map = {}
+        for p in products:
+            pn_norm = norm_product_name(p.get("name"))
+            spec_val = p.get("size") or p.get("size_model") or p.get("specification") or p.get("capacity") or ""
+            if pn_norm and spec_val:
+                prod_spec_map[pn_norm] = spec_val
+
+        for a in cid_assets:
+            pn_norm = norm_product_name(a.get("product_name") or a.get("product"))
+            if (not a.get("size_model") or a.get("size_model") == "—") and pn_norm in prod_spec_map:
+                a["size_model"] = prod_spec_map[pn_norm]
+                a["specification"] = prod_spec_map[pn_norm]
+    except Exception as e:
+        logger.warning(f"Error joining Product Master: {e}")
+
     # Dynamically update live state from outward and return entries
     try:
         outward_entries = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
@@ -7254,9 +7272,10 @@ async def list_assets(
 
         for a in cid_assets:
             sn = (a.get("serial_number") or "").strip().upper()
+            pn_norm = norm_product_name(a.get("product_name") or a.get("product"))
 
             return_match = None
-            if sn:
+            if sn and sn != "N/A" and sn != "NO-SERIAL":
                 return_match = next((
                     ie for ie in reversed(inward_entries)
                     if (ie.get("source_type") == "Return From Client" or "return" in (ie.get("entry_type") or "").lower())
@@ -7264,13 +7283,19 @@ async def list_assets(
                 ), None)
 
             outward_match = None
-            if sn:
+            if sn and sn != "N/A" and sn != "NO-SERIAL":
                 outward_match = next((
                     oe for oe in reversed(outward_entries)
                     if sn in [s.strip().upper() for s in (oe.get("serial_numbers") or []) if s.strip()]
                 ), None)
             if not outward_match and a.get("outward_entry_id"):
                 outward_match = next((oe for oe in outward_entries if oe.get("id") == a.get("outward_entry_id")), None)
+            if not outward_match and not (sn and sn != "N/A" and sn != "NO-SERIAL"):
+                # Match outward entry by product name if single entry
+                outward_match = next((
+                    oe for oe in reversed(outward_entries)
+                    if norm_product_name(oe.get("product")) == pn_norm
+                ), None)
 
             if return_match and outward_match:
                 ret_date = return_match.get("date") or return_match.get("created_at") or ""
@@ -7286,11 +7311,17 @@ async def list_assets(
                 a["client_name"] = return_match.get("source_name") or return_match.get("client_name") or "Client"
                 a["last_movement_date"] = (return_match.get("date") or return_match.get("created_at") or "")[:10]
             elif outward_match:
-                client_name_val = outward_match.get("client_name") or "Client"
+                client_name_val = outward_match.get("client_name") or outward_match.get("target_name") or "Client"
                 a["status"] = "Installed" if a.get("status") == "Installed" else "Dispatched"
                 a["client_id"] = outward_match.get("client_id")
                 a["client_name"] = client_name_val
-                a["site_location"] = outward_match.get("target_name") or outward_match.get("site_name") or (f"{client_name_val} Site" if client_name_val else "Client Site")
+                
+                raw_site = outward_match.get("target_name") or outward_match.get("site_name") or client_name_val
+                if "site" in raw_site.lower():
+                    a["site_location"] = raw_site
+                else:
+                    a["site_location"] = f"{raw_site} Site"
+
                 a["outward_date"] = (outward_match.get("date") or outward_match.get("created_at") or "")[:10]
                 a["last_movement_date"] = (outward_match.get("date") or outward_match.get("created_at") or "")[:10]
     except Exception as e:
