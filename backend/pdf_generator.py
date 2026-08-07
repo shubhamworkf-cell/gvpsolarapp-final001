@@ -518,43 +518,71 @@ def generate_document(doc_type: str, data: dict, company: dict) -> bytes:
 
 
 
-class WCRCanvas(canvas.Canvas):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._saved_page_states = []
+def make_wcr_canvas(company: dict):
+    company_name = (company.get("company_name") or company.get("name") or company.get("legal_business_name") or "").strip()
+    owner_name = (company.get("owner_name") or company.get("proprietor_name") or company.get("authorized_signatory") or company.get("manager_name") or "").strip()
+    mobile = (company.get("mobile") or company.get("mobile_number") or company.get("phone") or company.get("phone_number") or "").strip()
+    addr = (company.get("address") or company.get("address_line_1") or company.get("office_address") or company.get("registered_address") or "").strip()
+    city = (company.get("city") or "").strip()
+    state = (company.get("state") or "").strip()
+    pincode = (company.get("pincode") or "").strip()
 
-    def showPage(self):
-        self._saved_page_states.append(dict(self.__dict__))
-        self._startPage()
+    full_addr_parts = [addr]
+    if city:
+        full_addr_parts.append(city)
+    if state:
+        full_addr_parts.append(state)
+    if pincode:
+        full_addr_parts.append(f"- {pincode}")
+    full_addr = ", ".join(p for p in full_addr_parts if p).replace(", -", " -")
 
-    def save(self):
-        num_pages = len(self._saved_page_states)
-        for state in self._saved_page_states:
-            self.__dict__.update(state)
-            self.draw_page_decorations(num_pages)
-            super().showPage()
-        super().save()
+    line1 = f"OFFICE :- {full_addr}" if full_addr else ""
+    line2_parts = []
+    if mobile:
+        line2_parts.append(f"PHONE : {mobile}")
+    if owner_name:
+        line2_parts.append(owner_name)
+    line2 = " ".join(line2_parts)
 
-    def draw_page_decorations(self, page_count):
-        self.saveState()
-        # Bottom Divider line
-        self.setStrokeColor(colors.HexColor('#9333ea'))
-        self.setLineWidth(1.2)
-        self.line(1.2 * cm, 1.4 * cm, 21.0 * cm - 1.2 * cm, 1.4 * cm)
-        
-        self.setFont("Helvetica-Bold", 7.5)
-        self.setFillColor(colors.HexColor('#2563eb'))
-        
-        line1 = "OFFICE :- SHOP NO – 1-2, FIRST FLOOR, BUILDING NO – 1, KAPAD TEXTILE MARKET ICHALKARANJI (MAH.) - 416115"
-        line2 = "PHONE : +91-9694060806 GIRIRAJ"
-        
-        self.drawString(1.2 * cm, 1.0 * cm, line1)
-        self.drawString(1.2 * cm, 0.65 * cm, line2)
-        
-        self.setFont("Helvetica", 8)
-        self.setFillColor(colors.HexColor('#475569'))
-        self.drawRightString(21.0 * cm - 1.2 * cm, 0.65 * cm, f"Page {self._pageNumber} of {page_count}")
-        self.restoreState()
+    class WCRCanvas(canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._saved_page_states = []
+
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            num_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.draw_page_decorations(num_pages)
+                super().showPage()
+            super().save()
+
+        def draw_page_decorations(self, page_count):
+            self.saveState()
+            # Bottom Divider line
+            self.setStrokeColor(colors.HexColor('#9333ea'))
+            self.setLineWidth(1.2)
+            self.line(1.2 * cm, 1.4 * cm, 21.0 * cm - 1.2 * cm, 1.4 * cm)
+            
+            self.setFont("Helvetica-Bold", 7.5)
+            self.setFillColor(colors.HexColor('#2563eb'))
+            
+            if line1:
+                self.drawString(1.2 * cm, 1.0 * cm, line1)
+            if line2:
+                self.drawString(1.2 * cm, 0.65 * cm, line2)
+            
+            self.setFont("Helvetica", 8)
+            self.setFillColor(colors.HexColor('#475569'))
+            self.drawRightString(21.0 * cm - 1.2 * cm, 0.65 * cm, f"Page {self._pageNumber} of {page_count}")
+            self.restoreState()
+
+    return WCRCanvas
+
 
 
 def generate_wcr_pdf(client: dict, company: dict) -> bytes:
@@ -919,7 +947,7 @@ def generate_wcr_pdf(client: dict, company: dict) -> bytes:
     ]))
     story.append(sign3)
 
-    pdf.build(story, canvasmaker=WCRCanvas)
+    pdf.build(story, canvasmaker=make_wcr_canvas(company))
     return buf.getvalue()
 
 
@@ -1107,12 +1135,8 @@ def _get_inverters_list(client: dict) -> list[dict]:
 
 def _get_vendor_inverter_clause_text(client: dict) -> str:
     """
-    Returns '<Model Name> make <Brand Name> <Total Capacity> kW' string for Vendor Agreement.
-    Rules:
-      Brand = inverter brand
-      Model = inverter model
-      Capacity = Total inverter/system capacity from onboarding
-      Do NOT enumerate multiple inverter rows.
+    Returns '<Inverter Brand/Make>, <Model/Capacity> model' string for Vendor Agreement.
+    Example: 'UTL make, 3 kW model'
     """
     stages_dict = dict(client.get("stages") or {})
     ob_dict = dict(stages_dict.get("onboarding_data") or {})
@@ -1124,12 +1148,20 @@ def _get_vendor_inverter_clause_text(client: dict) -> str:
     if cap and not ("KW" in cap.upper() or "KWATT" in cap.upper()):
         cap = f"{cap} kW"
 
-    model_part = f"{model} make" if model else ""
-    brand_part = brand if brand else ""
-    cap_part   = cap if cap else ""
+    brand_str = brand if ("make" in brand.lower() or not brand) else f"{brand} make"
+    if model and cap:
+        mod_cap_str = f"{model} {cap} model" if "model" not in model.lower() else f"{model} {cap}"
+    elif model:
+        mod_cap_str = f"{model} model" if "model" not in model.lower() else model
+    elif cap:
+        mod_cap_str = f"{cap} model"
+    else:
+        mod_cap_str = ""
 
-    parts = [p for p in [model_part, brand_part, cap_part] if p]
-    return " ".join(parts)
+    if brand_str and mod_cap_str:
+        return f"{brand_str}, {mod_cap_str}"
+    return brand_str or mod_cap_str
+
 
 
 
@@ -1337,8 +1369,12 @@ def generate_net_meter_agreement_pdf(client: dict, company: dict) -> bytes:
     sub_div = bu_text or client.get("sub_division") or ""
     division = client.get("division") or ""
 
-    sub_bu_str = f"{sub_div}/ {bu_no}" if (sub_div and bu_no) else (sub_div or bu_no)
+    if sub_div and bu_no:
+        sub_bu_str = bu_no if sub_div.strip().upper() in ("BU", "BU-") else f"{sub_div} {bu_no}"
+    else:
+        sub_bu_str = sub_div or bu_no
     licensee_sub = f", {sub_bu_str}" if sub_bu_str else ""
+
 
     # Define Styles (Refined font sizing & spacing for exact 5-page layout with compact vertical gaps)
     style_h1 = ParagraphStyle('NMA_H1', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=17, alignment=1, spaceBefore=4, spaceAfter=3)
@@ -2031,9 +2067,13 @@ def generate_meter_testing_request_pdf(client: dict, company: dict) -> bytes:
     story.append(Paragraph(p5, STYLE_BODY))
     story.append(Spacer(1, 0.4 * cm))
 
+    owner_name = (company.get('owner_name') or company.get('proprietor_name') or company.get('authorized_signatory') or company.get('manager_name') or '').strip()
+
     story.append(Paragraph("Thanks & Regards,", STYLE_BODY))
     story.append(Spacer(1, 0.6 * cm))
     story.append(Paragraph(f"<b>{company_name.upper()}</b>", STYLE_BOLD_SERIF))
+    if owner_name:
+        story.append(Paragraph(f"<b>{owner_name}</b>", STYLE_BODY))
     story.append(Spacer(1, 0.8 * cm))
 
     encl_text = "<b>Encl:</b><br/>1. Gen-meter<br/>2. Test report of meter<br/>3. Electricity Bill<br/>4. Solar PV System Approval Latter Copy."
@@ -2042,6 +2082,7 @@ def generate_meter_testing_request_pdf(client: dict, company: dict) -> bytes:
     canvas_cls = make_meter_testing_canvas(company)
     pdf.build(story, canvasmaker=canvas_cls)
     return buf.getvalue()
+
 
 
 def generate(doc_type: str, client: dict, company: dict) -> bytes:
@@ -3012,8 +3053,12 @@ def _generate_net_meter_docx(client: dict, company: dict) -> bytes:
     bu_text = client.get("bu_text") or ""
     sub_div = bu_text or client.get("sub_division") or ""
     division = client.get("division") or ""
-    sub_bu_str = f"{sub_div}/ {bu_no}" if (sub_div and bu_no) else (sub_div or bu_no)
+    if sub_div and bu_no:
+        sub_bu_str = bu_no if sub_div.strip().upper() in ("BU", "BU-") else f"{sub_div} {bu_no}"
+    else:
+        sub_bu_str = sub_div or bu_no
     licensee_sub = f", {sub_bu_str}" if sub_bu_str else ""
+
 
     def _hdr(text, size=14, center=True):
         p = doc.add_paragraph()
@@ -3415,6 +3460,9 @@ def _generate_meter_testing_docx(client: dict, company: dict) -> bytes:
     _body("Thanks & Regards,")
     _docx_add_spacer(doc, 12)
     _body_bold(company_name.upper())
+    owner_name = (company.get('owner_name') or company.get('proprietor_name') or company.get('authorized_signatory') or company.get('manager_name') or '').strip()
+    if owner_name:
+        _body_bold(owner_name)
     _docx_add_spacer(doc, 16)
     encl_p = doc.add_paragraph()
     encl_run = encl_p.add_run("Encl:\n1. Gen-meter\n2. Test report of meter\n3. Electricity Bill\n4. Solar PV System Approval Latter Copy.")
