@@ -7468,52 +7468,9 @@ async def list_assets(
                     "site_location": "Central Warehouse",
                     "last_movement_date": ""
                 })
-                existing_keys.add(pkey)
-                if pid_val:
-                    existing_pids.add(pid_val)
+                existing_pns.add(pn_norm)
     except Exception as e:
         logger.warning(f"Error appending Product Master HV items: {e}")
-
-    # Ensure every asset has full normalized field mapping and exact shared inventory numbers
-    try:
-        items, _, _, _ = await _compute_inventory_balances(cid)
-        bal_lookup = {}
-        for p_item in items:
-            pn_n = norm_product_name(p_item.get("name"))
-            ps_n = norm_str(p_item.get("size"))
-            bal_lookup[(pn_n, ps_n)] = p_item
-
-        for a in final_live_assets:
-            p_val = a.get("product_name") or a.get("product") or "Unknown Product"
-            s_val = a.get("size_model") or a.get("size") or a.get("specification") or "—"
-            pn_n = norm_product_name(p_val)
-            ps_n = norm_str(s_val)
-
-            b_info = bal_lookup.get((pn_n, ps_n), {})
-            b_qty = float(b_info.get("balance", a.get("quantity") or a.get("qty") or 0.0))
-            t_in = float(b_info.get("total_in", a.get("total_inward") or 0.0))
-            t_out = float(b_info.get("total_out", a.get("total_outward") or 0.0))
-            t_ret = float(b_info.get("returned", a.get("total_returned") or 0.0))
-
-            a["product_name"] = p_val
-            a["product"] = p_val
-            a["size_model"] = s_val
-            a["specification"] = s_val
-            a["quantity"] = b_qty
-            a["qty"] = b_qty
-            a["balance"] = b_qty
-            a["current_stock"] = b_qty
-            a["total_inward"] = t_in
-            a["total_in"] = t_in
-            a["total_outward"] = t_out
-            a["total_out"] = t_out
-            a["total_returned"] = t_ret
-            a["serial_number"] = a.get("serial_number") or "N/A"
-            a["client_name"] = a.get("client_name") or "Unallocated"
-            a["site_location"] = a.get("site_location") or "Central Warehouse"
-            a["last_movement_date"] = a.get("last_movement_date") or a.get("outward_date") or a.get("installation_date") or a.get("purchase_date") or ""
-    except Exception as e:
-        logger.warning(f"Error normalizing final asset inventory balances: {e}")
 
     filtered = final_live_assets
 
