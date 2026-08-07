@@ -7266,6 +7266,7 @@ async def list_assets(
         logger.warning(f"Error joining Product Master: {e}")
 
     # Dynamically update live state from outward and return entries
+    final_live_assets = []
     try:
         outward_entries = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
         inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
@@ -7273,8 +7274,9 @@ async def list_assets(
         for a in cid_assets:
             sn = (a.get("serial_number") or "").strip().upper()
             pn_norm = norm_product_name(a.get("product_name") or a.get("product"))
+            qty_total = float(a.get("quantity") or a.get("qty") or 1.0)
 
-            return_match = None
+            # Case A: Serial-tracked item
             if sn and sn != "N/A" and sn != "NO-SERIAL":
                 return_match = next((
                     ie for ie in reversed(inward_entries)
@@ -7282,53 +7284,77 @@ async def list_assets(
                     and sn in [s.strip().upper() for s in (ie.get("serial_numbers") or []) if s.strip()]
                 ), None)
 
-            outward_match = None
-            if sn and sn != "N/A" and sn != "NO-SERIAL":
                 outward_match = next((
                     oe for oe in reversed(outward_entries)
                     if sn in [s.strip().upper() for s in (oe.get("serial_numbers") or []) if s.strip()]
                 ), None)
-            if not outward_match and a.get("outward_entry_id"):
-                outward_match = next((oe for oe in outward_entries if oe.get("id") == a.get("outward_entry_id")), None)
-            if not outward_match and not (sn and sn != "N/A" and sn != "NO-SERIAL"):
-                # Match outward entry by product name if single entry
-                outward_match = next((
-                    oe for oe in reversed(outward_entries)
-                    if norm_product_name(oe.get("product")) == pn_norm
-                ), None)
+                if not outward_match and a.get("outward_entry_id"):
+                    outward_match = next((oe for oe in outward_entries if oe.get("id") == a.get("outward_entry_id")), None)
 
-            if return_match and outward_match:
-                ret_date = return_match.get("date") or return_match.get("created_at") or ""
-                out_date = outward_match.get("date") or outward_match.get("created_at") or ""
-                if ret_date >= out_date:
-                    outward_match = None
-                else:
-                    return_match = None
+                if return_match and outward_match:
+                    ret_date = return_match.get("date") or return_match.get("created_at") or ""
+                    out_date = outward_match.get("date") or outward_match.get("created_at") or ""
+                    if ret_date >= out_date:
+                        outward_match = None
+                    else:
+                        return_match = None
 
-            if return_match:
-                a["status"] = "Returned"
-                a["site_location"] = "Central Warehouse"
-                a["client_name"] = return_match.get("source_name") or return_match.get("client_name") or "Client"
-                a["last_movement_date"] = (return_match.get("date") or return_match.get("created_at") or "")[:10]
-            elif outward_match:
-                client_name_val = outward_match.get("client_name") or outward_match.get("target_name") or "Client"
-                a["status"] = "Installed" if a.get("status") == "Installed" else "Dispatched"
-                a["client_id"] = outward_match.get("client_id")
-                a["client_name"] = client_name_val
-                
-                raw_site = outward_match.get("target_name") or outward_match.get("site_name") or client_name_val
-                if "site" in raw_site.lower():
-                    a["site_location"] = raw_site
-                else:
-                    a["site_location"] = f"{raw_site} Site"
+                if return_match:
+                    a["status"] = "Returned"
+                    a["site_location"] = "Central Warehouse"
+                    a["client_name"] = return_match.get("source_name") or return_match.get("client_name") or "Client"
+                    a["last_movement_date"] = (return_match.get("date") or return_match.get("created_at") or "")[:10]
+                elif outward_match:
+                    client_name_val = outward_match.get("client_name") or outward_match.get("target_name") or "Client"
+                    a["status"] = "Installed" if a.get("status") == "Installed" else "Dispatched"
+                    a["client_id"] = outward_match.get("client_id")
+                    a["client_name"] = client_name_val
+                    raw_site = outward_match.get("target_name") or outward_match.get("site_name") or client_name_val
+                    a["site_location"] = raw_site if "site" in raw_site.lower() else f"{raw_site} Site"
+                    a["outward_date"] = (outward_match.get("date") or outward_match.get("created_at") or "")[:10]
+                    a["last_movement_date"] = (outward_match.get("date") or outward_match.get("created_at") or "")[:10]
+                final_live_assets.append(a)
 
-                a["outward_date"] = (outward_match.get("date") or outward_match.get("created_at") or "")[:10]
-                a["last_movement_date"] = (outward_match.get("date") or outward_match.get("created_at") or "")[:10]
+            # Case B: Non-serial tracked item (quantity breakdown)
+            else:
+                outward_for_pn = [oe for oe in outward_entries if norm_product_name(oe.get("product")) == pn_norm]
+                dispatched_sum = 0.0
+
+                for oe in outward_for_pn:
+                    o_qty = float(oe.get("quantity") or 0.0)
+                    if o_qty > 0:
+                        client_name_val = oe.get("client_name") or oe.get("target_name") or "Client"
+                        raw_site = oe.get("target_name") or oe.get("site_name") or client_name_val
+                        site_val = raw_site if "site" in raw_site.lower() else f"{raw_site} Site"
+                        disp_doc = dict(a)
+                        disp_doc["id"] = f"{oe.get('id')}-disp"
+                        disp_doc["quantity"] = o_qty
+                        disp_doc["qty"] = o_qty
+                        disp_doc["status"] = "Dispatched"
+                        disp_doc["client_id"] = oe.get("client_id")
+                        disp_doc["client_name"] = client_name_val
+                        disp_doc["site_location"] = site_val
+                        disp_doc["outward_date"] = (oe.get("date") or oe.get("created_at") or "")[:10]
+                        disp_doc["last_movement_date"] = (oe.get("date") or oe.get("created_at") or "")[:10]
+                        final_live_assets.append(disp_doc)
+                        dispatched_sum += o_qty
+
+                avail_qty = max(0.0, qty_total - dispatched_sum)
+                if avail_qty > 0 or dispatched_sum == 0.0:
+                    avail_doc = dict(a)
+                    avail_doc["quantity"] = avail_qty if dispatched_sum > 0 else qty_total
+                    avail_doc["qty"] = avail_doc["quantity"]
+                    avail_doc["status"] = "Available"
+                    avail_doc["client_name"] = "Unallocated"
+                    avail_doc["site_location"] = "Central Warehouse"
+                    final_live_assets.append(avail_doc)
+
     except Exception as e:
         logger.warning(f"Error matching outward/return status: {e}")
+        final_live_assets = cid_assets
 
     # Ensure every asset has full normalized field mapping
-    for a in cid_assets:
+    for a in final_live_assets:
         p_val = a.get("product_name") or a.get("product") or "Unknown Product"
         s_val = a.get("size_model") or a.get("size") or a.get("specification") or "—"
         q_val = float(a.get("quantity") or a.get("qty") or 1.0)
@@ -7348,7 +7374,7 @@ async def list_assets(
         a["site_location"] = site_val
         a["last_movement_date"] = d_val
 
-    filtered = cid_assets
+    filtered = final_live_assets
 
     if search:
         search_lower = search.lower()
