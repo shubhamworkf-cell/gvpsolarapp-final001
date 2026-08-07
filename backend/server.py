@@ -7171,6 +7171,13 @@ async def list_assets(
     hv_products = _load_local_high_value_products()
     hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
 
+    # Pre-fetch products from DB to ensure products is always initialized
+    try:
+        products = await db.products.find({"company_id": cid}, {"_id": 0}).to_list(100000)
+    except Exception as e:
+        logger.warning(f"Error fetching products in list_assets: {e}")
+        products = []
+
     # Reconcile missing assets for high value inward entries
     try:
         inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
@@ -7249,7 +7256,6 @@ async def list_assets(
 
     # Join Product Master for missing specifications / size models
     try:
-        products = await db.products.find({"company_id": cid}, {"_id": 0}).to_list(100000)
         prod_spec_map = {}
         for p in products:
             pn_norm = norm_product_name(p.get("name"))
@@ -7362,6 +7368,7 @@ async def list_assets(
             ps_n = norm_str(p_item.get("size"))
             bal_map[(pn_n, ps_n)] = p_item
 
+        existing_pids = {a.get("product_id") or a.get("id") for a in final_live_assets if a.get("product_id") or a.get("id")}
         existing_keys = {f"{norm_product_name(a.get('product_name') or a.get('product'))}___{norm_str(a.get('size_model') or a.get('specification'))}" for a in final_live_assets}
         
         for p in products:
@@ -7369,6 +7376,7 @@ async def list_assets(
             spec_val = p.get("size") or p.get("size_model") or p.get("specification") or p.get("capacity") or "—"
             ps_norm = norm_str(spec_val)
             pkey = f"{pn_norm}___{ps_norm}"
+            pid_val = p.get("id")
 
             hvg = p.get("high_value_goods")
             hva = p.get("high_value_asset")
@@ -7385,13 +7393,14 @@ async def list_assets(
                 hv_products.get(pn_norm, False)
             )
 
-            if is_hv and pkey and pkey not in existing_keys:
+            if is_hv and (pid_val not in existing_pids and pkey not in existing_keys):
                 p_name = p.get("name")
                 b_info = bal_map.get((pn_norm, ps_norm), {})
                 b_qty = float(b_info.get("balance", 0.0))
                 
                 final_live_assets.append({
-                    "id": p.get("id") or str(uuid.uuid4()),
+                    "id": pid_val or str(uuid.uuid4()),
+                    "product_id": pid_val,
                     "company_id": cid,
                     "product_name": p_name,
                     "product": p_name,
@@ -7411,6 +7420,8 @@ async def list_assets(
                     "last_movement_date": ""
                 })
                 existing_keys.add(pkey)
+                if pid_val:
+                    existing_pids.add(pid_val)
     except Exception as e:
         logger.warning(f"Error appending Product Master HV items: {e}")
 
