@@ -7355,20 +7355,29 @@ async def list_assets(
 
     # Ensure every High Value product in Product Master is present in final_live_assets
     try:
-        existing_pns = {norm_product_name(a.get("product_name") or a.get("product")) for a in final_live_assets}
+        existing_keys = {f"{norm_product_name(a.get('product_name') or a.get('product'))}___{a.get('size_model') or a.get('specification') or '—'}" for a in final_live_assets}
         for p in products:
             pn_norm = norm_product_name(p.get("name"))
+            spec_val = p.get("size") or p.get("size_model") or p.get("specification") or p.get("capacity") or "—"
+            pkey = f"{pn_norm}___{spec_val}"
+
+            hvg = p.get("high_value_goods")
+            hva = p.get("high_value_asset")
+            ihv = p.get("is_high_value")
+            ihva = p.get("is_high_value_asset")
+            cat = str(p.get("category") or "").lower()
+
             is_hv = (
-                p.get("high_value_goods") is True or 
-                p.get("high_value_asset") is True or 
-                p.get("is_high_value") is True or 
-                p.get("is_high_value_asset") is True or
-                hv_products.get(pn_norm, False) or
-                any(kw in (p.get("name") or "").upper() for kw in ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY", "HIGH VALUE", "HV"])
+                hvg is True or str(hvg).lower() in ["true", "1", "yes"] or
+                hva is True or str(hva).lower() in ["true", "1", "yes"] or
+                ihv is True or str(ihv).lower() in ["true", "1", "yes"] or
+                ihva is True or str(ihva).lower() in ["true", "1", "yes"] or
+                cat in ["high value", "high value goods", "hv", "asset", "equipment"] or
+                hv_products.get(pn_norm, False)
             )
-            if is_hv and pn_norm and pn_norm not in existing_pns:
+
+            if is_hv and pkey and pkey not in existing_keys:
                 p_name = p.get("name")
-                spec_val = p.get("size") or p.get("size_model") or p.get("specification") or p.get("capacity") or "—"
                 final_live_assets.append({
                     "id": p.get("id") or str(uuid.uuid4()),
                     "company_id": cid,
@@ -7384,7 +7393,7 @@ async def list_assets(
                     "site_location": "Central Warehouse",
                     "last_movement_date": ""
                 })
-                existing_pns.add(pn_norm)
+                existing_keys.add(pkey)
     except Exception as e:
         logger.warning(f"Error appending Product Master HV items: {e}")
 
