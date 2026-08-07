@@ -7259,6 +7259,9 @@ async def list_assets(
         outward_entries = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
         inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
 
+        # ----------------------------------------------------------------
+        # SINGLE SOURCE OF TRUTH: Call shared inventory balance calculation
+        # ----------------------------------------------------------------
         inv_items, _, _, _ = await _compute_inventory_balances(cid)
 
         bal_lookup_full = {}
@@ -7278,149 +7281,19 @@ async def list_assets(
                 info = bal_lookup_name.get(pn_norm, {})
             return info
 
-        for a in cid_assets:
-            sn = (a.get("serial_number") or "").strip().upper()
-            if sn in ("", "N/A", "NO-SERIAL"):
-                continue
+        seen_pm_keys = set()
+        hv_pn_set = set()
 
-            pn_norm = norm_product_name(a.get("product_name") or a.get("product"))
-            spec_val = a.get("size_model") or a.get("size") or a.get("specification") or ""
-            b_info = get_bal_info(pn_norm, spec_val)
-
-            return_match = next((
-                ie for ie in reversed(inward_entries)
-                if (ie.get("source_type") == "Return From Client" or "return" in (ie.get("entry_type") or "").lower())
-                and sn in [s.strip().upper() for s in (ie.get("serial_numbers") or []) if s.strip()]
-            ), None)
-
-            outward_match = next((
-                oe for oe in reversed(outward_entries)
-                if sn in [s.strip().upper() for s in (oe.get("serial_numbers") or []) if s.strip()]
-            ), None)
-            if not outward_match and a.get("outward_entry_id"):
-                outward_match = next((oe for oe in outward_entries if oe.get("id") == a.get("outward_entry_id")), None)
-
-            if return_match and outward_match:
-                ret_date = return_match.get("date") or return_match.get("created_at") or ""
-                out_date = outward_match.get("date") or outward_match.get("created_at") or ""
-                if ret_date >= out_date:
-                    outward_match = None
-                else:
-                    return_match = None
-
-            if return_match:
-                a["status"] = "Returned"
-                a["site_location"] = "Central Warehouse"
-                a["client_name"] = return_match.get("source_name") or return_match.get("client_name") or "Client"
-                a["last_movement_date"] = (return_match.get("date") or return_match.get("created_at") or "")[:10]
-            elif outward_match:
-                client_name_val = outward_match.get("client_name") or outward_match.get("target_name") or "Client"
-                a["status"] = "Installed" if a.get("status") == "Installed" else "Dispatched"
-                a["client_id"] = outward_match.get("client_id")
-                a["client_name"] = client_name_val
-                raw_site = outward_match.get("target_name") or outward_match.get("site_name") or client_name_val
-                a["site_location"] = raw_site if "site" in raw_site.lower() else f"{raw_site} Site"
-                a["outward_date"] = (outward_match.get("date") or outward_match.get("created_at") or "")[:10]
-                a["last_movement_date"] = (outward_match.get("date") or outward_match.get("created_at") or "")[:10]
-
-            a["quantity"] = 1.0
-            a["qty"] = 1.0
-            a["balance"] = float(b_info.get("balance", 0.0))
-            a["current_stock"] = float(b_info.get("balance", 0.0))
-            a["total_inward"] = float(b_info.get("total_in", 0.0))
-            a["total_in"] = float(b_info.get("total_in", 0.0))
-            a["total_outward"] = float(b_info.get("total_out", 0.0))
-            a["total_out"] = float(b_info.get("total_out", 0.0))
-            a["total_returned"] = float(b_info.get("returned", 0.0))
-            a["serial_number"] = sn
-            a["client_name"] = a.get("client_name") or "Unallocated"
-            a["site_location"] = a.get("site_location") or "Central Warehouse"
-            a["last_movement_date"] = a.get("last_movement_date") or a.get("outward_date") or a.get("installation_date") or a.get("purchase_date") or ""
-            final_live_assets.append(a)
-
-        non_serial_by_pn = {}
-        for a in cid_assets:
-            sn = (a.get("serial_number") or "").strip().upper()
-            if sn not in ("", "N/A", "NO-SERIAL"):
-                continue
-            pn = norm_product_name(a.get("product_name") or a.get("product"))
-            if pn not in non_serial_by_pn:
-                non_serial_by_pn[pn] = a
-
-        for pn_norm, template_asset in non_serial_by_pn.items():
-            spec_val = template_asset.get("size_model") or template_asset.get("size") or template_asset.get("specification") or ""
-            b_info = get_bal_info(pn_norm, spec_val)
-            b_balance = float(b_info.get("balance", 0.0))
-            b_total_in = float(b_info.get("total_in", 0.0))
-            b_total_out = float(b_info.get("total_out", 0.0))
-            b_returned = float(b_info.get("returned", 0.0))
-
-            outward_for_pn = [oe for oe in outward_entries if norm_product_name(oe.get("product")) == pn_norm]
-            for oe in outward_for_pn:
-                o_qty = float(oe.get("quantity") or 0.0)
-                if o_qty > 0:
-                    client_name_val = oe.get("client_name") or oe.get("target_name") or "Client"
-                    raw_site = oe.get("target_name") or oe.get("site_name") or client_name_val
-                    site_val = raw_site if "site" in raw_site.lower() else f"{raw_site} Site"
-                    disp_doc = dict(template_asset)
-                    disp_doc["id"] = f"{oe.get('id')}-disp"
-                    disp_doc["quantity"] = o_qty
-                    disp_doc["qty"] = o_qty
-                    disp_doc["status"] = "Dispatched"
-                    disp_doc["client_id"] = oe.get("client_id")
-                    disp_doc["client_name"] = client_name_val
-                    disp_doc["site_location"] = site_val
-                    disp_doc["outward_date"] = (oe.get("date") or oe.get("created_at") or "")[:10]
-                    disp_doc["last_movement_date"] = (oe.get("date") or oe.get("created_at") or "")[:10]
-                    disp_doc["balance"] = b_balance
-                    disp_doc["current_stock"] = b_balance
-                    disp_doc["total_inward"] = b_total_in
-                    disp_doc["total_in"] = b_total_in
-                    disp_doc["total_outward"] = b_total_out
-                    disp_doc["total_out"] = b_total_out
-                    disp_doc["total_returned"] = b_returned
-                    disp_doc["serial_number"] = disp_doc.get("serial_number") or "N/A"
-                    final_live_assets.append(disp_doc)
-
-            avail_doc = dict(template_asset)
-            avail_doc["quantity"] = b_balance
-            avail_doc["qty"] = b_balance
-            avail_doc["balance"] = b_balance
-            avail_doc["current_stock"] = b_balance
-            avail_doc["total_inward"] = b_total_in
-            avail_doc["total_in"] = b_total_in
-            avail_doc["total_outward"] = b_total_out
-            avail_doc["total_out"] = b_total_out
-            avail_doc["total_returned"] = b_returned
-            avail_doc["status"] = "Available" if b_balance > 0 else "Out of Stock"
-            avail_doc["client_name"] = "Unallocated"
-            avail_doc["site_location"] = "Central Warehouse"
-            avail_doc["serial_number"] = avail_doc.get("serial_number") or "N/A"
-            avail_doc["last_movement_date"] = avail_doc.get("last_movement_date") or avail_doc.get("outward_date") or avail_doc.get("purchase_date") or ""
-            final_live_assets.append(avail_doc)
-
-    except Exception as e:
-        logger.warning(f"Error matching outward/return status: {e}")
-        final_live_assets = cid_assets
-
-    try:
-        bal_map = {}
-        bal_map_name = {}
-        for p_item in inv_items:
-            pn_n = norm_product_name(p_item.get("name"))
-            ps_n = norm_str(p_item.get("size"))
-            bal_map[(pn_n, ps_n)] = p_item
-            existing = bal_map_name.get(pn_n)
-            if not existing or float(p_item.get("total_in", 0)) > float(existing.get("total_in", 0)):
-                bal_map_name[pn_n] = p_item
-
-        existing_pns = {norm_product_name(a.get("product_name") or a.get("product")) for a in final_live_assets}
-
+        # ----------------------------------------------------------------
+        # PASS 1: ALL GOODS & AVAILABLE — Product Master Overview entries
+        # Every High Value product (Name + Spec) in Product Master gets an entry.
+        # Stock, Inward, Outward, Returned come directly from shared inventory.
+        # ----------------------------------------------------------------
         for p in products:
             pn_norm = norm_product_name(p.get("name"))
             spec_val = p.get("size") or p.get("size_model") or p.get("specification") or p.get("capacity") or "—"
             ps_norm = norm_str(spec_val)
-            pid_val = p.get("id")
+            pkey = (pn_norm, ps_norm)
 
             hvg = p.get("high_value_goods")
             hva = p.get("high_value_asset")
@@ -7437,40 +7310,140 @@ async def list_assets(
                 hv_products.get(pn_norm, False)
             )
 
-            if is_hv and pn_norm not in existing_pns:
-                p_name = p.get("name")
-                b_info = bal_map.get((pn_norm, ps_norm)) or bal_map_name.get(pn_norm, {})
-                b_qty = float(b_info.get("balance", 0.0))
-                t_in = float(b_info.get("total_in", 0.0))
-                t_out = float(b_info.get("total_out", 0.0))
-                t_ret = float(b_info.get("returned", 0.0))
+            if is_hv:
+                hv_pn_set.add(pn_norm)
+                if pkey not in seen_pm_keys:
+                    seen_pm_keys.add(pkey)
+                    b_info = get_bal_info(pn_norm, spec_val)
+                    b_qty = float(b_info.get("balance", 0.0))
+                    t_in = float(b_info.get("total_in", 0.0))
+                    t_out = float(b_info.get("total_out", 0.0))
+                    t_ret = float(b_info.get("returned", 0.0))
 
-                final_live_assets.append({
-                    "id": pid_val or str(uuid.uuid4()),
-                    "product_id": pid_val,
-                    "company_id": cid,
-                    "product_name": p_name,
-                    "product": p_name,
-                    "size_model": spec_val,
-                    "specification": spec_val,
-                    "quantity": b_qty,
-                    "qty": b_qty,
-                    "balance": b_qty,
-                    "current_stock": b_qty,
-                    "total_inward": t_in,
-                    "total_in": t_in,
-                    "total_outward": t_out,
-                    "total_out": t_out,
-                    "total_returned": t_ret,
-                    "serial_number": "N/A",
-                    "status": "In Stock" if b_qty > 0 else "Out of Stock",
-                    "client_name": "Unallocated",
-                    "site_location": "Central Warehouse",
-                    "last_movement_date": ""
-                })
-                existing_pns.add(pn_norm)
+                    final_live_assets.append({
+                        "id": f"pm-{p.get('id') or str(uuid.uuid4())}",
+                        "product_id": p.get("id"),
+                        "company_id": cid,
+                        "product_name": p.get("name"),
+                        "product": p.get("name"),
+                        "size_model": spec_val,
+                        "specification": spec_val,
+                        "brand": p.get("brand") or "Unknown",
+                        "quantity": b_qty,
+                        "qty": b_qty,
+                        "balance": b_qty,
+                        "current_stock": b_qty,
+                        "total_inward": t_in,
+                        "total_in": t_in,
+                        "total_outward": t_out,
+                        "total_out": t_out,
+                        "total_returned": t_ret,
+                        "serial_number": "N/A",
+                        "status": "In Stock" if b_qty > 0 else "Out of Stock",
+                        "client_name": "Unallocated",
+                        "site_location": "Central Warehouse"
+                    })
+
+        # ----------------------------------------------------------------
+        # PASS 2: DISPATCH TAB — Outward entries for High Value products
+        # Shows exact dispatched transactions and their attached serial numbers.
+        # ----------------------------------------------------------------
+        for oe in outward_entries:
+            pn_norm = norm_product_name(oe.get("product") or oe.get("product_name"))
+            if pn_norm in hv_pn_set or hv_products.get(pn_norm, False):
+                o_qty = float(oe.get("quantity") or 0.0)
+                if o_qty > 0:
+                    spec_val = oe.get("specification") or oe.get("size") or "—"
+                    b_info = get_bal_info(pn_norm, spec_val)
+                    client_name_val = oe.get("client_name") or oe.get("target_name") or "Client"
+                    raw_site = oe.get("target_name") or oe.get("site_name") or client_name_val
+                    site_val = raw_site if "site" in raw_site.lower() else f"{raw_site} Site"
+
+                    final_live_assets.append({
+                        "id": f"{oe.get('id')}-disp",
+                        "outward_entry_id": oe.get("id"),
+                        "company_id": cid,
+                        "product_name": oe.get("product"),
+                        "product": oe.get("product"),
+                        "size_model": spec_val,
+                        "specification": spec_val,
+                        "quantity": o_qty,
+                        "qty": o_qty,
+                        "status": "Dispatched",
+                        "client_id": oe.get("client_id"),
+                        "client_name": client_name_val,
+                        "site_location": site_val,
+                        "outward_date": (oe.get("date") or oe.get("created_at") or "")[:10],
+                        "last_movement_date": (oe.get("date") or oe.get("created_at") or "")[:10],
+                        "serial_numbers": oe.get("serial_numbers") or [],
+                        "serial_number": ", ".join(oe.get("serial_numbers") or []) if oe.get("serial_numbers") else "N/A",
+                        "balance": float(b_info.get("balance", 0.0)),
+                        "total_inward": float(b_info.get("total_in", 0.0)),
+                        "total_outward": float(b_info.get("total_out", 0.0)),
+                        "total_returned": float(b_info.get("returned", 0.0))
+                    })
+
+        # ----------------------------------------------------------------
+        # PASS 3: RETURNED TAB — Return entries for High Value products
+        # Shows exact return transactions and their returned serial numbers.
+        # ----------------------------------------------------------------
+        for ie in inward_entries:
+            stype = (ie.get("source_type") or "").lower()
+            etype = (ie.get("entry_type") or "").lower()
+            if "return" in stype or "return" in etype:
+                pn_norm = norm_product_name(ie.get("product") or ie.get("product_name"))
+                if pn_norm in hv_pn_set or hv_products.get(pn_norm, False):
+                    r_qty = float(ie.get("quantity") or 0.0)
+                    spec_val = ie.get("specification") or ie.get("size") or "—"
+                    b_info = get_bal_info(pn_norm, spec_val)
+
+                    final_live_assets.append({
+                        "id": f"{ie.get('id')}-ret",
+                        "inward_entry_id": ie.get("id"),
+                        "company_id": cid,
+                        "product_name": ie.get("product"),
+                        "product": ie.get("product"),
+                        "size_model": spec_val,
+                        "specification": spec_val,
+                        "quantity": r_qty,
+                        "qty": r_qty,
+                        "status": "Returned",
+                        "client_name": ie.get("source_name") or ie.get("client_name") or "Client",
+                        "site_location": "Central Warehouse",
+                        "return_date": (ie.get("date") or ie.get("created_at") or "")[:10],
+                        "last_movement_date": (ie.get("date") or ie.get("created_at") or "")[:10],
+                        "serial_numbers": ie.get("serial_numbers") or [],
+                        "serial_number": ", ".join(ie.get("serial_numbers") or []) if ie.get("serial_numbers") else "N/A",
+                        "balance": float(b_info.get("balance", 0.0)),
+                        "total_inward": float(b_info.get("total_in", 0.0)),
+                        "total_outward": float(b_info.get("total_out", 0.0)),
+                        "total_returned": float(b_info.get("returned", 0.0))
+                    })
+
+        # ----------------------------------------------------------------
+        # PASS 4: SERIAL TRACKING — Individual tracked serial units
+        # Movement tracking only. Does NOT alter product quantities.
+        # ----------------------------------------------------------------
+        for a in cid_assets:
+            sn = (a.get("serial_number") or "").strip().upper()
+            if sn and sn not in ("N/A", "NO-SERIAL"):
+                pn_norm = norm_product_name(a.get("product_name") or a.get("product"))
+                if pn_norm in hv_pn_set or hv_products.get(pn_norm, False):
+                    spec_val = a.get("size_model") or a.get("size") or a.get("specification") or ""
+                    b_info = get_bal_info(pn_norm, spec_val)
+
+                    a_copy = dict(a)
+                    a_copy["quantity"] = 1.0
+                    a_copy["qty"] = 1.0
+                    a_copy["balance"] = float(b_info.get("balance", 0.0))
+                    a_copy["total_inward"] = float(b_info.get("total_in", 0.0))
+                    a_copy["total_outward"] = float(b_info.get("total_out", 0.0))
+                    a_copy["total_returned"] = float(b_info.get("returned", 0.0))
+                    final_live_assets.append(a_copy)
+
     except Exception as e:
-        logger.warning(f"Error appending Product Master HV items: {e}")
+        logger.warning(f"Error building live High Value assets: {e}")
+        final_live_assets = cid_assets
 
     filtered = final_live_assets
 

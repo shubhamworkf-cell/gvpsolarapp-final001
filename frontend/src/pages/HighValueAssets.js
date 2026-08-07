@@ -212,7 +212,7 @@ export default function HighValueAssets() {
   }, [assets, debouncedSearch]);
 
 
-  // 3. DISPATCHED: Grouped by Product + Client + Outward Date
+  // 3. DISPATCHED: Grouped by Outward Transaction Entry
   const dispatchedGroups = useMemo(() => {
     const map = {};
     assets.forEach((item) => {
@@ -222,22 +222,23 @@ export default function HighValueAssets() {
       const pName = item.product_name || item.product || "Unknown Product";
       const client = item.client_name || "Unallocated";
       const date = item.outward_date || item.last_movement_date || (item.created_at ? item.created_at.slice(0, 10) : "—");
-      const key = `${pName}__${client}__${date}`;
+      const key = item.outward_entry_id || item.id || `${pName}__${client}__${date}`;
 
       if (!map[key]) {
+        const qtyVal = floatVal(item.quantity || item.qty || 1.0);
         map[key] = {
           key,
           product_name: pName,
           specification: item.size_model || item.size || item.specification || "—",
-          dispatched_qty: 0,
+          dispatched_qty: qtyVal,
           client_name: client,
           site_location: item.site_location || `${client} Site`,
           outward_date: date,
           status: item.status || "Dispatched",
+          serial_numbers: item.serial_numbers || (item.serial_number && item.serial_number !== "N/A" ? [item.serial_number] : []),
           items: [],
         };
       }
-      map[key].dispatched_qty += floatVal(item.quantity || item.qty || 1.0);
       map[key].items.push(item);
     });
 
@@ -255,7 +256,7 @@ export default function HighValueAssets() {
     return list;
   }, [assets, debouncedSearch]);
 
-  // 4. RETURNED: Grouped by Product + Client / Return Date
+  // 4. RETURNED: Grouped by Return Transaction Entry
   const returnedGroups = useMemo(() => {
     const map = {};
     assets.forEach((item) => {
@@ -264,23 +265,24 @@ export default function HighValueAssets() {
 
       const pName = item.product_name || item.product || "Unknown Product";
       const client = item.client_name || "Client";
-      const date = item.last_movement_date || (item.created_at ? item.created_at.slice(0, 10) : "—");
-      const key = `${pName}__${client}__${date}`;
+      const date = item.return_date || item.last_movement_date || (item.created_at ? item.created_at.slice(0, 10) : "—");
+      const key = item.inward_entry_id || item.id || `${pName}__${client}__${date}`;
 
       if (!map[key]) {
+        const qtyVal = floatVal(item.quantity || item.qty || 1.0);
         map[key] = {
           key,
           product_name: pName,
           specification: item.size_model || item.size || item.specification || "—",
-          returned_qty: 0,
+          returned_qty: qtyVal,
           client_name: client,
           return_date: date,
           warehouse: "Central Warehouse",
           status: "Returned",
+          serial_numbers: item.serial_numbers || (item.serial_number && item.serial_number !== "N/A" ? [item.serial_number] : []),
           items: [],
         };
       }
-      map[key].returned_qty += floatVal(item.quantity || item.qty || 1.0);
       map[key].items.push(item);
     });
 
@@ -296,6 +298,7 @@ export default function HighValueAssets() {
     }
     return list;
   }, [assets, debouncedSearch]);
+
 
   // Helper Float Parse
   function floatVal(val) {
