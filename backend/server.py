@@ -10577,19 +10577,43 @@ async def parse_pdf_products(file: UploadFile = File(...), user=Depends(get_curr
 
 
 @api_router.post("/inventory/products/export-pdf")
-async def export_product_master_pdf_endpoint(payload: dict, user=Depends(get_current_user)):
-    """Generates an A4 Landscape PDF export for the Product Master view."""
+async def export_product_master_pdf_endpoint(request: Request, user=Depends(get_current_user)):
+    """Generates an A4 Landscape PDF export for the Product Master view.
+
+    Bugs fixed:
+      1. db.company_details → db.companies (correct table name)
+      2. Filter by user company_id (not empty filter which returned wrong company)
+      3. await _enrich_company_doc (it is async)
+      4. Use Request.json() to parse body (FastAPI dict annotation fails on raw JSON POST)
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
     products = payload.get("products") or []
-    company = await db.company_details.find_one({}) or {}
-    company = _enrich_company_doc(company)
-    
-    from pdf_generator import generate_product_master_pdf
-    pdf_bytes = generate_product_master_pdf(products, company)
+
+    try:
+        company_doc = await db.companies.find_one({"id": user["company_id"]}, {"_id": 0}) or {}
+        company = await _enrich_company_doc(company_doc)
+    except Exception as e:
+        logger.warning(f"export-pdf: could not fetch company doc: {e}")
+        company = {}
+
+    try:
+        from pdf_generator import generate_product_master_pdf
+        pdf_bytes = generate_product_master_pdf(products, company)
+    except Exception as e:
+        logger.error(f"export-pdf: PDF generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
+
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=Product_Master.pdf"}
     )
+
+
 
 
 app.include_router(api_router)
