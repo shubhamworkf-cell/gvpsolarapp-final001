@@ -107,6 +107,8 @@ export default function HighValueAssets() {
   // -------------------------------------------------------------
 
   // 1. ALL GOODS: Grouped by Product Name + Specification (Product Master Overview)
+  // Uses server-side pre-computed totals (total_inward, total_outward, balance, current_stock)
+  // from _compute_inventory_balances — same shared service as Product Master & Balance Report.
   const allGoodsGroups = useMemo(() => {
     const map = {};
     assets.forEach((item) => {
@@ -115,44 +117,34 @@ export default function HighValueAssets() {
       const key = `${pName}___${spec}`;
 
       if (!map[key]) {
+        // Read server-computed totals directly — do NOT re-derive from status/quantity
+        const serverBalance = floatVal(item.balance ?? item.current_stock ?? item.quantity ?? item.qty ?? 0);
+        const serverTotalIn = floatVal(item.total_inward ?? item.total_in ?? 0);
+        const serverTotalOut = floatVal(item.total_outward ?? item.total_out ?? 0);
         map[key] = {
           key,
           product_name: pName,
           specification: spec,
           brand: item.brand || "Unknown",
-          available_qty: 0,
-          dispatched_qty: 0,
-          returned_qty: 0,
-          total_inward: 0,
-          total_outward: 0,
+          available_qty: serverBalance,
+          dispatched_qty: serverTotalOut,
+          returned_qty: floatVal(item.total_returned ?? 0),
+          total_inward: serverTotalIn,
+          total_outward: serverTotalOut,
           items: [],
           last_inward_date: null,
           last_outward_date: null,
         };
       }
 
-      const st = (item.status || "Available").toLowerCase();
-      const q = floatVal(item.quantity || item.qty || 1.0);
-
       map[key].items.push(item);
-
-      if (st === "available") {
-        map[key].available_qty += q;
-        map[key].total_inward += q;
-      } else if (st === "dispatched" || st === "installed") {
-        map[key].dispatched_qty += q;
-        map[key].total_inward += q;
-        map[key].total_outward += q;
-      } else if (st === "returned") {
-        map[key].returned_qty += q;
-        map[key].total_inward += q;
-      }
 
       const moveDate = item.last_movement_date || item.outward_date || item.purchase_date || (item.created_at ? item.created_at.slice(0, 10) : null);
       if (moveDate) {
         if (!map[key].last_inward_date || moveDate > map[key].last_inward_date) {
           map[key].last_inward_date = moveDate;
         }
+        const st = (item.status || "").toLowerCase();
         if ((st === "dispatched" || st === "installed") && (!map[key].last_outward_date || moveDate > map[key].last_outward_date)) {
           map[key].last_outward_date = moveDate;
         }
@@ -172,23 +164,30 @@ export default function HighValueAssets() {
   }, [assets, debouncedSearch]);
 
   // 2. AVAILABLE GOODS: Grouped by Product for Warehouse Stock
+  // Uses server balance (current_stock / balance) to show warehouse stock.
   const availableGroups = useMemo(() => {
     const map = {};
     assets.forEach((item) => {
       const st = (item.status || "Available").toLowerCase();
-      if (st !== "available") return;
+      // Include "available", "in stock", and items with positive balance but no dispatch status
+      const hasBalance = floatVal(item.balance ?? item.current_stock ?? item.quantity ?? 0) > 0;
+      if (st !== "available" && st !== "in stock" && !hasBalance) return;
+      if (st === "dispatched" || st === "installed" || st === "returned") return;
 
       const pName = item.product_name || item.product || "Unknown Product";
-      if (!map[pName]) {
-        map[pName] = {
+      const spec = item.size_model || item.size || item.specification || "—";
+      const key = `${pName}___${spec}`;
+      if (!map[key]) {
+        map[key] = {
           product_name: pName,
-          specification: item.size_model || item.size || item.specification || "—",
+          specification: spec,
           available_qty: 0,
           items: [],
         };
       }
-      map[pName].available_qty += floatVal(item.quantity || item.qty || 1.0);
-      map[pName].items.push(item);
+      const bal = floatVal(item.balance ?? item.current_stock ?? item.quantity ?? item.qty ?? 0);
+      map[key].available_qty += bal > 0 ? bal : floatVal(item.quantity || item.qty || 0);
+      map[key].items.push(item);
     });
 
     let list = Object.values(map);
