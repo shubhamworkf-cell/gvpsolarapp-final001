@@ -7289,7 +7289,12 @@ async def list_assets(
         # Every High Value product (Name + Spec) in Product Master gets an entry.
         # Stock, Inward, Outward, Returned come directly from shared inventory.
         # ----------------------------------------------------------------
-        for p in products:
+        inward_hv_pns = set()
+        for ie in inward_entries:
+            if ie.get("high_value_asset") or ie.get("high_value_goods"):
+                inward_hv_pns.add(norm_product_name(ie.get("product") or ie.get("product_name")))
+
+        for p in inv_items:
             pn_norm = norm_product_name(p.get("name"))
             spec_val = p.get("size") or p.get("size_model") or p.get("specification") or p.get("capacity") or "—"
             ps_norm = norm_str(spec_val)
@@ -7307,18 +7312,20 @@ async def list_assets(
                 ihv is True or str(ihv).lower() in ["true", "1", "yes"] or
                 ihva is True or str(ihva).lower() in ["true", "1", "yes"] or
                 cat in ["high value", "high value goods", "hv", "asset", "equipment"] or
-                hv_products.get(pn_norm, False)
+                hv_products.get(pn_norm, False) or
+                pn_norm in inward_hv_pns or
+                any(kw in pn_norm for kw in hv_keywords)
             )
 
             if is_hv:
                 hv_pn_set.add(pn_norm)
                 if pkey not in seen_pm_keys:
                     seen_pm_keys.add(pkey)
-                    b_info = get_bal_info(pn_norm, spec_val)
-                    b_qty = float(b_info.get("balance", 0.0))
-                    t_in = float(b_info.get("total_in", 0.0))
-                    t_out = float(b_info.get("total_out", 0.0))
-                    t_ret = float(b_info.get("returned", 0.0))
+                    # Use directly from inv_items to prevent size-model resolution mismatch!
+                    b_qty = float(p.get("balance", 0.0))
+                    t_in = float(p.get("total_in", 0.0))
+                    t_out = float(p.get("total_out", 0.0))
+                    t_ret = float(p.get("returned", 0.0))
 
                     final_live_assets.append({
                         "id": f"pm-{p.get('id') or str(uuid.uuid4())}",
