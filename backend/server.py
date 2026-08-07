@@ -7353,11 +7353,46 @@ async def list_assets(
         logger.warning(f"Error matching outward/return status: {e}")
         final_live_assets = cid_assets
 
+    # Ensure every High Value product in Product Master is present in final_live_assets
+    try:
+        existing_pns = {norm_product_name(a.get("product_name") or a.get("product")) for a in final_live_assets}
+        for p in products:
+            pn_norm = norm_product_name(p.get("name"))
+            is_hv = (
+                p.get("high_value_goods") is True or 
+                p.get("high_value_asset") is True or 
+                p.get("is_high_value") is True or 
+                p.get("is_high_value_asset") is True or
+                hv_products.get(pn_norm, False) or
+                any(kw in (p.get("name") or "").upper() for kw in ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY", "HIGH VALUE", "HV"])
+            )
+            if is_hv and pn_norm and pn_norm not in existing_pns:
+                p_name = p.get("name")
+                spec_val = p.get("size") or p.get("size_model") or p.get("specification") or p.get("capacity") or "—"
+                final_live_assets.append({
+                    "id": p.get("id") or str(uuid.uuid4()),
+                    "company_id": cid,
+                    "product_name": p_name,
+                    "product": p_name,
+                    "size_model": spec_val,
+                    "specification": spec_val,
+                    "quantity": 0.0,
+                    "qty": 0.0,
+                    "serial_number": "N/A",
+                    "status": "Out of Stock",
+                    "client_name": "Unallocated",
+                    "site_location": "Central Warehouse",
+                    "last_movement_date": ""
+                })
+                existing_pns.add(pn_norm)
+    except Exception as e:
+        logger.warning(f"Error appending Product Master HV items: {e}")
+
     # Ensure every asset has full normalized field mapping
     for a in final_live_assets:
         p_val = a.get("product_name") or a.get("product") or "Unknown Product"
         s_val = a.get("size_model") or a.get("size") or a.get("specification") or "—"
-        q_val = float(a.get("quantity") or a.get("qty") or 1.0)
+        q_val = float(a.get("quantity") or a.get("qty") or 0.0)
         sn_val = a.get("serial_number") or "N/A"
         c_val = a.get("client_name") or "Unallocated"
         site_val = a.get("site_location") or "Central Warehouse"
