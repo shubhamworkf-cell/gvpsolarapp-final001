@@ -305,12 +305,10 @@ export default function HighValueAssets() {
   // Filter Count Calculations
   const counts = useMemo(() => {
     const avail = assets.filter((a) => (a.status || "Available").toLowerCase() === "available").length;
-    const disp = assets.filter((a) => {
-      const st = (a.status || "").toLowerCase();
-      return st === "dispatched" || st === "installed";
-    }).length;
+    const disp = assets.filter((a) => (a.status || "").toLowerCase() === "dispatched").length;
+    const inst = assets.filter((a) => (a.status || "").toLowerCase() === "installed").length;
     const ret = assets.filter((a) => (a.status || "").toLowerCase() === "returned").length;
-    return { all: assets.length, available: avail, dispatched: disp, returned: ret };
+    return { all: assets.length, available: avail, dispatched: disp, installed: inst, returned: ret };
   }, [assets]);
 
   return (
@@ -321,11 +319,11 @@ export default function HighValueAssets() {
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: "Outfit" }}>High Value Goods</h2>
             <Badge className="bg-amber-100 text-amber-900 border-amber-300 font-semibold text-xs flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-600" /> Serial Tracking Ledger
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-600" /> Live Serial Tracking Ledger
             </Badge>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Pure serial number ledger. Each row represents a single tracked serial unit, site location, allocated client, and complete movement history.
+            Pure live serial number ledger calculated directly from transaction history (Inward + Outward + Returns).
           </p>
         </div>
 
@@ -347,7 +345,8 @@ export default function HighValueAssets() {
           {[
             { id: "all", label: "All Serials", count: counts.all, icon: SlidersHorizontal },
             { id: "available", label: "Available", count: counts.available, icon: ArrowDownToLine },
-            { id: "dispatched", label: "Dispatched / Installed", count: counts.dispatched, icon: ArrowUpFromLine },
+            { id: "dispatched", label: "Dispatched", count: counts.dispatched, icon: ArrowUpFromLine },
+            { id: "installed", label: "Installed", count: counts.installed, icon: CheckCircle2 },
             { id: "returned", label: "Returned", count: counts.returned, icon: RotateCcw }
           ].map((sf) => {
             const Ic = sf.icon;

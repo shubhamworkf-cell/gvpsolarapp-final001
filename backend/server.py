@@ -7167,116 +7167,181 @@ async def list_assets(
     status: Optional[str] = None,
 ):
     cid = user["company_id"]
-    all_assets = _load_local_assets()
     hv_products = _load_local_high_value_products()
     hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
 
-    # Reconcile missing assets for high value inward entries
-    try:
-        inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(10000)
-        existing_inward_ids = {a.get("inward_entry_id") for a in all_assets if a.get("inward_entry_id")}
-        assets_changed = False
+    inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
+    outward_entries = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
+    stored_assets = _load_local_assets()
 
-        for ie in inward_entries:
-            pn = norm_product_name(ie.get("product"))
-            is_hv = (
-                ie.get("high_value_asset") or 
-                ie.get("high_value_goods") or 
-                hv_products.get(pn, False) or 
-                any(kw in pn for kw in hv_keywords)
-            )
-            if is_hv and ie.get("id") not in existing_inward_ids:
-                qty = float(ie.get("quantity") or 1.0)
-                sns = [sn.strip().upper() for sn in (ie.get("serial_numbers") or []) if sn.strip()]
-                vendor_val = ie.get("source_name") or ""
-                date_val = (ie.get("date") or now_iso())[:10]
-                challan_val = ie.get("reference_number") or ""
-                size_val = ie.get("size") or ""
+    serial_movements: Dict[str, List[Dict[str, Any]]] = {}
+    serial_metadata: Dict[str, Dict[str, Any]] = {}
 
-                if sns:
-                    for sn in sns:
-                        asset_doc = {
-                            "id": str(uuid.uuid4()),
-                            "company_id": cid,
-                            "inward_entry_id": ie["id"],
-                            "product_name": pn,
-                            "brand": vendor_val or "Unknown",
-                            "size_model": size_val,
-                            "quantity": 1.0,
-                            "serial_number": sn,
-                            "vendor": vendor_val,
-                            "purchase_date": date_val,
-                            "challan_number": challan_val,
-                            "client_id": None,
-                            "client_name": None,
-                            "installation_date": None,
-                            "warranty_status": "Active",
-                            "status": "Available",
-                            "created_at": now_iso()
-                        }
-                        all_assets.append(asset_doc)
-                else:
-                    asset_doc = {
-                        "id": str(uuid.uuid4()),
-                        "company_id": cid,
-                        "inward_entry_id": ie["id"],
+    for ie in inward_entries:
+        pn = norm_product_name(ie.get("product"))
+        is_hv = (
+            ie.get("high_value_asset") or 
+            ie.get("high_value_goods") or 
+            hv_products.get(pn, False) or 
+            any(kw in pn for kw in hv_keywords)
+        )
+        if not is_hv:
+            continue
+
+        date_val = (ie.get("date") or ie.get("created_at") or now_iso())[:10]
+        created_val = ie.get("created_at") or date_val
+        sns = [sn.strip().upper() for sn in (ie.get("serial_numbers") or []) if sn.strip()]
+        is_return = ie.get("source_type") == "Return From Client" or "return" in (ie.get("entry_type") or "").lower()
+
+        if sns:
+            for sn in sns:
+                if sn not in serial_movements:
+                    serial_movements[sn] = []
+                    serial_metadata[sn] = {
                         "product_name": pn,
-                        "brand": vendor_val or "Unknown",
-                        "size_model": size_val,
-                        "quantity": qty,
-                        "serial_number": "",
-                        "vendor": vendor_val,
+                        "size_model": ie.get("size") or "",
+                        "brand": ie.get("source_name") or "Unknown",
+                        "inward_entry_id": ie.get("id"),
+                        "vendor": ie.get("source_name") or "",
                         "purchase_date": date_val,
-                        "challan_number": challan_val,
-                        "client_id": None,
-                        "client_name": None,
-                        "installation_date": None,
-                        "warranty_status": "Active",
-                        "status": "Available",
-                        "created_at": now_iso()
+                        "challan_number": ie.get("reference_number") or ""
                     }
-                    all_assets.append(asset_doc)
-                assets_changed = True
-                existing_inward_ids.add(ie["id"])
+                
+                if is_return:
+                    serial_movements[sn].append({
+                        "type": "Returned",
+                        "date": date_val,
+                        "created_at": created_val,
+                        "status": "Returned",
+                        "site_location": "Central Warehouse",
+                        "client_name": ie.get("source_name") or ie.get("client_name") or "Client",
+                        "reference": ie.get("reference_number") or ""
+                    })
+                else:
+                    serial_movements[sn].append({
+                        "type": "Inward",
+                        "date": date_val,
+                        "created_at": created_val,
+                        "status": "Available",
+                        "site_location": "Central Warehouse",
+                        "client_name": None,
+                        "reference": ie.get("reference_number") or ""
+                    })
 
-        if assets_changed:
-            _save_local_assets(all_assets)
-    except Exception as e:
-        logger.warning(f"Error reconciling assets: {e}")
+    for oe in outward_entries:
+        pn = norm_product_name(oe.get("product"))
+        is_hv = (
+            oe.get("high_value_asset") or 
+            oe.get("high_value_goods") or 
+            hv_products.get(pn, False) or 
+            any(kw in pn for kw in hv_keywords)
+        )
+        if not is_hv:
+            continue
 
-    filtered = [a for a in all_assets if a.get("company_id") == cid]
+        date_val = (oe.get("date") or oe.get("created_at") or now_iso())[:10]
+        created_val = oe.get("created_at") or date_val
+        sns = [sn.strip().upper() for sn in (oe.get("serial_numbers") or []) if sn.strip()]
+        client_val = oe.get("client_name") or "Client"
+        site_val = oe.get("target_name") or oe.get("site_name") or (f"{client_val} Site" if client_val else "Client Site")
+
+        if sns:
+            for sn in sns:
+                if sn not in serial_movements:
+                    serial_movements[sn] = []
+                    serial_metadata[sn] = {
+                        "product_name": pn,
+                        "size_model": oe.get("size") or "",
+                        "brand": "Unknown",
+                        "inward_entry_id": None,
+                        "vendor": "",
+                        "purchase_date": date_val,
+                        "challan_number": oe.get("reference_number") or ""
+                    }
+                
+                serial_movements[sn].append({
+                    "type": "Outward",
+                    "date": date_val,
+                    "created_at": created_val,
+                    "status": "Dispatched",
+                    "site_location": site_val,
+                    "client_name": client_val,
+                    "client_id": oe.get("client_id"),
+                    "reference": oe.get("reference_number") or oe.get("outward_challan_no") or ""
+                })
+
+    for sa in stored_assets:
+        if sa.get("company_id") == cid and sa.get("serial_number"):
+            sn = sa.get("serial_number").strip().upper()
+            if sn and sn not in serial_movements:
+                serial_movements[sn] = [{
+                    "type": "Inward",
+                    "date": sa.get("purchase_date") or (sa.get("created_at") or "")[:10],
+                    "created_at": sa.get("created_at") or "",
+                    "status": sa.get("status") or "Available",
+                    "site_location": sa.get("site_location") or "Central Warehouse",
+                    "client_name": sa.get("client_name"),
+                    "reference": sa.get("challan_number") or ""
+                }]
+                serial_metadata[sn] = {
+                    "product_name": sa.get("product_name"),
+                    "size_model": sa.get("size_model") or sa.get("size") or "",
+                    "brand": sa.get("brand") or "Unknown",
+                    "inward_entry_id": sa.get("inward_entry_id"),
+                    "vendor": sa.get("vendor") or "",
+                    "purchase_date": sa.get("purchase_date"),
+                    "challan_number": sa.get("challan_number")
+                }
+
+    live_assets = []
+    for sn, movements in serial_movements.items():
+        movements.sort(key=lambda m: (m.get("date") or "", m.get("created_at") or ""))
+        latest = movements[-1] if movements else {}
+        meta = serial_metadata.get(sn, {})
+
+        existing_doc = next((a for a in stored_assets if a.get("company_id") == cid and (a.get("serial_number") or "").strip().upper() == sn), None)
+
+        asset_doc = {
+            "id": existing_doc.get("id") if existing_doc else f"asset-{sn}",
+            "company_id": cid,
+            "serial_number": sn,
+            "product_name": meta.get("product_name"),
+            "size_model": meta.get("size_model"),
+            "brand": meta.get("brand"),
+            "vendor": meta.get("vendor"),
+            "purchase_date": meta.get("purchase_date"),
+            "challan_number": meta.get("challan_number"),
+            "status": latest.get("status", "Available"),
+            "site_location": latest.get("site_location", "Central Warehouse"),
+            "client_name": latest.get("client_name") or (existing_doc.get("client_name") if existing_doc else None),
+            "client_id": latest.get("client_id") or (existing_doc.get("client_id") if existing_doc else None),
+            "outward_date": latest.get("date") if latest.get("type") == "Outward" else None,
+            "installation_date": latest.get("date") if latest.get("type") == "Outward" else None,
+            "last_movement_date": latest.get("date"),
+            "total_movements": len(movements),
+            "remarks": existing_doc.get("remarks", "") if existing_doc else "",
+            "created_at": existing_doc.get("created_at", now_iso()) if existing_doc else now_iso()
+        }
+        live_assets.append(asset_doc)
+
+    filtered = live_assets
 
     if search:
         search_lower = search.lower()
-        res_list = []
-        for a in filtered:
-            sn = (a.get("serial_number") or "").lower()
-            pn = (a.get("product_name") or "").lower()
-            cn = (a.get("client_name") or "").lower()
-            chn = (a.get("challan_number") or "").lower()
-            if (search_lower in sn or 
-                search_lower in pn or 
-                search_lower in cn or 
-                search_lower in chn):
-                res_list.append(a)
-        filtered = res_list
+        filtered = [
+            a for a in filtered
+            if (search_lower in (a.get("serial_number") or "").lower() or
+                search_lower in (a.get("product_name") or "").lower() or
+                search_lower in (a.get("client_name") or "").lower() or
+                search_lower in (a.get("site_location") or "").lower())
+        ]
 
-    if status:
-        if status.lower() == "warranty expired":
-            filtered = [a for a in filtered if a.get("warranty_status") == "Expired"]
-        elif status.lower() == "replacement":
-            filtered = [a for a in filtered if a.get("status") == "Replaced"]
+    if status and status.lower() != "all":
+        st_lower = status.lower()
+        if st_lower in ("dispatched", "installed"):
+            filtered = [a for a in filtered if a.get("status", "").lower() in ("dispatched", "installed")]
         else:
-            status_map = {
-                "available": "Available",
-                "installed": "Installed",
-                "returned": "Returned",
-                "dispatched": "Dispatched",
-                "scrapped": "Scrapped",
-                "replaced": "Replaced"
-            }
-            target_status = status_map.get(status.lower(), status)
-            filtered = [a for a in filtered if a.get("status") == target_status]
+            filtered = [a for a in filtered if a.get("status", "").lower() == st_lower]
 
     return filtered
 
