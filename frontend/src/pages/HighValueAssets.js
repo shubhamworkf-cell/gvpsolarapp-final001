@@ -107,51 +107,61 @@ export default function HighValueAssets() {
   // -------------------------------------------------------------
 
   // 1. ALL GOODS: Grouped by Product Name + Specification (Product Master Overview)
-  // Uses server-side pre-computed totals (total_inward, total_outward, balance, current_stock)
-  // from _compute_inventory_balances — same shared service as Product Master & Balance Report.
+  // Uses server-side pre-computed totals (balance, total_inward, total_outward)
+  // stamped on every record from _compute_inventory_balances — same shared service
+  // as Product Master & Balance Report. Does NOT sum quantities itself.
   const allGoodsGroups = useMemo(() => {
+    // Pass 1: group all records by product key
     const map = {};
     assets.forEach((item) => {
       const pName = item.product_name || item.product || "Unknown Product";
       const spec = item.size_model || item.size || item.specification || "—";
       const key = `${pName}___${spec}`;
-
       if (!map[key]) {
-        // Read server-computed totals directly — do NOT re-derive from status/quantity
-        const serverBalance = floatVal(item.balance ?? item.current_stock ?? item.quantity ?? item.qty ?? 0);
-        const serverTotalIn = floatVal(item.total_inward ?? item.total_in ?? 0);
-        const serverTotalOut = floatVal(item.total_outward ?? item.total_out ?? 0);
-        map[key] = {
-          key,
-          product_name: pName,
-          specification: spec,
-          brand: item.brand || "Unknown",
-          available_qty: serverBalance,
-          dispatched_qty: serverTotalOut,
-          returned_qty: floatVal(item.total_returned ?? 0),
-          total_inward: serverTotalIn,
-          total_outward: serverTotalOut,
-          items: [],
-          last_inward_date: null,
-          last_outward_date: null,
-        };
+        map[key] = { key, product_name: pName, specification: spec, items: [], canonical: null };
       }
-
       map[key].items.push(item);
 
-      const moveDate = item.last_movement_date || item.outward_date || item.purchase_date || (item.created_at ? item.created_at.slice(0, 10) : null);
+      // Pick the best canonical record: prefer available/in-stock/out-of-stock
+      // over dispatched/returned, because balance-bearing records are non-dispatch.
+      const st = (item.status || "").toLowerCase();
+      const isDispatch = st === "dispatched" || st === "installed";
+      if (!map[key].canonical || (!isDispatch && (map[key].canonical.status || "").toLowerCase() === "dispatched")) {
+        map[key].canonical = item;
+      }
+
+      // Track dates
+      const moveDate = item.last_movement_date || item.outward_date || item.purchase_date
+        || (item.created_at ? item.created_at.slice(0, 10) : null);
       if (moveDate) {
         if (!map[key].last_inward_date || moveDate > map[key].last_inward_date) {
           map[key].last_inward_date = moveDate;
         }
-        const st = (item.status || "").toLowerCase();
-        if ((st === "dispatched" || st === "installed") && (!map[key].last_outward_date || moveDate > map[key].last_outward_date)) {
+        if (isDispatch && (!map[key].last_outward_date || moveDate > map[key].last_outward_date)) {
           map[key].last_outward_date = moveDate;
         }
       }
     });
 
-    let list = Object.values(map);
+    // Pass 2: read totals from canonical record (always from shared service)
+    let list = Object.values(map).map((g) => {
+      const c = g.canonical || g.items[0] || {};
+      return {
+        key: g.key,
+        product_name: g.product_name,
+        specification: g.specification,
+        brand: c.brand || "Unknown",
+        available_qty: floatVal(c.balance ?? c.current_stock ?? 0),
+        dispatched_qty: floatVal(c.total_outward ?? c.total_out ?? 0),
+        returned_qty: floatVal(c.total_returned ?? 0),
+        total_inward: floatVal(c.total_inward ?? c.total_in ?? 0),
+        total_outward: floatVal(c.total_outward ?? c.total_out ?? 0),
+        items: g.items,
+        last_inward_date: g.last_inward_date || null,
+        last_outward_date: g.last_outward_date || null,
+      };
+    });
+
     if (debouncedSearch) {
       const q = debouncedSearch.toLowerCase();
       list = list.filter(
@@ -163,30 +173,29 @@ export default function HighValueAssets() {
     return list;
   }, [assets, debouncedSearch]);
 
+
   // 2. AVAILABLE GOODS: Grouped by Product for Warehouse Stock
-  // Uses server balance (current_stock / balance) to show warehouse stock.
+  // Uses server balance stamped by _compute_inventory_balances — NOT accumulated per record.
   const availableGroups = useMemo(() => {
     const map = {};
     assets.forEach((item) => {
-      const st = (item.status || "Available").toLowerCase();
-      // Include "available", "in stock", and items with positive balance but no dispatch status
-      const hasBalance = floatVal(item.balance ?? item.current_stock ?? item.quantity ?? 0) > 0;
-      if (st !== "available" && st !== "in stock" && !hasBalance) return;
+      const st = (item.status || "").toLowerCase();
+      // Skip dispatched/returned — they are NOT in warehouse stock
       if (st === "dispatched" || st === "installed" || st === "returned") return;
 
       const pName = item.product_name || item.product || "Unknown Product";
       const spec = item.size_model || item.size || item.specification || "—";
       const key = `${pName}___${spec}`;
       if (!map[key]) {
+        // Read balance once from server-provided field (never accumulate)
+        const bal = floatVal(item.balance ?? item.current_stock ?? item.quantity ?? item.qty ?? 0);
         map[key] = {
           product_name: pName,
           specification: spec,
-          available_qty: 0,
+          available_qty: bal,  // set once from server data, never re-summed
           items: [],
         };
       }
-      const bal = floatVal(item.balance ?? item.current_stock ?? item.quantity ?? item.qty ?? 0);
-      map[key].available_qty += bal > 0 ? bal : floatVal(item.quantity || item.qty || 0);
       map[key].items.push(item);
     });
 
@@ -201,6 +210,7 @@ export default function HighValueAssets() {
     }
     return list;
   }, [assets, debouncedSearch]);
+
 
   // 3. DISPATCHED: Grouped by Product + Client + Outward Date
   const dispatchedGroups = useMemo(() => {
