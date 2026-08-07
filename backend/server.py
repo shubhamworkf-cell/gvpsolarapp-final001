@@ -7296,6 +7296,27 @@ async def list_assets(
     except Exception as e:
         logger.warning(f"Error matching outward/return status: {e}")
 
+    # Ensure every asset has full normalized field mapping
+    for a in cid_assets:
+        p_val = a.get("product_name") or a.get("product") or "Unknown Product"
+        s_val = a.get("size_model") or a.get("size") or a.get("specification") or "—"
+        q_val = float(a.get("quantity") or a.get("qty") or 1.0)
+        sn_val = a.get("serial_number") or "N/A"
+        c_val = a.get("client_name") or "Unallocated"
+        site_val = a.get("site_location") or "Central Warehouse"
+        d_val = a.get("last_movement_date") or a.get("outward_date") or a.get("installation_date") or a.get("purchase_date") or ""
+
+        a["product_name"] = p_val
+        a["product"] = p_val
+        a["size_model"] = s_val
+        a["specification"] = s_val
+        a["quantity"] = q_val
+        a["qty"] = q_val
+        a["serial_number"] = sn_val
+        a["client_name"] = c_val
+        a["site_location"] = site_val
+        a["last_movement_date"] = d_val
+
     filtered = cid_assets
 
     if search:

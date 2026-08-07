@@ -392,55 +392,68 @@ export default function HighValueAssets() {
             <table className="w-full text-sm text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
-                  <th className="p-4 font-semibold">Product Name &amp; Spec</th>
+                  <th className="p-4 font-semibold">Product Name</th>
+                  <th className="p-4 font-semibold">Specification</th>
+                  <th className="p-4 font-semibold text-center">Qty</th>
                   <th className="p-4 font-semibold">Serial Number</th>
-                  <th className="p-4 font-semibold">Status</th>
-                  <th className="p-4 font-semibold">Current Site</th>
                   <th className="p-4 font-semibold">Allocated Client</th>
-                  <th className="p-4 font-semibold">Last Movement</th>
+                  <th className="p-4 font-semibold">Current Site / Location</th>
+                  <th className="p-4 font-semibold">Movement Date</th>
+                  <th className="p-4 font-semibold">Status</th>
                   <th className="p-4 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="p-12 text-center text-slate-500 text-xs">
+                    <td colSpan={9} className="p-12 text-center text-slate-500 text-xs">
                       Loading serial tracking ledger...
                     </td>
                   </tr>
                 ) : filteredAssets.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-12 text-center text-slate-500 text-xs">
+                    <td colSpan={9} className="p-12 text-center text-slate-500 text-xs">
                       <Package className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-                      No serial tracking records found matching the filter.
+                      No high value tracking records found matching the filter.
                     </td>
                   </tr>
                 ) : (
                   filteredAssets.map((asset, idx) => {
                     const pName = asset.product_name || asset.product || "Unknown Product";
-                    const spec = asset.size_model || asset.size || "—";
+                    const spec = asset.size_model || asset.size || asset.specification || "—";
+                    const qty = asset.quantity || asset.qty || 1;
+                    const snDisplay = asset.serial_number && asset.serial_number !== "NO-SERIAL" ? asset.serial_number : "N/A";
                     const isInstalled = asset.status === "Installed" || asset.status === "Dispatched";
                     const isReturned = asset.status === "Returned";
-                    const lastMoveDate = asset.last_movement_date || asset.installation_date || asset.purchase_date || (asset.created_at ? asset.created_at.slice(0, 10) : "—");
+                    const lastMoveDate = asset.last_movement_date || asset.outward_date || asset.installation_date || asset.purchase_date || (asset.created_at ? asset.created_at.slice(0, 10) : "—");
 
                     return (
-                      <tr key={asset.id || idx} className="hover:bg-slate-50/80 transition-colors">
-                        {/* Product & Spec */}
-                        <td className="p-4">
-                          <div className="font-semibold text-slate-900 text-xs">{pName}</div>
-                          <div className="text-[11px] text-slate-500 font-mono mt-0.5">{spec}</div>
+                      <tr key={asset.id || idx} className="hover:bg-slate-50/80 transition-colors text-xs">
+                        {/* Product Name */}
+                        <td className="p-4 font-semibold text-slate-900">
+                          {pName}
+                        </td>
+
+                        {/* Specification */}
+                        <td className="p-4 font-mono text-slate-600">
+                          {spec}
+                        </td>
+
+                        {/* Quantity */}
+                        <td className="p-4 text-center font-mono font-bold text-slate-800">
+                          {qty}
                         </td>
 
                         {/* Serial Number + 1-Click Copy */}
-                        <td className="p-4 font-mono font-bold text-slate-900 text-xs">
+                        <td className="p-4 font-mono font-bold text-slate-900">
                           <div className="flex items-center gap-1.5">
                             <span className="bg-slate-100 text-slate-900 px-2 py-1 rounded border border-slate-200">
-                              {asset.serial_number}
+                              {snDisplay}
                             </span>
-                            {asset.serial_number && asset.serial_number !== "NO-SERIAL" && (
+                            {snDisplay !== "N/A" && (
                               <button
                                 type="button"
-                                onClick={() => handleCopySerial(asset.serial_number)}
+                                onClick={() => handleCopySerial(snDisplay)}
                                 className="text-slate-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50 transition"
                                 title="Copy Serial Number"
                               >
@@ -448,6 +461,27 @@ export default function HighValueAssets() {
                               </button>
                             )}
                           </div>
+                        </td>
+
+                        {/* Allocated Client */}
+                        <td className="p-4 font-medium text-slate-900">
+                          <div className="flex items-center gap-1.5">
+                            <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span className="truncate max-w-[150px]">{asset.client_name || "Unallocated"}</span>
+                          </div>
+                        </td>
+
+                        {/* Current Site */}
+                        <td className="p-4 text-slate-700">
+                          <div className="flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span className="truncate max-w-[150px]">{asset.site_location || "Central Warehouse"}</span>
+                          </div>
+                        </td>
+
+                        {/* Movement Date */}
+                        <td className="p-4 font-mono text-slate-600 whitespace-nowrap">
+                          {lastMoveDate}
                         </td>
 
                         {/* Status Badge */}
@@ -466,28 +500,7 @@ export default function HighValueAssets() {
                           </span>
                         </td>
 
-                        {/* Current Site */}
-                        <td className="p-4 text-xs text-slate-700">
-                          <div className="flex items-center gap-1.5">
-                            <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span className="truncate max-w-[160px]">{asset.site_location || "Warehouse"}</span>
-                          </div>
-                        </td>
-
-                        {/* Allocated Client */}
-                        <td className="p-4 text-xs font-medium text-slate-900">
-                          <div className="flex items-center gap-1.5">
-                            <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span className="truncate max-w-[160px]">{asset.client_name || "Unallocated"}</span>
-                          </div>
-                        </td>
-
-                        {/* Last Movement Date */}
-                        <td className="p-4 text-xs font-mono text-slate-600 whitespace-nowrap">
-                          {lastMoveDate}
-                        </td>
-
-                        {/* Actions: View, Edit, History */}
+                        {/* Actions: View, History, Edit */}
                         <td className="p-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             <Button
