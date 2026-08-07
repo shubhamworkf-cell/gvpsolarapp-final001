@@ -106,15 +106,19 @@ export default function HighValueAssets() {
   // DATA AGGREGATION & GROUPING FOR THE 4 SECTIONS
   // -------------------------------------------------------------
 
-  // 1. ALL GOODS: Grouped by Product (Inventory Overview, Product Master style)
+  // 1. ALL GOODS: Grouped by Product Name + Specification (Product Master Overview)
   const allGoodsGroups = useMemo(() => {
     const map = {};
     assets.forEach((item) => {
       const pName = item.product_name || item.product || "Unknown Product";
-      if (!map[pName]) {
-        map[pName] = {
+      const spec = item.size_model || item.size || item.specification || "—";
+      const key = `${pName}___${spec}`;
+
+      if (!map[key]) {
+        map[key] = {
+          key,
           product_name: pName,
-          specification: item.size_model || item.size || item.specification || "—",
+          specification: spec,
           brand: item.brand || "Unknown",
           available_qty: 0,
           dispatched_qty: 0,
@@ -130,27 +134,27 @@ export default function HighValueAssets() {
       const st = (item.status || "Available").toLowerCase();
       const q = floatVal(item.quantity || item.qty || 1.0);
 
-      map[pName].items.push(item);
+      map[key].items.push(item);
 
       if (st === "available") {
-        map[pName].available_qty += q;
-        map[pName].total_inward += q;
+        map[key].available_qty += q;
+        map[key].total_inward += q;
       } else if (st === "dispatched" || st === "installed") {
-        map[pName].dispatched_qty += q;
-        map[pName].total_inward += q;
-        map[pName].total_outward += q;
+        map[key].dispatched_qty += q;
+        map[key].total_inward += q;
+        map[key].total_outward += q;
       } else if (st === "returned") {
-        map[pName].returned_qty += q;
-        map[pName].total_inward += q;
+        map[key].returned_qty += q;
+        map[key].total_inward += q;
       }
 
       const moveDate = item.last_movement_date || item.outward_date || item.purchase_date || (item.created_at ? item.created_at.slice(0, 10) : null);
       if (moveDate) {
-        if (!map[pName].last_inward_date || moveDate > map[pName].last_inward_date) {
-          map[pName].last_inward_date = moveDate;
+        if (!map[key].last_inward_date || moveDate > map[key].last_inward_date) {
+          map[key].last_inward_date = moveDate;
         }
-        if ((st === "dispatched" || st === "installed") && (!map[pName].last_outward_date || moveDate > map[pName].last_outward_date)) {
-          map[pName].last_outward_date = moveDate;
+        if ((st === "dispatched" || st === "installed") && (!map[key].last_outward_date || moveDate > map[key].last_outward_date)) {
+          map[key].last_outward_date = moveDate;
         }
       }
     });
