@@ -1906,6 +1906,11 @@ async def get_current_user(request: Request) -> dict:
     if not user or not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="User not found")
 
+    # Ensure company_id is guaranteed on the user dictionary
+    if not user.get("company_id"):
+        cid = (payload.get("company_id") if isinstance(payload, dict) else None) or "COMP-001"
+        user["company_id"] = cid
+
     if user.get("role") == "Installer":
         perms = user.get("permissions")
         if not isinstance(perms, dict):
@@ -1917,7 +1922,6 @@ async def get_current_user(request: Request) -> dict:
 
     # Store in cache so subsequent requests in next 5 min skip Supabase round-trips
     _cache_put_user(token, user)
-    logger.error(f"DEBUG: get_current_user returning {user.get('role')} with perms: {user.get('permissions')}")
     return user
 
 # ---------- Models ----------
@@ -6805,7 +6809,8 @@ async def add_inward(data: InwardIn, user=Depends(get_current_user)):
 
 @api_router.get("/inventory/inward")
 async def list_inward(user=Depends(get_current_user)):
-    entries = await db.inward_entries.find({"company_id": user["company_id"]}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    cid = user.get("company_id") or "COMP-001"
+    entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return [_enrich_inward_with_assets(parse_inward_client_info(e)) for e in entries]
 
 @api_router.patch("/inventory/inward/{entry_id}")
@@ -6941,7 +6946,8 @@ async def add_outward(data: OutwardIn, user=Depends(get_current_user)):
 
 @api_router.get("/inventory/outward")
 async def list_outward(user=Depends(get_current_user), status: Optional[str] = None):
-    q: Dict[str, Any] = {"company_id": user["company_id"]}
+    cid = user.get("company_id") or "COMP-001"
+    q: Dict[str, Any] = {"company_id": cid}
     if status:
         q["status"] = status
     entries = await db.outward_entries.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
