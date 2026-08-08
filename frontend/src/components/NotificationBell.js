@@ -35,6 +35,12 @@ export default function NotificationBell() {
                 });
               } catch (_) {}
             }
+            // Single-pulse device vibration where supported
+            if (typeof window !== "undefined" && "navigator" in window && typeof navigator.vibrate === "function") {
+              try {
+                navigator.vibrate([200, 100, 200]);
+              } catch (_) {}
+            }
           }
         }
         seenIdsRef.current.add(n.id);
@@ -59,7 +65,7 @@ export default function NotificationBell() {
     }
 
     load();
-    const timer = setInterval(load, 12000); // 12s lightweight polling
+    const timer = setInterval(load, 3000); // 3s fast polling for near-instant delivery
     return () => clearInterval(timer);
   }, []);
 
