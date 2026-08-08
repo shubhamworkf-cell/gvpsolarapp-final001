@@ -1859,6 +1859,12 @@ async def get_current_user(request: Request) -> dict:
     # ── Fast path: return cached user if token is still fresh ──────────────────
     cached = _cache_get_user(token)
     if cached:
+        if not cached.get("company_id"):
+            cached["company_id"] = "COMP-001"
+        if not cached.get("name"):
+            cached["name"] = cached.get("full_name") or "User"
+        if not cached.get("id"):
+            cached["id"] = cached.get("sub") or "user"
         return cached
 
     # ── Slow path: validate with JWT secret or Supabase and fetch profile ──
@@ -1898,9 +1904,22 @@ async def get_current_user(request: Request) -> dict:
                 "id": payload.get("id") or payload.get("sub") or user_id,
                 "company_id": payload.get("company_id") or "COMP-001",
                 "role": payload.get("role") or "Admin",
-                "name": payload.get("name") or "User",
+                "name": payload.get("name") or payload.get("full_name") or "User",
+                "full_name": payload.get("full_name") or payload.get("name") or "User",
                 "email": payload.get("email") or "",
                 "permissions": payload.get("permissions") or {}
+            }
+        elif 'res' in locals() and res and hasattr(res, 'user') and res.user:
+            user_meta = getattr(res.user, 'user_metadata', {}) or {}
+            u_name = user_meta.get("full_name") or user_meta.get("name") or getattr(res.user, 'email', '') or "User"
+            user = {
+                "id": res.user.id,
+                "company_id": user_meta.get("company_id") or "COMP-001",
+                "name": u_name,
+                "full_name": u_name,
+                "email": getattr(res.user, 'email', '') or "",
+                "role": user_meta.get("role") or "Admin",
+                "permissions": {}
             }
 
     if not user or not isinstance(user, dict):
@@ -6805,8 +6824,10 @@ async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: st
 async def add_inward(data: InwardIn, user=Depends(get_current_user)):
     if not has_perm(user, "data_management", "create"):
         raise HTTPException(status_code=403, detail="Missing permission: data_management.create")
-    user_name = user.get("name") or user.get("full_name") or "User"
-    doc = await save_inward_entry_logic(data, user.get("company_id") or "COMP-001", user.get("id") or "user", user_name, source="manual")
+    cid = user.get("company_id") or "COMP-001"
+    uid = user.get("id") or user.get("sub") or "user"
+    uname = user.get("name") or user.get("full_name") or "User"
+    doc = await save_inward_entry_logic(data, cid, uid, uname, source="manual")
     return _enrich_inward_with_assets(parse_inward_client_info(doc))
 
 
