@@ -125,13 +125,18 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
       const payload = { ...form, quantity: Number(form.quantity) };
       if (editing) {
         await api.patch(`/inventory/inward/${editing.id}`, payload);
+        const { data: updated } = await api.get("/inventory/inward");
+        const verified = updated.find(x => x.id === editing.id);
+        if (!verified) throw new Error("Transaction verification failed");
+        
+        await load(); onChanged?.();
         toast.success("Inward entry updated");
         reset();
       } else {
         await api.post("/inventory/inward", payload);
+        await load(); onChanged?.();
         toast.success("Inward saved");
         if (autoContinue) {
-          // carry-forward selected fields, blank the rest
           const carried = {};
           carryFields.forEach((k) => { if (form[k] !== undefined) carried[k] = form[k]; });
           setForm({ ...applyDefaults(EMPTY(), defaults), ...carried });
@@ -139,7 +144,6 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
           reset();
         }
       }
-      load(); onChanged?.();
     } catch (e) { toast.error(formatApiError(e)); }
     finally { setBusy(false); }
   };

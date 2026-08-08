@@ -6908,6 +6908,7 @@ async def update_inward(entry_id: str, data: InwardIn, user=Depends(get_current_
         
     await log_activity(cid, user["id"], user["name"], "Inward Updated", f"{pn} × {data.quantity}")
     await sync_inventory_master(cid)
+    invalidate_products_cache(cid)
     res = await db.inward_entries.find_one({"id": entry_id, "company_id": cid}, {"_id": 0})
     return _enrich_inward_with_assets(parse_inward_client_info(res))
 
@@ -6928,6 +6929,7 @@ async def delete_inward(entry_id: str, user=Depends(get_current_user)):
     
     await log_activity(cid, user["id"], user["name"], "Inward Deleted", f"{existing.get('product')} × {existing.get('quantity')}")
     await sync_inventory_master(cid)
+    invalidate_products_cache(cid)
     return {"ok": True}
 
 @api_router.post("/inventory/outward")
@@ -7149,6 +7151,7 @@ async def update_outward(entry_id: str, data: OutwardIn, user=Depends(get_curren
     
     await log_activity(cid, user["id"], user["name"], "Outward Updated", f"{pn} × {data.quantity}")
     await sync_inventory_master(cid)
+    invalidate_products_cache(cid)
     res = await db.outward_entries.find_one({"id": entry_id, "company_id": cid}, {"_id": 0})
     return _enrich_outward_with_assets(res)
 
@@ -7175,6 +7178,7 @@ async def delete_outward(entry_id: str, user=Depends(get_current_user)):
     
     await log_activity(cid, user["id"], user["name"], "Outward Deleted", f"{existing.get('product')} × {existing.get('quantity')}")
     await sync_inventory_master(cid)
+    invalidate_products_cache(cid)
     return {"ok": True}
 
 # ---------- High Value Assets ----------

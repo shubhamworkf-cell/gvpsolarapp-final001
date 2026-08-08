@@ -136,10 +136,16 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
       };
       if (editing) {
         await api.patch(`/inventory/outward/${editing.id}`, payload);
+        const { data: updated } = await api.get("/inventory/outward");
+        const verified = updated.find(x => x.id === editing.id);
+        if (!verified) throw new Error("Transaction verification failed");
+        
+        await load(); onChanged?.();
         toast.success("Outward entry updated");
         reset();
       } else {
         await api.post("/inventory/outward", payload);
+        await load(); onChanged?.();
         toast.success("Outward saved");
         if (autoContinue) {
           const carried = {};
@@ -149,7 +155,6 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
           reset();
         }
       }
-      load(); onChanged?.();
       setHvDialogOpen(false);
     } catch (e) { toast.error(formatApiError(e)); }
     finally { setBusy(false); }

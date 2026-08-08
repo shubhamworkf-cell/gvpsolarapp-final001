@@ -59,7 +59,11 @@ export function useInventoryHistory(params = {}) {
 
 export function useInvalidateInventoryHistory() {
   const queryClient = useQueryClient();
-  return () => queryClient.invalidateQueries({ queryKey: ["inventory", "history"] });
+  return () => {
+    queryClient.invalidateQueries({ queryKey: ["inventory", "history"] });
+    queryClient.invalidateQueries({ queryKey: ["inventory", "inward"] });
+    queryClient.invalidateQueries({ queryKey: ["inventory", "outward"] });
+  };
 }
 
 export function useInwardList() {

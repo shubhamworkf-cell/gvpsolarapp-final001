@@ -51,8 +51,13 @@ export default function EditTransactionDialog({ transaction, onClose, onSaved, p
     const payload = { ...form, quantity: Number(form.quantity) };
     try {
       await api.patch(url, payload);
+      // Explicitly GET to verify database row as requested
+      const { data: updated } = await api.get(isInward ? "/inventory/inward" : "/inventory/outward");
+      const verified = updated.find(x => x.id === form.id);
+      if (!verified) throw new Error("Transaction verification failed");
+      
+      if (onSaved) await onSaved();
       toast.success("Transaction updated");
-      onSaved?.();
     } catch (e) { toast.error(formatApiError(e)); }
     finally { setBusy(false); }
   };
