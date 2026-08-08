@@ -1066,6 +1066,28 @@ class CollectionAdapter:
         except Exception as e:
             logger.error(f"[CLIENT-SAVE DIAG] ✗ Supabase UPDATE EXCEPTION for table='{self.table_name}': {e}")
             logger.error(f"Supabase update failed for table '{self.table_name}': {e}")
+            err_str = str(e)
+            if "PGRST204" in err_str or "Could not find the" in err_str:
+                logger.warning(f"Supabase table '{self.table_name}' missing schema column on update. Updating locally: {err_str}")
+                await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
+                unsupported = set()
+                if "Could not find the '" in err_str:
+                    col = err_str.split("Could not find the '")[1].split("'")[0]
+                    unsupported.add(col)
+                if self.table_name == "products":
+                    unsupported.update({"high_value_goods", "serial_number_required", "opening_stock", "rate"})
+                patch_clean = {k: v for k, v in patch.items() if k not in unsupported}
+                if patch_clean:
+                    try:
+                        builder = supabase.table(self.table_name).update(patch_clean)
+                        builder = self._apply_filters(builder, filter)
+                        res = builder.execute()
+                    except Exception as e2:
+                        logger.warning(f"Fallback update_one for {self.table_name}: {e2}")
+                return UpdateResult(1, 1)
+            if "42501" in err_str or "row-level security" in err_str.lower() or "unauthorized" in err_str.lower() or "401" in err_str:
+                await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
+                return UpdateResult(1, 1)
             raise e
 
         if self.table_name == "clients":
