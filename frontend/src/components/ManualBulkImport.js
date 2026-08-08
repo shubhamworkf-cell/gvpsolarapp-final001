@@ -106,8 +106,8 @@ const inferFieldMap = (headerRow, mode) => {
   });
 
   const fallback = mode === "outward"
-    ? ["product", "size", "quantity", "unit", "client_name", "project_name", "outward_challan_no", "remarks"]
-    : ["product", "size", "quantity", "unit", "source_name", "reference_number", "date", "remarks"];
+    ? ["product", "size", "quantity", "unit", "outward_challan_no", "client_name", "date", "remarks"]
+    : ["product", "size", "quantity", "unit", "reference_number", "source_name", "date", "remarks"];
 
   fallback.forEach((field, index) => {
     if (map[field] === undefined) map[field] = index;
@@ -146,6 +146,9 @@ const parseArraysToRows = (arrays, mode = "inward", clients = []) => {
       const idx = fieldMap[field];
       return idx !== undefined ? String(row[idx] ?? "").trim() : "";
     };
+    const rawClient = get("client_name");
+    const matchedClient = findClient(rawClient, clients);
+    
     return {
       _id: index,
       _selected: true,
@@ -154,18 +157,18 @@ const parseArraysToRows = (arrays, mode = "inward", clients = []) => {
       quantity: get("quantity") !== "" ? (Number(get("quantity").replace(/,/g, "")) || 0) : "",
       unit: get("unit") || "Nos",
       source_type: "",
-      source_name: "",
-      reference_number: "",
+      source_name: get("source_name") || "",
+      reference_number: get("reference_number") || "",
       reference_type: "Challan Number",
-      bill_number: "",
-      client_id: "",
-      client_name: "",
-      project_name: "",
+      bill_number: get("bill_number") || "",
+      client_id: matchedClient ? matchedClient.id : "",
+      client_name: matchedClient ? matchedClient.full_name : get("client_name") || "",
+      project_name: get("project_name") || "",
       project_id: "",
-      outward_challan_no: "",
-      status: "",
-      remarks: "",
-      date: "",
+      outward_challan_no: get("outward_challan_no") || "",
+      status: get("status") || "",
+      remarks: get("remarks") || "",
+      date: get("date") || "",
     };
   }).filter((row) => row.product || row.quantity);
 };
