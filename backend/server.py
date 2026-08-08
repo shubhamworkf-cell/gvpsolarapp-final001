@@ -1906,10 +1906,12 @@ async def get_current_user(request: Request) -> dict:
     if not user or not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="User not found")
 
-    # Ensure company_id is guaranteed on the user dictionary
+    # Ensure company_id and name are guaranteed on the user dictionary
     if not user.get("company_id"):
         cid = (payload.get("company_id") if isinstance(payload, dict) else None) or "COMP-001"
         user["company_id"] = cid
+    if not user.get("name"):
+        user["name"] = user.get("full_name") or "User"
 
     if user.get("role") == "Installer":
         perms = user.get("permissions")
@@ -6803,7 +6805,8 @@ async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: st
 async def add_inward(data: InwardIn, user=Depends(get_current_user)):
     if not has_perm(user, "data_management", "create"):
         raise HTTPException(status_code=403, detail="Missing permission: data_management.create")
-    doc = await save_inward_entry_logic(data, user["company_id"], user["id"], user["name"], source="manual")
+    user_name = user.get("name") or user.get("full_name") or "User"
+    doc = await save_inward_entry_logic(data, user.get("company_id") or "COMP-001", user.get("id") or "user", user_name, source="manual")
     return _enrich_inward_with_assets(parse_inward_client_info(doc))
 
 
@@ -6941,7 +6944,8 @@ async def delete_inward(entry_id: str, user=Depends(get_current_user)):
 async def add_outward(data: OutwardIn, user=Depends(get_current_user)):
     if not has_perm(user, "data_management", "create"):
         raise HTTPException(status_code=403, detail="Missing permission: data_management.create")
-    doc = await save_outward_entry_logic(data, user["company_id"], user["id"], user["name"], source="manual")
+    user_name = user.get("name") or user.get("full_name") or "User"
+    doc = await save_outward_entry_logic(data, user.get("company_id") or "COMP-001", user.get("id") or "user", user_name, source="manual")
     return _enrich_outward_with_assets(doc)
 
 @api_router.get("/inventory/outward")
