@@ -379,7 +379,16 @@ export default function HighValueAssets() {
                     dispatchedTransactions.map((row, idx) => (
                       <tr key={row.id || idx} className="hover:bg-slate-50/80 transition-colors">
                         <td className="p-4 text-xs font-mono text-slate-600">{row.date}</td>
-                        <td className="p-4 font-semibold text-slate-900">{row.product}</td>
+                        <td className="p-4">
+                          <div className="font-semibold text-slate-900">{row.product}</div>
+                          {row.serial_numbers && row.serial_numbers.length > 0 && (
+                            <div className="text-[11px] text-slate-500 font-mono mt-1 space-y-0.5">
+                              {row.serial_numbers.map((sn, snIdx) => (
+                                <div key={snIdx}>{sn}</div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
                         <td className="p-4 text-slate-700 text-xs font-mono">{row.size || "—"}</td>
                         <td className="p-4 text-center font-bold text-blue-700">{row.quantity} {row.unit}</td>
                         <td className="p-4 text-xs font-mono text-slate-700">{row.challan_number}</td>

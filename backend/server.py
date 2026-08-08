@@ -941,6 +941,7 @@ class CollectionAdapter:
         while True:
             try:
                 res = supabase.table(self.table_name).insert(document, returning="minimal").execute()
+                await LocalFileCollection(self.table_name).insert_one(document)
                 return InsertOneResult(document.get("id"))
             except Exception as e:
                 err_str = str(e)
@@ -1152,6 +1153,10 @@ class CollectionAdapter:
                     raise e
             else:
                 raise e
+        try:
+            await LocalFileCollection(self.table_name).update_many(filter, update)
+        except Exception:
+            pass
         return UpdateResult(len(res.data), len(res.data))
 
     async def delete_one(self, filter):
@@ -3311,69 +3316,86 @@ async def _get_client_high_value_assets(client_doc: dict, company_id: str) -> li
     c_name = (client_doc.get("full_name") or "").strip().lower()
     c_addr = f"{client_doc.get('address') or ''}, {client_doc.get('city') or ''}".strip(", ")
 
-    all_assets = _load_local_assets()
+    outwards = await db.outward_entries.find({"company_id": company_id}, {"_id": 0}).to_list(100000)
+    
+    # We need to know which ones are high value.
+    items, _, _, _ = await _compute_inventory_balances(company_id)
+    local_hv = _load_local_high_value_products()
+    hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
+    
+    hv_inward_product_names = set()
+    inwards = await db.inward_entries.find({"company_id": company_id}, {"_id": 0}).to_list(100000)
+    for ie in inwards:
+        if ie.get("high_value_asset") or ie.get("high_value_goods"):
+            pn = ie.get("product")
+            if pn:
+                hv_inward_product_names.add(norm_product_name(pn))
+
+    hv_ids = set()
+    hv_names = set()
+    for p in items:
+        is_hv = False
+        if p.get("high_value_goods") or p.get("high_value_asset"):
+            is_hv = True
+        else:
+            pn_n = norm_product_name(p.get("name"))
+            if local_hv.get(pn_n, False) is True or pn_n in hv_inward_product_names:
+                is_hv = True
+        if is_hv:
+            if p.get("id"): hv_ids.add(p["id"])
+            pn_n = norm_product_name(p.get("name"))
+            hv_names.add(pn_n)
+            
+    def is_hv_entry(oe):
+        pid = oe.get("product_id")
+        if pid and pid in hv_ids: return True
+        if bool(oe.get("high_value_goods")) or bool(oe.get("high_value_asset")): return True
+        pn_n = norm_product_name(oe.get("product"))
+        if local_hv.get(pn_n, False) is True or pn_n in hv_inward_product_names: return True
+        if any(kw in pn_n for kw in hv_keywords): return True
+        if pn_n in hv_names: return True
+        return False
+
     matched = []
-    seen_ids = set()
-    seen_serials = set()
-
-    for a in all_assets:
-        if a.get("company_id") and a.get("company_id") != company_id:
-            continue
-        asset_cid = a.get("client_id")
-        asset_cname = (a.get("client_name") or "").strip().lower()
-
+    seen_outward_ids = set()
+    
+    for o in outwards:
+        st = str(o.get("status") or "").strip().lower()
+        if st in ["cancelled", "draft_cancelled"]: continue
+        
+        o_cid = o.get("client_id")
+        o_cname = (o.get("client_name") or "").strip().lower()
         is_match = False
-        if asset_cid and asset_cid in (cid, sol_id):
+        if o_cid and o_cid in (cid, sol_id):
             is_match = True
-        elif c_name and asset_cname and (asset_cname == c_name or c_name in asset_cname or asset_cname in c_name):
+        elif c_name and o_cname and (o_cname == c_name or c_name in o_cname or o_cname in c_name):
             is_match = True
-
-        if is_match and a.get("id") not in seen_ids:
-            seen_ids.add(a.get("id"))
-            sn = (a.get("serial_number") or "").strip().upper()
-            if sn:
-                seen_serials.add(sn)
-
-            site = a.get("site_location") or (f"{client_doc.get('full_name')} Site ({c_addr})" if c_addr else f"{client_doc.get('full_name')} Site")
-            item = dict(a)
-            item["product_name"] = a.get("product_name") or a.get("product") or "High Value Product"
-            item["size_model"] = a.get("size_model") or a.get("size") or "—"
-            item["current_site"] = site
-            item["current_allocation"] = client_doc.get("full_name") or a.get("client_name") or "Allocated Client"
-            item["installation_date"] = a.get("installation_date") or a.get("outward_date") or (a.get("created_at")[:10] if a.get("created_at") else "—")
-            item["outward_date"] = a.get("outward_date") or item["installation_date"]
-            item["warranty_status"] = a.get("warranty_status") or "Active"
-            item["status"] = a.get("status") or "Installed"
-            matched.append(item)
-
-    # Secondary lookup: Check db.outward_entries for any outward serial allocations for this client
-    try:
-        outwards = await db.outward_entries.find({"company_id": company_id}, {"_id": 0}).to_list(500)
-        for o in outwards:
-            o_cid = o.get("client_id")
-            o_cname = (o.get("client_name") or "").strip().lower()
-            if (o_cid and o_cid in (cid, sol_id)) or (c_name and o_cname and (o_cname == c_name or c_name in o_cname or o_cname in c_name)):
-                serials = o.get("serial_numbers") or o.get("serials") or ([o.get("serial_number")] if o.get("serial_number") else [])
-                for s in serials:
-                    sn = (s or "").strip().upper()
-                    if sn and sn not in seen_serials:
-                        seen_serials.add(sn)
-                        matched.append({
-                            "id": f"outward-{o.get('id')}-{sn}",
-                            "product_name": o.get("product") or o.get("product_name") or "Solar Product",
-                            "size_model": o.get("size") or o.get("size_model") or "—",
-                            "serial_number": sn,
-                            "quantity": 1,
-                            "status": o.get("status") or "Installed",
-                            "current_site": f"{client_doc.get('full_name')} Site",
-                            "current_allocation": client_doc.get("full_name"),
-                            "installation_date": (o.get("outward_date") or o.get("created_at") or "")[:10],
-                            "outward_date": (o.get("outward_date") or o.get("created_at") or "")[:10],
-                            "warranty_status": "Active"
-                        })
-    except Exception as e:
-        logger.warning(f"Secondary outward matching error: {e}")
-
+            
+        if is_match and is_hv_entry(o) and o.get("id") not in seen_outward_ids:
+            seen_outward_ids.add(o.get("id"))
+            
+            serials = o.get("serial_numbers") or o.get("serials") or ([o.get("serial_number")] if o.get("serial_number") else [])
+            serials = [s.strip().upper() for s in serials if s and s.strip()]
+            
+            # Check returns
+            for inv in inwards:
+                if inv.get("reference_number") == o.get("bill_number") or inv.get("reference_number") == o.get("reference_number"):
+                    # This is naive return matching, better to just let the return logic handle it or just show dispatched
+                    ret_serials = inv.get("serial_numbers") or inv.get("serials") or ([inv.get("serial_number")] if inv.get("serial_number") else [])
+                    ret_serials = [s.strip().upper() for s in ret_serials if s and s.strip()]
+                    serials = [s for s in serials if s not in ret_serials]
+            
+            matched.append({
+                "id": o.get("id"),
+                "product_name": o.get("product") or o.get("product_name") or "Solar Product",
+                "size_model": o.get("size") or o.get("size_model") or "—",
+                "quantity": float(o.get("quantity") or 0.0),
+                "serial_numbers": serials,
+                "outward_date": (o.get("date") or o.get("created_at") or "")[:10],
+                "status": o.get("status") or "Dispatched",
+                "current_site": o.get("site_name") or f"{client_doc.get('full_name')} Site"
+            })
+            
     return matched
 
 @api_router.get("/clients/{client_id}")
@@ -6190,6 +6212,9 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
         req_by = oe.get("requested_by") or oe.get("issued_to") or oe.get("created_by_name") or "Inventory Admin"
         ref_val = oe.get("reference_number") or oe.get("bill_number") or oe.get("remarks") or "Outward Entry"
         
+        serials = oe.get("serial_numbers") or oe.get("serials") or ([oe.get("serial_number")] if oe.get("serial_number") else [])
+        serials = [s.strip().upper() for s in serials if s and s.strip()]
+
         dispatched.append({
             "id": oe.get("id") or str(uuid.uuid4()),
             "date": (oe.get("date") or now_iso())[:10],
@@ -6197,6 +6222,7 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
             "size": oe.get("size") or "",
             "quantity": float(oe.get("quantity") or 0.0),
             "unit": oe.get("unit") or "Nos",
+            "serial_numbers": serials,
             "challan_number": oe.get("reference_number") or oe.get("bill_number") or "—",
             "client_name": c_name,
             "site": site_val,
@@ -9981,9 +10007,16 @@ async def calculate_client_ledger(company_id: str, client_id: str):
                 "total_outward": 0.0,
                 "total_returned": 0.0,
                 "current_balance": 0.0,
+                "serial_numbers": [],
                 "last_movement_date": ""
             }
         ledger[key]["total_outward"] += qty
+        
+        serials = out.get("serial_numbers") or out.get("serials") or ([out.get("serial_number")] if out.get("serial_number") else [])
+        for s in serials:
+            sn = (s or "").strip().upper()
+            if sn and sn not in ledger[key]["serial_numbers"]:
+                ledger[key]["serial_numbers"].append(sn)
         
         if date_str:
             if not ledger[key]["last_movement_date"] or date_str > ledger[key]["last_movement_date"]:
@@ -10011,9 +10044,16 @@ async def calculate_client_ledger(company_id: str, client_id: str):
                 "total_outward": 0.0,
                 "total_returned": 0.0,
                 "current_balance": 0.0,
+                "serial_numbers": [],
                 "last_movement_date": ""
             }
         ledger[key]["total_returned"] += qty
+        
+        serials = inv.get("serial_numbers") or inv.get("serials") or ([inv.get("serial_number")] if inv.get("serial_number") else [])
+        for s in serials:
+            sn = (s or "").strip().upper()
+            if sn in ledger[key]["serial_numbers"]:
+                ledger[key]["serial_numbers"].remove(sn)
         
         if date_str:
             if not ledger[key]["last_movement_date"] or date_str > ledger[key]["last_movement_date"]:

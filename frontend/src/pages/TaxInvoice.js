@@ -281,11 +281,11 @@ export default function TaxInvoice() {
         }),
       };
       const payload = { doc_type: "tax_invoice", doc_data: docData };
-      const url = selectedClientId ? `/clients/${selectedClientId}/generate-document` : "/documents/generate";
-      if (selectedClientId === "") delete payload.client_id;
+      const url = "/documents/generate";
+      payload.client_id = selectedClientId || undefined;
       if (clientSource === "manual" || !selectedClientId) payload.doc_data.client = clientForm;
       const { data } = await api.post(url, payload);
-      const files = data.files || [{ id: data.id, filename: data.filename, label: data.label }];
+      const files = data?.files ?? (data?.id ? [{ id: data.id, filename: data.filename, label: data.label }] : []);
       setGeneratedFiles(files);
       toast.success("Tax Invoice generated successfully");
       fetchHistory();

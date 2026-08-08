@@ -1050,11 +1050,9 @@ function HighValueAssetsSection({ assets }) {
               <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
                 <th className="p-4 font-semibold">Product</th>
                 <th className="p-4 font-semibold">Qty</th>
-                <th className="p-4 font-semibold">Serial Number</th>
-                <th className="p-4 font-semibold">Vendor / Challan</th>
-                <th className="p-4 font-semibold">Installation Date</th>
-                <th className="p-4 font-semibold">Warranty Status</th>
-                <th className="p-4 font-semibold">Status</th>
+                <th className="p-4 font-semibold">Serial Numbers</th>
+                <th className="p-4 font-semibold">Dispatch Date</th>
+                <th className="p-4 font-semibold">Current Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1065,17 +1063,18 @@ function HighValueAssetsSection({ assets }) {
                     {a.size_model && <div className="text-xs text-slate-400 mt-0.5">{a.size_model}</div>}
                   </td>
                   <td className="p-4 font-medium text-slate-900">{a.quantity !== undefined && a.quantity !== null ? a.quantity : 1}</td>
-                  <td className="p-4 font-mono font-semibold text-xs text-slate-800">{a.serial_number || "—"}</td>
                   <td className="p-4">
-                    <div className="text-xs text-slate-900 font-medium">Challan: {a.challan_number || "—"}</div>
-                    <div className="text-[11px] text-slate-500">{a.vendor} · {a.purchase_date}</div>
+                    {a.serial_numbers && a.serial_numbers.length > 0 ? (
+                      <div className="text-[11px] text-slate-500 font-mono space-y-0.5">
+                        {a.serial_numbers.map((sn, idx) => (
+                          <div key={idx}>{sn}</div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
                   </td>
-                  <td className="p-4 text-slate-700">{a.installation_date || "—"}</td>
-                  <td className="p-4">
-                    <span className={`font-semibold text-xs ${a.warranty_status === "Active" ? "text-emerald-600" : "text-rose-600"}`}>
-                      {a.warranty_status || "—"}
-                    </span>
-                  </td>
+                  <td className="p-4 text-slate-700">{a.outward_date || a.installation_date || "—"}</td>
                   <td className="p-4">
                     <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
                       {a.status}

@@ -270,12 +270,10 @@ export default function Quotation() {
         formula_columns: formulaColumns.map((col) => ({ id: col.id, label: col.label, base: col.base, operator: col.operator, value: col.value, isPercent: col.isPercent })),
       };
       const payload = { doc_type: "quotation", doc_data: docData };
-      const url = clientSource === "existing" && selectedClientId ? `/clients/${selectedClientId}/generate-document` : "/documents/generate";
-      if (url === "/documents/generate") {
-        payload.client_id = selectedClientId || undefined;
-      }
+      const url = "/documents/generate";
+      payload.client_id = selectedClientId || undefined;
       const { data } = await api.post(url, payload);
-      const files = data.files || [{ id: data.id, filename: data.filename, label: data.label }];
+      const files = data?.files ?? (data?.id ? [{ id: data.id, filename: data.filename, label: data.label }] : []);
       setGeneratedFiles(files);
       toast.success("Quotation generated successfully.");
       fetchHistory();

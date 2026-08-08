@@ -386,7 +386,16 @@ export default function Reports() {
 
                           return (
                             <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                              <td className="px-5 py-3.5 font-medium text-slate-900">{row.product}</td>
+                              <td className="px-5 py-3.5">
+                                <div className="font-medium text-slate-900">{row.product}</div>
+                                {row.serial_numbers && row.serial_numbers.length > 0 && (
+                                  <div className="text-[11px] text-slate-500 font-mono mt-1 space-y-0.5 text-left">
+                                    {row.serial_numbers.map((sn, snIdx) => (
+                                      <div key={snIdx}>{sn}</div>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
                               <td className="px-5 py-3.5 text-slate-600">{row.size || "—"}</td>
                               <td className="px-5 py-3.5 text-slate-600">{row.unit}</td>
                               <td className="px-5 py-3.5 text-right text-slate-700 tabular-nums">{row.total_outward}</td>

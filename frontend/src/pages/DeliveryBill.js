@@ -352,11 +352,11 @@ export default function DeliveryBill() {
         total_amount: totals.total,
       };
       const payload = { doc_type: "delivery_bill", doc_data: docData };
-      const url = selectedClientId ? `/clients/${selectedClientId}/generate-document` : "/documents/generate";
-      if (selectedClientId === "") delete payload.client_id;
+      const url = "/documents/generate";
+      payload.client_id = selectedClientId || undefined;
       if (clientSource === "manual" || !selectedClientId) payload.doc_data.client = clientForm;
       const { data } = await api.post(url, payload);
-      const files = data.files || [{ id: data.id, filename: data.filename, label: data.label }];
+      const files = data?.files ?? (data?.id ? [{ id: data.id, filename: data.filename, label: data.label }] : []);
       setGeneratedFiles(files);
       toast.success("Delivery Bill generated successfully");
       fetchHistory();
