@@ -17,6 +17,15 @@ export const SRC_TYPES = ["Supplier", "Vendor", "Return From Client", "Manual En
 // Strip all non-digit characters — used for Challan/Bill/Ref number inputs (Sprint 8)
 export const digitsOnly = (v) => String(v ?? "").replace(/\D+/g, "");
 
+// Unified size normalization for matching logic (must never modify original size strings)
+export function normalizeSizeForMatching(size) {
+  if (!size) return "";
+  let s = String(size).toLowerCase();
+  s = s.replace(/\s*[xX×\*]\s*/g, "*");
+  s = s.replace(/\s+/g, "");
+  return s;
+}
+
 export function Field({ label, value, onChange, type = "text", placeholder, full, testid, required, ...rest }) {
   return (
     <div className={full ? "md:col-span-2" : ""}>
@@ -128,7 +137,7 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
     for (const p of sourceList) {
       const nameUpper = (p.name || "").toUpperCase();
       const rawSize = (p.size || "").toUpperCase();
-      const cleanSize = rawSize.replace(/\s*[xX×*]\s*/g, "*");
+      const cleanSize = normalizeSizeForMatching(p.size);
       const _searchKey = `${nameUpper} ${cleanSize} ${rawSize}`;
       const item = { ...p, _searchKey };
 

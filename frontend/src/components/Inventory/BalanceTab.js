@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, Activity, Download } from "lucide-react";
 import { toast } from "sonner";
-import { CATEGORY_OPTIONS } from "./_shared";
+import { CATEGORY_OPTIONS, normalizeSizeForMatching } from "./_shared";
 
 const STATUS_STYLES = {
   "Normal": "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -31,7 +31,7 @@ export default function BalanceTab({ products, globalSearch }) {
       if (tokens.length > 0) {
         const name = (p.name || "").toLowerCase();
         const rawSize = (p.size || "").toLowerCase();
-        const size = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
+        const size = normalizeSizeForMatching(p.size);
         const brand = (p.brand || "").toLowerCase();
         const category = (p.category || "").toLowerCase();
         const challan = (p.challan_number || p.challan || p.reference_number || "").toLowerCase();

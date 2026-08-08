@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { FileSpreadsheet, Upload, Clipboard, CheckCircle2, ArrowLeft, X } from "lucide-react";
 import { fetchProductsDeduplicated, getCachedProducts } from "@/lib/productCache";
+import { normalizeSizeForMatching } from "./Inventory/_shared";
 
 const MODE_CONFIG = {
   inward: {
@@ -106,7 +107,7 @@ const inferFieldMap = (headerRow, mode) => {
 
   const fallback = mode === "outward"
     ? ["product", "size", "quantity", "unit", "client_name", "project_name", "outward_challan_no", "remarks"]
-    : ["product", "size", "quantity", "unit", "source_name", "reference_number", "bill_number", "remarks"];
+    : ["product", "size", "quantity", "unit", "source_name", "reference_number", "date", "remarks"];
 
   fallback.forEach((field, index) => {
     if (map[field] === undefined) map[field] = index;
@@ -301,11 +302,18 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
     }
   }, [open, products, resetState]);
 
-  const matchProduct = (name) => {
+  const matchProduct = (name, size) => {
     if (!name) return "empty";
-    const clean = name.toUpperCase().trim();
-    if (productsList.find((p) => p.name.toUpperCase().trim() === clean)) return "matched";
-    if (productsList.find((p) => p.name.toUpperCase().trim().includes(clean))) return "fuzzy";
+    const cleanName = name.toUpperCase().trim();
+    const cleanSize = normalizeSizeForMatching(size);
+    
+    // Find exact name match first
+    const sameName = productsList.filter((p) => (p.name || "").toUpperCase().trim() === cleanName);
+    if (sameName.length > 0) {
+      if (sameName.some(p => normalizeSizeForMatching(p.size) === cleanSize)) return "matched";
+    }
+    
+    if (productsList.find((p) => (p.name || "").toUpperCase().trim().includes(cleanName))) return "fuzzy";
     return "new";
   };
 
@@ -833,7 +841,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
                         visibleRows.map((row) => {
                           const originalIndex = rows.findIndex((r) => r._id === row._id);
                           if (originalIndex === -1) return null;
-                          const status = matchProduct(row.product);
+                          const status = matchProduct(row.product, row.size);
                           const rowErrors = [];
                           if (!row.product?.trim()) rowErrors.push("Product required");
                           if (mode !== "inward" && (!row.quantity || Number(row.quantity) <= 0)) rowErrors.push("Qty > 0 required");

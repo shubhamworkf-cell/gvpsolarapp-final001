@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Pencil, Trash2, Plus, Boxes, Search, Download, FileSpreadsheet, FileText, Upload } from "lucide-react";
 import { toast } from "sonner";
-import { Field, SelectField, ConfirmDialog, UNIT_OPTIONS, CATEGORY_OPTIONS } from "./_shared";
+import { Field, SelectField, ConfirmDialog, UNIT_OPTIONS, CATEGORY_OPTIONS, normalizeSizeForMatching } from "./_shared";
 import ProductDrawer from "./ProductDrawer";
 import ProductImportModal from "./ProductImportModal";
 
@@ -76,7 +76,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
     return list.filter((p) => {
       const name = (p.name || "").toLowerCase();
       const rawSize = (p.size || "").toLowerCase();
-      const size = rawSize.replace(/\s*[xX×\*]\s*/g, "*");
+      const size = normalizeSizeForMatching(p.size);
       const brand = (p.brand || "").toLowerCase();
       const category = (p.category || "").toLowerCase();
       const sku = (p.sku || p.code || p.product_code || p.id || "").toLowerCase();
