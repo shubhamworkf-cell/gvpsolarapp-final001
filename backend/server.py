@@ -341,7 +341,15 @@ class AggregateCursorAdapter:
             elif "$group" in stage:
                 group_dict = stage["$group"]
         
-        builder = supabase.table(self.table_name).select("*")
+        select_cols = "*"
+        if self.table_name == "clients":
+            select_cols = "id,company_id,status,system_kw,created_at,updated_at"
+        elif self.table_name == "inverter_monitoring":
+            select_cols = "id,company_id,inverter_status"
+        elif self.table_name == "service_tickets":
+            select_cols = "id,company_id,status"
+
+        builder = supabase.table(self.table_name).select(select_cols)
         if "company_id" in match_dict and not isinstance(match_dict["company_id"], dict):
             builder = builder.eq("company_id", match_dict["company_id"])
         
@@ -353,12 +361,13 @@ class AggregateCursorAdapter:
             logger.warning(f"AggregateCursorAdapter query failed for {self.table_name}: {e}")
             rows = []
         
-        local_rows = LocalFileCollection(self.table_name)._read_data()
-        if local_rows:
-            existing_ids = {r.get("id") for r in rows if isinstance(r, dict) and r.get("id")}
-            for lr in local_rows:
-                if lr.get("id") not in existing_ids:
-                    rows.append(lr)
+        if not rows:
+            local_rows = LocalFileCollection(self.table_name)._read_data()
+            if local_rows:
+                existing_ids = {r.get("id") for r in rows if isinstance(r, dict) and r.get("id")}
+                for lr in local_rows:
+                    if lr.get("id") not in existing_ids:
+                        rows.append(lr)
         
         filtered_rows = []
         for row in rows:
@@ -518,9 +527,7 @@ class CursorAdapter:
         # Skip this expensive disk read for the products table when Supabase already
         # returned data — products.json can be 26KB+, reading it on every request
         # was the primary cause of the 30-second product-search delay.
-        skip_local_merge = (
-            self.collection.table_name == "products" and len(data) > 0
-        )
+        skip_local_merge = len(data) > 0
         if not skip_local_merge:
             local_records = await LocalFileCollection(self.collection.table_name).find(self.filter, self.projection).sort(self.sort_fields).to_list(length)
             if local_records:
@@ -1090,28 +1097,6 @@ class CollectionAdapter:
                 return UpdateResult(1, 1)
             raise e
 
-        if self.table_name == "clients":
-            # Immediate SELECT read-back after UPDATE — do NOT trust in-memory objects
-            try:
-                rb_builder = supabase.table(self.table_name).select("id,sol_id,panel_wattage,panel_make,inverter_make,stages,updated_at")
-                rb_builder = self._apply_filters(rb_builder, filter)
-                rb_res = rb_builder.execute()
-                if rb_res.data:
-                    rb = rb_res.data[0]
-                    rb_ob = (rb.get("stages") or {}).get("onboarding_data") or {}
-                    logger.info(f"[CLIENT-SAVE DIAG] ▶ IMMEDIATE SELECT after UPDATE:")
-                    logger.info(f"[CLIENT-SAVE DIAG]   id={rb.get('id')} sol_id={rb.get('sol_id')}")
-                    logger.info(f"[CLIENT-SAVE DIAG]   DB panel_wattage  = {rb.get('panel_wattage')}")
-                    logger.info(f"[CLIENT-SAVE DIAG]   DB panel_make     = {rb.get('panel_make')}")
-                    logger.info(f"[CLIENT-SAVE DIAG]   DB consumer_cat   = {rb_ob.get('consumer_category')}")
-                    logger.info(f"[CLIENT-SAVE DIAG]   DB section_number = {rb_ob.get('section_number')}")
-                    logger.info(f"[CLIENT-SAVE DIAG]   DB inverters      = {json.dumps(rb_ob.get('inverters'), default=str)}")
-                    logger.info(f"[CLIENT-SAVE DIAG]   DB updated_at     = {rb.get('updated_at')}")
-                else:
-                    logger.error(f"[CLIENT-SAVE DIAG] ✗ IMMEDIATE SELECT returned EMPTY — filter={filter} matched nothing in DB!")
-            except Exception as rb_err:
-                logger.error(f"[CLIENT-SAVE DIAG] ✗ IMMEDIATE SELECT failed: {rb_err}")
-
         try:
             await LocalFileCollection(self.table_name).update_one(filter, update, upsert=upsert)
         except Exception:
@@ -1210,7 +1195,7 @@ class CollectionAdapter:
         return DeleteResult(1)
 
     async def count_documents(self, filter=None):
-        builder = supabase.table(self.table_name).select("*", count="exact")
+        builder = supabase.table(self.table_name).select("id", count="exact")
         builder = self._apply_filters(builder, filter)
         res = builder.execute()
         return res.count if res.count is not None else len(res.data)
@@ -1892,6 +1877,7 @@ async def get_current_user(request: Request) -> dict:
     # ── Slow path: validate with JWT secret or Supabase and fetch profile ──
     user_id = None
     payload = None
+    res = None
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub") or payload.get("user_id") or payload.get("id")
@@ -1931,7 +1917,7 @@ async def get_current_user(request: Request) -> dict:
                 "email": payload.get("email") or "",
                 "permissions": payload.get("permissions") or {}
             }
-        elif 'res' in locals() and res and hasattr(res, 'user') and res.user:
+        elif res and hasattr(res, 'user') and res.user:
             user_meta = getattr(res.user, 'user_metadata', {}) or {}
             u_name = user_meta.get("full_name") or user_meta.get("name") or getattr(res.user, 'email', '') or "User"
             user = {
@@ -3364,16 +3350,31 @@ async def _get_client_high_value_assets(client_doc: dict, company_id: str) -> li
     c_addr = f"{client_doc.get('address') or ''}, {client_doc.get('city') or ''}".strip(", ")
 
     outwards = await db.outward_entries.find({"company_id": company_id}, {"_id": 0}).to_list(100000)
-    
-    # We need to know which ones are high value.
+    hva_records = await db.high_value_assets.find({"company_id": company_id}, {"_id": 0}).to_list(100000)
+    hva_entry_ids = set()
+    for a in hva_records:
+        in_id = a.get("inward_entry_id") or a.get("inward_id")
+        out_id = a.get("outward_entry_id") or a.get("outward_id")
+        if in_id: hva_entry_ids.add(in_id)
+        if out_id: hva_entry_ids.add(out_id)
+
     items, _, _, _ = await _compute_inventory_balances(company_id)
     local_hv = _load_local_high_value_products()
-    hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
+    hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY", "MODULE", "CELL"]
     
     hv_inward_product_names = set()
     inwards = await db.inward_entries.find({"company_id": company_id}, {"_id": 0}).to_list(100000)
     for ie in inwards:
-        if ie.get("high_value_asset") or ie.get("high_value_goods"):
+        is_hv_ie = (
+            ie.get("source") in ["high-value-manual-import", "bulk-inward-high-value"] or
+            _is_truthy_flag(ie.get("high_value_goods")) or
+            _is_truthy_flag(ie.get("high_value_asset")) or
+            _is_truthy_flag(ie.get("high_value")) or
+            _is_truthy_flag(ie.get("is_high_value")) or
+            bool(ie.get("serial_numbers") or ie.get("serials") or ie.get("serial_number")) or
+            ie.get("id") in hva_entry_ids
+        )
+        if is_hv_ie:
             pn = ie.get("product")
             if pn:
                 hv_inward_product_names.add(norm_product_name(pn))
@@ -3382,11 +3383,11 @@ async def _get_client_high_value_assets(client_doc: dict, company_id: str) -> li
     hv_names = set()
     for p in items:
         is_hv = False
-        if p.get("high_value_goods") or p.get("high_value_asset"):
+        if _is_truthy_flag(p.get("high_value_goods")) or _is_truthy_flag(p.get("high_value_asset")) or _is_truthy_flag(p.get("high_value")) or _is_truthy_flag(p.get("is_high_value")):
             is_hv = True
         else:
             pn_n = norm_product_name(p.get("name"))
-            if local_hv.get(pn_n, False) is True or pn_n in hv_inward_product_names:
+            if local_hv.get(pn_n, False) is True or pn_n in hv_inward_product_names or any(kw in pn_n for kw in hv_keywords):
                 is_hv = True
         if is_hv:
             if p.get("id"): hv_ids.add(p["id"])
@@ -3396,7 +3397,14 @@ async def _get_client_high_value_assets(client_doc: dict, company_id: str) -> li
     def is_hv_entry(oe):
         pid = oe.get("product_id")
         if pid and pid in hv_ids: return True
-        if bool(oe.get("high_value_goods")) or bool(oe.get("high_value_asset")): return True
+        if (
+            _is_truthy_flag(oe.get("high_value_goods")) or
+            _is_truthy_flag(oe.get("high_value_asset")) or
+            _is_truthy_flag(oe.get("high_value")) or
+            _is_truthy_flag(oe.get("is_high_value"))
+        ): return True
+        if bool(oe.get("serial_numbers") or oe.get("serials") or oe.get("serial_number")): return True
+        if oe.get("id") in hva_entry_ids: return True
         pn_n = norm_product_name(oe.get("product"))
         if local_hv.get(pn_n, False) is True or pn_n in hv_inward_product_names: return True
         if any(kw in pn_n for kw in hv_keywords): return True
@@ -5948,6 +5956,15 @@ def invalidate_products_cache(company_id: Optional[str] = None):
 
 
 
+def _is_truthy_flag(val: Any) -> bool:
+    if val is True:
+        return True
+    if isinstance(val, str) and val.strip().lower() in ["true", "1", "yes", "on"]:
+        return True
+    if isinstance(val, (int, float)) and val == 1:
+        return True
+    return False
+
 async def _compute_inventory_balances(cid: str):
     items = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(10000)
     inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
@@ -6021,6 +6038,25 @@ async def _compute_inventory_balances(cid: str):
         pk = _resolve_product(oe)
         out_map[pk] = out_map.get(pk, 0.0) + qty
 
+    # Ensure synthetic products exist for transaction keys not in Product Master
+    existing_keys = {(norm_product_name(p.get("name")), norm_str(p.get("size"))) for p in items}
+    all_tx_keys = set(in_map.keys()).union(set(out_map.keys()))
+    for k in all_tx_keys:
+        if k not in existing_keys and k[0]:
+            synthetic = {
+                "id": str(uuid.uuid4()),
+                "company_id": cid,
+                "name": k[0],
+                "size": k[1],
+                "category": "Solar",
+                "unit": "Nos",
+                "min_stock": 0.0,
+                "opening_stock": 0.0,
+                "status": "Active"
+            }
+            items.append(synthetic)
+            existing_keys.add(k)
+
     local_rates = _load_local_rates()
     local_high_values = _load_local_high_value_products()
 
@@ -6044,7 +6080,7 @@ async def _compute_inventory_balances(cid: str):
         if p_name in local_high_values:
             p["high_value_goods"] = bool(local_high_values[p_name])
         else:
-            p["high_value_goods"] = bool(p.get("high_value_goods") or p.get("high_value_asset"))
+            p["high_value_goods"] = _is_truthy_flag(p.get("high_value_goods")) or _is_truthy_flag(p.get("high_value_asset")) or _is_truthy_flag(p.get("high_value")) or _is_truthy_flag(p.get("is_high_value"))
             if p["high_value_goods"]:
                 _save_local_high_value_product(p_name, True)
 
@@ -6138,13 +6174,32 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
     
     all_inward_records = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
     all_outward_records = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).sort("date", -1).to_list(10000)
+    all_hva_records = await db.high_value_assets.find({"company_id": cid}, {"_id": 0}).to_list(10000)
+
+    hva_entry_ids = set()
+    for a in all_hva_records:
+        in_id = a.get("inward_entry_id") or a.get("inward_id")
+        out_id = a.get("outward_entry_id") or a.get("outward_id")
+        if in_id: hva_entry_ids.add(in_id)
+        if out_id: hva_entry_ids.add(out_id)
 
     hv_inward_product_names = set()
     for ie in all_inward_records:
-        if ie.get("source") in ["high-value-manual-import", "bulk-inward-high-value"] or ie.get("high_value_goods") or ie.get("high_value_asset"):
+        is_hv_ie = (
+            ie.get("source") in ["high-value-manual-import", "bulk-inward-high-value"] or
+            _is_truthy_flag(ie.get("high_value_goods")) or
+            _is_truthy_flag(ie.get("high_value_asset")) or
+            _is_truthy_flag(ie.get("high_value")) or
+            _is_truthy_flag(ie.get("is_high_value")) or
+            bool(ie.get("serial_numbers") or ie.get("serials") or ie.get("serial_number")) or
+            ie.get("id") in hva_entry_ids
+        )
+        if is_hv_ie:
             pn_n = norm_product_name(ie.get("product"))
             if pn_n:
                 hv_inward_product_names.add(pn_n)
+
+    hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY", "MODULE", "CELL"]
 
     for p in items:
         pn = (p.get("name") or "").strip()
@@ -6152,11 +6207,12 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
         ps = (p.get("size") or "").strip()
         ps_norm = norm_str(ps)
         
-        hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
         is_hv = (
             local_hv.get(pn_norm, False) is True or
-            bool(p.get("high_value_goods")) or
-            bool(p.get("high_value_asset")) or
+            _is_truthy_flag(p.get("high_value_goods")) or
+            _is_truthy_flag(p.get("high_value_asset")) or
+            _is_truthy_flag(p.get("high_value")) or
+            _is_truthy_flag(p.get("is_high_value")) or
             pn_norm in hv_inward_product_names or
             any(kw in pn_norm for kw in hv_keywords)
         )
@@ -6173,15 +6229,27 @@ async def get_high_value_ledger(search: Optional[str] = None, user=Depends(get_c
         pid = entry.get("product_id")
         if pid and pid in hv_ids:
             return True
-        if bool(entry.get("high_value_goods")) or bool(entry.get("high_value_asset")):
+        if (
+            _is_truthy_flag(entry.get("high_value_goods")) or
+            _is_truthy_flag(entry.get("high_value_asset")) or
+            _is_truthy_flag(entry.get("high_value")) or
+            _is_truthy_flag(entry.get("is_high_value"))
+        ):
             return True
         if entry.get("source") in ["high-value-manual-import", "bulk-inward-high-value"]:
+            return True
+        if bool(entry.get("serial_numbers") or entry.get("serials") or entry.get("serial_number")):
+            return True
+        eid = entry.get("id")
+        if eid and (eid in hva_entry_ids):
             return True
         pn_n = norm_product_name(entry.get("product"))
         if local_hv.get(pn_n, False) is True or pn_n in hv_inward_product_names:
             return True
         pk = _resolve_entry_product(entry)
         if pk in hv_keys or pk[0] in hv_names:
+            return True
+        if any(kw in pn_n for kw in hv_keywords):
             return True
         return False
 
