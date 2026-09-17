@@ -18,6 +18,8 @@ export default function BalanceTab({ products, globalSearch }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 25;
 
   const filtered = useMemo(() => {
     const list = Array.isArray(products) ? products : [];
@@ -45,6 +47,15 @@ export default function BalanceTab({ products, globalSearch }) {
       return true;
     });
   }, [products, search, statusFilter, categoryFilter, globalSearch]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, statusFilter, categoryFilter, globalSearch]);
+
+  const totalPages = Math.ceil((filtered?.length ?? 0) / itemsPerPage);
+  const paginated = useMemo(() => {
+    return (filtered || []).slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  }, [filtered, currentPage, itemsPerPage]);
 
   const handleDownloadCSV = () => {
     if (!filtered || filtered.length === 0) {
@@ -147,7 +158,7 @@ export default function BalanceTab({ products, globalSearch }) {
                     <Activity className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                     No products match filters
                   </td></tr>
-                ) : filtered.map((p) => (
+                ) : paginated.map((p) => (
                   <tr key={p.id} className="border-t border-slate-100" data-testid={`balance-row-${p.id}`}>
                     <td className="px-4 py-2.5 text-xs">
                       <div className="font-semibold text-slate-900">{p.name}</div>
@@ -169,6 +180,18 @@ export default function BalanceTab({ products, globalSearch }) {
               </tbody>
             </table>
           </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 bg-slate-50/50">
+              <div className="text-xs text-slate-500">
+                Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, (filtered?.length ?? 0))} of {(filtered?.length ?? 0)} products
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</Button>
+                <span className="text-xs text-slate-600 font-medium">Page {currentPage} of {totalPages}</span>
+                <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Next</Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

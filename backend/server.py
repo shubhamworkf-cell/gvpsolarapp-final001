@@ -480,8 +480,18 @@ class CursorAdapter:
         select_cols = "*"
         if self.projection and isinstance(self.projection, dict):
             inclusions = [k for k, v in self.projection.items() if (v == 1 or v is True) and "->" not in k and "." not in k]
-            if self.collection.table_name == "products" and not _PRODUCTS_HAS_OPENING_STOCK and "opening_stock" in inclusions:
-                inclusions.remove("opening_stock")
+            if self.collection.table_name == "products":
+                for col in ["opening_stock", "rate", "high_value_goods", "high_value_asset", "is_high_value", "high_value", "serial_number_required", "description"]:
+                    if col in inclusions:
+                        inclusions.remove(col)
+            if self.collection.table_name == "inward_entries":
+                for col in ["product_id", "status"]:
+                    if col in inclusions:
+                        inclusions.remove(col)
+            if self.collection.table_name == "outward_entries":
+                for col in ["product_id", "source_type"]:
+                    if col in inclusions:
+                        inclusions.remove(col)
             if inclusions:
                 select_cols = ",".join(inclusions)
         builder = supabase.table(self.collection.table_name).select(select_cols)
@@ -518,7 +528,7 @@ class CursorAdapter:
             err_str = str(e).lower()
             if "pgrst205" in err_str or "does not exist" in err_str or "schema cache" in err_str:
                 data = []
-            elif "42501" in err_str or "row-level security" in err_str or "unauthorized" in err_str:
+            elif "42501" in err_str or "row-level security" in err_str or "unauthorized" in err_str or "timeout" in err_str or "timed out" in err_str or "connection" in err_str:
                 return await LocalFileCollection(self.collection.table_name).find(self.filter, self.projection).sort(self.sort_fields).to_list(length)
             else:
                 raise e
@@ -885,6 +895,18 @@ class CollectionAdapter:
         select_cols = "*"
         if projection and isinstance(projection, dict):
             inclusions = [k for k, v in projection.items() if (v == 1 or v is True) and "->" not in k and "." not in k]
+            if self.table_name == "products":
+                for col in ["opening_stock", "rate", "high_value_goods", "high_value_asset", "is_high_value", "high_value", "serial_number_required", "description"]:
+                    if col in inclusions:
+                        inclusions.remove(col)
+            if self.table_name == "inward_entries":
+                for col in ["product_id", "status"]:
+                    if col in inclusions:
+                        inclusions.remove(col)
+            if self.table_name == "outward_entries":
+                for col in ["product_id", "source_type"]:
+                    if col in inclusions:
+                        inclusions.remove(col)
             if inclusions:
                 select_cols = ",".join(inclusions)
         builder = supabase.table(self.table_name).select(select_cols)
@@ -906,14 +928,13 @@ class CollectionAdapter:
                 return doc
         except Exception as e:
             err_str = str(e).lower()
-            if "42501" in err_str or "row-level security" in err_str or "unauthorized" in err_str:
+            if "42501" in err_str or "row-level security" in err_str or "unauthorized" in err_str or "timeout" in err_str or "timed out" in err_str or "connection" in err_str:
                 return await LocalFileCollection(self.table_name).find_one(filter, projection)
             raise e
 
-        if self.table_name != "products":
-            local_doc = await LocalFileCollection(self.table_name).find_one(filter, projection)
-            if local_doc:
-                return local_doc
+        local_doc = await LocalFileCollection(self.table_name).find_one(filter, projection)
+        if local_doc:
+            return local_doc
         return None
 
     def find(self, filter=None, projection=None):
@@ -945,9 +966,13 @@ class CollectionAdapter:
         if self.table_name == "products":
             document = _clean_products_doc(document)
         
+        supabase_doc = document
+        if self.table_name in ("inward_entries", "outward_entries"):
+            supabase_doc = {k: v for k, v in document.items() if k != "product_id"}
+        
         while True:
             try:
-                res = supabase.table(self.table_name).insert(document, returning="minimal").execute()
+                res = supabase.table(self.table_name).insert(supabase_doc, returning="minimal").execute()
                 await LocalFileCollection(self.table_name).insert_one(document)
                 return InsertOneResult(document.get("id"))
             except Exception as e:
@@ -979,12 +1004,15 @@ class CollectionAdapter:
             doc = self._clean_empty_fks(doc)
         if self.table_name == "products" and not _PRODUCTS_HAS_RATE:
             documents = [{k: v for k, v in doc.items() if k != "rate"} for doc in documents]
+        supabase_docs = documents
+        if self.table_name in ("inward_entries", "outward_entries"):
+            supabase_docs = [{k: v for k, v in doc.items() if k != "product_id"} for doc in documents]
         try:
-            res = supabase.table(self.table_name).insert(documents, returning="minimal").execute()
+            res = supabase.table(self.table_name).insert(supabase_docs, returning="minimal").execute()
         except Exception as e:
             err_str = str(e)
             if "PGRST204" in err_str or "Could not find the" in err_str:
-                docs_copy = [{k: v for k, v in doc.items() if k not in ["high_value_asset", "high_value_goods", "serial_number_required", "rate", "opening_stock"]} for doc in documents]
+                docs_copy = [{k: v for k, v in doc.items() if k not in ["high_value_asset", "high_value_goods", "serial_number_required", "rate", "opening_stock", "product_id"]} for doc in documents]
                 try:
                     res = supabase.table(self.table_name).insert(docs_copy, returning="minimal").execute()
                 except Exception as e2:
@@ -1059,8 +1087,12 @@ class CollectionAdapter:
         if not patch:
             return UpdateResult(1, 1)
 
+        supabase_patch = patch
+        if self.table_name in ("inward_entries", "outward_entries"):
+            supabase_patch = {k: v for k, v in patch.items() if k != "product_id"}
+
         try:
-            builder = supabase.table(self.table_name).update(patch)
+            builder = supabase.table(self.table_name).update(supabase_patch)
             builder = self._apply_filters(builder, filter)
             logger.info(f"[CLIENT-SAVE DIAG] ▶ Executing Supabase UPDATE on table='{self.table_name}' WHERE filter={filter}")
             res = builder.execute()
@@ -1236,6 +1268,8 @@ class CollectionAdapter:
         return AggregateCursorAdapter(self.table_name, pipeline)
 
 class LocalFileCollection:
+    _cache: Dict[str, Dict[str, Any]] = {}
+
     def __init__(self, table_name: str):
         self.table_name = table_name
         self.file_path = ROOT_DIR / "local_storage" / f"{table_name}.json"
@@ -1244,8 +1278,14 @@ class LocalFileCollection:
         if not self.file_path.exists():
             return []
         try:
+            mtime = self.file_path.stat().st_mtime
+            cached = LocalFileCollection._cache.get(self.table_name)
+            if cached and cached["mtime"] == mtime:
+                return [dict(d) if isinstance(d, dict) else d for d in cached["data"]]
             with open(self.file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            LocalFileCollection._cache[self.table_name] = {"mtime": mtime, "data": data}
+            return [dict(d) if isinstance(d, dict) else d for d in data]
         except Exception:
             return []
 
@@ -1254,6 +1294,7 @@ class LocalFileCollection:
             self.file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            LocalFileCollection._cache[self.table_name] = {"mtime": self.file_path.stat().st_mtime, "data": data}
         except Exception as e:
             logger.error(f"Error writing to local storage for {self.table_name}: {e}")
 
@@ -5571,6 +5612,7 @@ async def list_logs(user=Depends(get_current_user), page: int = 1, page_size: in
 
 # ---------- Inventory ----------
 class InwardIn(BaseModel):
+    product_id: Optional[str] = ""
     product: str
     size: Optional[str] = ""
     quantity: float
@@ -5593,6 +5635,7 @@ class InwardIn(BaseModel):
     serial_numbers: Optional[List[str]] = []
 
 class OutwardIn(BaseModel):
+    product_id: Optional[str] = ""
     product: str
     size: Optional[str] = ""
     quantity: float
@@ -5644,12 +5687,45 @@ def norm_str(s: Optional[str]) -> str:
         return ""
     val = s.strip()
     val = re.sub(r'\s*[xX×\*]\s*', '*', val)
-    return val.strip().upper()
+    return re.sub(r'\s+', ' ', val).strip().upper()
 
 def norm_product_name(s: Optional[str]) -> str:
     if not s:
         return ""
-    return s.strip().upper()
+    return re.sub(r'\s+', ' ', s).strip().upper()
+
+def get_canonical_key(name: Optional[str], size: Optional[str] = "") -> Tuple[str, str]:
+    return (norm_product_name(name), norm_str(size))
+
+def get_size_variants(size_str: Optional[str]) -> List[str]:
+    """Return common variants for a size string (e.g. '25*8', '25X8', '25x8', '25×8', '25 * 8') for DB queries."""
+    if not size_str:
+        return []
+    raw = size_str.strip()
+    if not raw:
+        return []
+    norm = norm_str(raw)
+    variants = {raw, raw.upper(), raw.lower(), norm}
+    if '*' in norm:
+        parts = norm.split('*')
+        if len(parts) == 2:
+            a, b = parts[0].strip(), parts[1].strip()
+            for sep in ['*', 'X', 'x', '×', ' * ', ' X ', ' x ', ' × ']:
+                variants.add(f"{a}{sep}{b}")
+    return [v for v in variants if v]
+
+def match_transaction_to_product(tx: Dict[str, Any], prod: Dict[str, Any]) -> bool:
+    """Matches a transaction (inward or outward entry) to a product using:
+       1. Direct product_id match if present
+       2. Canonical (name, size) match
+    """
+    tx_pid = str(tx.get("product_id") or "").strip()
+    prod_id = str(prod.get("id") or "").strip()
+    if tx_pid and prod_id and tx_pid == prod_id:
+        return True
+    tx_key = get_canonical_key(tx.get("product") or tx.get("name"), tx.get("size"))
+    prod_key = get_canonical_key(prod.get("name"), prod.get("size"))
+    return tx_key == prod_key and bool(tx_key[0])
 
 def norm_unit(u: Optional[str]) -> str:
     if not u:
@@ -5781,78 +5857,43 @@ async def inv_stats(user=Depends(get_current_user)):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    (
-        products_count,
-        in_today,
-        out_today,
-        pending_req,
-        in_agg,
-        out_agg,
-        prods
-    ) = await asyncio.gather(
-        db.products.count_documents({"company_id": cid}),
-        db.inward_entries.count_documents({
-            "company_id": cid, "date": {"$gte": today, "$lt": tomorrow}
-        }),
-        db.outward_entries.count_documents({
-            "company_id": cid, "date": {"$gte": today, "$lt": tomorrow}
-        }),
-        db.material_requests.count_documents({"company_id": cid, "status": "pending"}),
-        db.inward_entries.aggregate([
-            {"$match": {"company_id": cid}},
-            {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
-        ]).to_list(5000),
-        db.outward_entries.aggregate([
-            {"$match": {"company_id": cid, "status": {"$nin": ["Pending", "Cancelled"]}}},
-            {"$group": {"_id": {"product": "$product", "size": "$size"}, "qty": {"$sum": "$quantity"}}}
-        ]).to_list(5000),
-        db.products.find({"company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1, "min_stock": 1}).to_list(5000)
-    )
-
-    in_agg_list = in_agg if isinstance(in_agg, list) else []
-    out_agg_list = out_agg if isinstance(out_agg, list) else []
-    prods_list = prods if isinstance(prods, list) else []
-
-    in_map = {}
-    for x in in_agg_list:
-        _id = x.get("_id") or {}
-        if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
-        else:
-            p_k = (norm_product_name(str(_id)), "")
-        in_map[p_k] = in_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
-
-    out_map = {}
-    for x in out_agg_list:
-        _id = x.get("_id") or {}
-        if isinstance(_id, dict):
-            p_k = (norm_product_name(_id.get("product")), norm_str(_id.get("size")))
-        else:
-            p_k = (norm_product_name(str(_id)), "")
-        out_map[p_k] = out_map.get(p_k, 0.0) + float(x.get("qty") or 0.0)
-
-    prod_map = {}
-    for p in prods_list:
-        p_k = (norm_product_name(p["name"]), norm_str(p.get("size")))
-        prod_map[p_k] = p
-
-    all_specs = set(in_map.keys()) | set(out_map.keys()) | set(prod_map.keys())
+    now = time.monotonic()
+    if cid in _PRODUCTS_CACHE and (now - _PRODUCTS_CACHE[cid][0]) < _PRODUCTS_CACHE_TTL_S:
+        items = _PRODUCTS_CACHE[cid][1]
+        in_today, out_today, pending_req = await asyncio.gather(
+            db.inward_entries.count_documents({"company_id": cid, "date": {"$gte": today, "$lt": tomorrow}}),
+            db.outward_entries.count_documents({"company_id": cid, "date": {"$gte": today, "$lt": tomorrow}}),
+            db.material_requests.count_documents({"company_id": cid, "status": "pending"})
+        )
+    else:
+        (
+            (items, _, _, _),
+            in_today,
+            out_today,
+            pending_req
+        ) = await asyncio.gather(
+            _compute_inventory_balances(cid),
+            db.inward_entries.count_documents({"company_id": cid, "date": {"$gte": today, "$lt": tomorrow}}),
+            db.outward_entries.count_documents({"company_id": cid, "date": {"$gte": today, "$lt": tomorrow}}),
+            db.material_requests.count_documents({"company_id": cid, "status": "pending"})
+        )
+        _PRODUCTS_CACHE[cid] = (now, items)
 
     low = 0
     total_stock_qty = 0.0
-    for p_k in all_specs:
-        p_doc = prod_map.get(p_k) or {}
-        op_stock = float(p_doc.get("opening_stock") or 0.0)
-        bal = op_stock + in_map.get(p_k, 0.0) - out_map.get(p_k, 0.0)
+    stock_val = 0.0
+    for p in items:
+        bal = float(p.get("balance") or 0.0)
         total_stock_qty += max(bal, 0.0)
-        mn = float(p_doc.get("min_stock") or 5.0)
+        stock_val += max(bal, 0.0) * float(p.get("rate") or 0.0)
+        mn = float(p.get("min_stock") or 0.0)
         if bal <= mn:
             low += 1
 
     return {
-        "total_products": len(all_specs), "total_stock_qty": round(total_stock_qty, 2),
+        "total_products": len(items), "total_stock_qty": round(total_stock_qty, 2),
         "low_stock": low, "in_today": in_today, "out_today": out_today,
-        "pending_requests": pending_req, "stock_value": 0,
+        "pending_requests": pending_req, "stock_value": round(stock_val, 2),
     }
 
 _local_rates_cache = None
@@ -5884,23 +5925,47 @@ def _save_local_rate(product_name: str, rate: float):
         pass
 
 _local_assets_cache = None
+_local_assets_inward_map: Optional[Dict[str, list]] = None
+_local_assets_outward_map: Optional[Dict[str, list]] = None
+
+def _build_local_assets_indices():
+    global _local_assets_inward_map, _local_assets_outward_map, _local_assets_cache
+    assets = _local_assets_cache or []
+    in_map: Dict[str, list] = {}
+    out_map: Dict[str, list] = {}
+    for a in assets:
+        in_id = a.get("inward_entry_id")
+        if in_id:
+            in_map.setdefault(in_id, []).append(a)
+        out_id = a.get("outward_entry_id")
+        if out_id:
+            out_map.setdefault(out_id, []).append(a)
+    _local_assets_inward_map = in_map
+    _local_assets_outward_map = out_map
+
 def _load_local_assets() -> list:
     global _local_assets_cache
     if _local_assets_cache is not None:
         return _local_assets_cache
     filepath = ROOT_DIR / "local_storage" / "high_value_assets.json"
     if not filepath.exists():
+        _local_assets_cache = []
+        _build_local_assets_indices()
         return []
     try:
         with open(filepath, "r") as f:
             _local_assets_cache = json.load(f)
+            _build_local_assets_indices()
             return _local_assets_cache
     except Exception:
+        _local_assets_cache = []
+        _build_local_assets_indices()
         return []
 
 def _save_local_assets(assets: list):
     global _local_assets_cache
     _local_assets_cache = assets
+    _build_local_assets_indices()
     filepath = ROOT_DIR / "local_storage" / "high_value_assets.json"
     try:
         filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -5966,9 +6031,25 @@ def _is_truthy_flag(val: Any) -> bool:
     return False
 
 async def _compute_inventory_balances(cid: str):
-    items = await db.products.find({"company_id": cid}, {"_id": 0}).sort("name", 1).to_list(10000)
-    inward_entries = await db.inward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
-    outward_entries = await db.outward_entries.find({"company_id": cid}, {"_id": 0}).to_list(100000)
+    prod_proj = {
+        "_id": 0, "id": 1, "name": 1, "size": 1, "category": 1, "unit": 1,
+        "min_stock": 1, "opening_stock": 1, "rate": 1, "status": 1,
+        "high_value_goods": 1, "high_value_asset": 1, "is_high_value": 1,
+        "high_value": 1, "company_id": 1, "description": 1, "created_at": 1, "updated_at": 1
+    }
+    in_proj = {
+        "_id": 0, "id": 1, "product": 1, "size": 1, "quantity": 1,
+        "status": 1, "source_type": 1, "source": 1, "product_id": 1
+    }
+    out_proj = {
+        "_id": 0, "id": 1, "product": 1, "size": 1, "quantity": 1,
+        "status": 1, "product_id": 1
+    }
+    items, inward_entries, outward_entries = await asyncio.gather(
+        db.products.find({"company_id": cid}, prod_proj).sort("name", 1).to_list(10000),
+        db.inward_entries.find({"company_id": cid}, in_proj).to_list(100000),
+        db.outward_entries.find({"company_id": cid}, out_proj).to_list(100000),
+    )
 
     # Product Maps for resolution
     prod_id_map: Dict[str, Dict] = {}
@@ -5981,7 +6062,7 @@ async def _compute_inventory_balances(cid: str):
         if p.get("id"):
             prod_id_map[p["id"]] = p
         if p_name:
-            key = (p_name, p_size)
+            key = get_canonical_key(p_name, p_size)
             prod_key_map[key] = p
             prod_name_map.setdefault(p_name, []).append(p)
 
@@ -5994,23 +6075,23 @@ async def _compute_inventory_balances(cid: str):
         pid = entry.get("product_id")
         if pid and pid in prod_id_map:
             target = prod_id_map[pid]
-            return (norm_product_name(target.get("name")), norm_str(target.get("size")))
+            return get_canonical_key(target.get("name"), target.get("size"))
         
         raw_pn = entry.get("product") or ""
         raw_ps = entry.get("size") or ""
-        pn_n = norm_product_name(raw_pn)
-        ps_n = norm_str(raw_ps)
+        pk = get_canonical_key(raw_pn, raw_ps)
         
-        # Priority 2: Match by exact normalized (name, size)
-        if (pn_n, ps_n) in prod_key_map:
-            return (pn_n, ps_n)
+        # Priority 2: Match by exact normalized canonical (name, size)
+        if pk in prod_key_map:
+            return pk
             
         # Priority 3: Match by product name if single product match in master
+        pn_n = pk[0]
         if pn_n in prod_name_map and len(prod_name_map[pn_n]) == 1:
             target = prod_name_map[pn_n][0]
-            return (pn_n, norm_str(target.get("size")))
+            return get_canonical_key(target.get("name"), target.get("size"))
 
-        return (pn_n, ps_n)
+        return pk
 
     # Process Inward Entries
     for ie in inward_entries:
@@ -6039,7 +6120,7 @@ async def _compute_inventory_balances(cid: str):
         out_map[pk] = out_map.get(pk, 0.0) + qty
 
     # Ensure synthetic products exist for transaction keys not in Product Master
-    existing_keys = {(norm_product_name(p.get("name")), norm_str(p.get("size"))) for p in items}
+    existing_keys = {get_canonical_key(p.get("name"), p.get("size")) for p in items}
     all_tx_keys = set(in_map.keys()).union(set(out_map.keys()))
     for k in all_tx_keys:
         if k not in existing_keys and k[0]:
@@ -6063,7 +6144,7 @@ async def _compute_inventory_balances(cid: str):
     for p in items:
         p_name = norm_product_name(p["name"])
         p_size = norm_str(p.get("size"))
-        k = (p_name, p_size)
+        k = get_canonical_key(p_name, p_size)
 
         op_stock = float(p.get("opening_stock") or 0.0)
         tot_in = round(in_map.get(k, 0.0), 2)
@@ -6552,15 +6633,17 @@ def parse_inward_client_info(entry):
 def _enrich_inward_with_assets(inward_doc: Optional[dict]) -> Optional[dict]:
     if not inward_doc:
         return inward_doc
-    assets = _load_local_assets()
-    entry_assets = [a for a in assets if a.get("inward_entry_id") == inward_doc.get("id")]
-    p_name = (inward_doc.get("product") or "").strip().upper()
+    if _local_assets_inward_map is None:
+        _load_local_assets()
+    doc_id = str(inward_doc.get("id") or "")
+    entry_assets = _local_assets_inward_map.get(doc_id, []) if (_local_assets_inward_map and doc_id) else []
+    p_name = norm_product_name(inward_doc.get("product"))
     is_hv = _load_local_high_value_products().get(p_name, False)
     
     if entry_assets:
         inward_doc["high_value_asset"] = True
         inward_doc["high_value_goods"] = True
-        inward_doc["serial_numbers"] = [a["serial_number"] for a in entry_assets]
+        inward_doc["serial_numbers"] = [a["serial_number"] for a in entry_assets if a.get("serial_number")]
     else:
         inward_doc["high_value_asset"] = is_hv
         inward_doc["high_value_goods"] = is_hv
@@ -6570,15 +6653,17 @@ def _enrich_inward_with_assets(inward_doc: Optional[dict]) -> Optional[dict]:
 def _enrich_outward_with_assets(outward_doc: Optional[dict]) -> Optional[dict]:
     if not outward_doc:
         return outward_doc
-    assets = _load_local_assets()
-    entry_assets = [a for a in assets if a.get("outward_entry_id") == outward_doc.get("id")]
-    p_name = (outward_doc.get("product") or "").strip().upper()
+    if _local_assets_outward_map is None:
+        _load_local_assets()
+    doc_id = str(outward_doc.get("id") or "")
+    entry_assets = _local_assets_outward_map.get(doc_id, []) if (_local_assets_outward_map and doc_id) else []
+    p_name = norm_product_name(outward_doc.get("product"))
     is_hv = _load_local_high_value_products().get(p_name, False)
     
     if entry_assets:
         outward_doc["high_value_asset"] = True
         outward_doc["high_value_goods"] = True
-        outward_doc["serial_numbers"] = [a["serial_number"] for a in entry_assets]
+        outward_doc["serial_numbers"] = [a["serial_number"] for a in entry_assets if a.get("serial_number")]
         outward_doc["installation_notes"] = entry_assets[0].get("installation_notes") or ""
         outward_doc["warranty_start_date"] = entry_assets[0].get("warranty_start_date") or ""
         outward_doc["asset_remarks"] = entry_assets[0].get("asset_remarks") or ""
@@ -6594,7 +6679,8 @@ def _enrich_outward_with_assets(outward_doc: Optional[dict]) -> Optional[dict]:
 async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = "", skip_activity_log: bool = False):
     pn = data.product.strip().upper()
     is_hv = data.high_value_asset or data.high_value_goods or _load_local_high_value_products().get(pn, False) or any(kw in pn for kw in ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"])
-    await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos", brand=data.source_name or "", high_value_goods=is_hv)
+    prod = await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos", brand=data.source_name or "", high_value_goods=is_hv)
+    prod_id_val = getattr(data, "product_id", "") or (prod.get("id") if prod else "")
     
     source_type_val = data.source_type or "Supplier"
     source_name_val = data.source_name or ""
@@ -6627,6 +6713,7 @@ async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str,
     doc = {
         "id": str(uuid.uuid4()),
         "company_id": company_id,
+        "product_id": prod_id_val,
         "product": pn,
         "size": data.size or "",
         "quantity": data.quantity,
@@ -6711,7 +6798,8 @@ async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str,
 
 async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = ""):
     pn = data.product.strip().upper()
-    await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos")
+    prod = await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos")
+    prod_id_val = getattr(data, "product_id", "") or (prod.get("id") if prod else "")
     
     client_id_val = data.client_id or ""
     client_name_val = data.client_name or ""
@@ -6742,6 +6830,7 @@ async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: st
     doc = {
         "id": str(uuid.uuid4()),
         "company_id": company_id,
+        "product_id": prod_id_val,
         "product": pn,
         "size": data.size or "",
         "quantity": data.quantity,
@@ -7639,6 +7728,7 @@ async def inv_history(
     request: Request = None,  # type: ignore
     user=Depends(get_current_user),
     type: Optional[str] = None,  # inward | outward | None
+    product_id: Optional[str] = None,
     product: Optional[str] = None,
     size: Optional[str] = None,
     vendor: Optional[str] = None,
@@ -7736,10 +7826,16 @@ async def inv_history(
         full_text = f"{prod} {sz} {raw_size} {src} {proj} {ref} {bill} {rem} {by}".lower()
         return all(t in full_text for t in tokens)
 
+    size_variants = get_size_variants(size) if (size is not None and size != "") else []
+    target_prod = {"id": product_id, "name": product or "", "size": size or ""} if (product_id or product) else None
+
     if (not type or type == "inward") and not status:
         q: Dict[str, Any] = {"company_id": cid}
         if product: q["product"] = _text_filter(product)
-        if size is not None and size != "": q["size"] = norm_str(size)
+        if size_variants:
+            q["size"] = {"$in": size_variants}
+        elif size is not None and size != "":
+            q["size"] = norm_str(size)
         if vendor: q["source_name"] = _text_filter(vendor)
         if challan: q["reference_number"] = _text_filter(challan)
         if bill_number: q["bill_number"] = _text_filter(bill_number)
@@ -7748,15 +7844,22 @@ async def inv_history(
         for r in inward_rows:
             if not _date_match(r):
                 continue
+            if target_prod and not match_transaction_to_product(r, target_prod):
+                continue
             enriched = _enrich_inward_with_assets(parse_inward_client_info(r))
             if enriched:
                 if _search_match(enriched):
+                    if product_id and not enriched.get("product_id"):
+                        enriched["product_id"] = product_id
                     rows.append({**enriched, "type": "Inward"})
 
     if (not type or type == "outward") and not bill_number:
         q = {"company_id": cid}
         if product: q["product"] = _text_filter(product)
-        if size is not None and size != "": q["size"] = norm_str(size)
+        if size_variants:
+            q["size"] = {"$in": size_variants}
+        elif size is not None and size != "":
+            q["size"] = norm_str(size)
         if client: q["client_name"] = _text_filter(client)
         if challan: q["$or"] = [{"outward_challan_no": _text_filter(challan)}, {"reference_number": _text_filter(challan)}]
         if user_id: q["created_by"] = user_id
@@ -7765,9 +7868,13 @@ async def inv_history(
         for r in outward_rows:
             if not _date_match(r):
                 continue
+            if target_prod and not match_transaction_to_product(r, target_prod):
+                continue
             enriched = _enrich_outward_with_assets(r)
             if enriched:
                 if _search_match(enriched):
+                    if product_id and not enriched.get("product_id"):
+                        enriched["product_id"] = product_id
                     rows.append({**enriched, "type": "Outward"})
 
     rows.sort(key=lambda x: (x.get("date") or x.get("created_at") or ""), reverse=True)
@@ -7907,7 +8014,14 @@ async def product_stats(product_id: str, user=Depends(get_current_user)):
     p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
-    items, _, _, _ = await _compute_inventory_balances(cid)
+
+    now = time.monotonic()
+    if cid in _PRODUCTS_CACHE and (now - _PRODUCTS_CACHE[cid][0]) < _PRODUCTS_CACHE_TTL_S:
+        items = _PRODUCTS_CACHE[cid][1]
+    else:
+        items, _, _, _ = await _compute_inventory_balances(cid)
+        _PRODUCTS_CACHE[cid] = (now, items)
+
     matched_p = next((item for item in items if item.get("id") == product_id), None)
     if not matched_p:
         name = norm_product_name(p["name"])
@@ -7919,20 +8033,34 @@ async def product_stats(product_id: str, user=Depends(get_current_user)):
     total_out = matched_p.get("total_out", 0.0)
     balance = matched_p.get("balance", 0.0)
 
-    # Fetch last dates
+    # Fetch last dates using size variants and canonical matching
     p_name = norm_product_name(matched_p.get("name"))
-    p_size = norm_str(matched_p.get("size"))
-    last_in_rows = await db.inward_entries.find({"company_id": cid, "product": p_name, "size": p_size}, {"_id": 0, "date": 1}).sort("date", -1).to_list(1)
-    last_out_rows = await db.outward_entries.find({"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled"]}, "product": p_name, "size": p_size}, {"_id": 0, "date": 1}).sort("date", -1).to_list(1)
-    in_count = await db.inward_entries.count_documents({"company_id": cid, "product": p_name, "size": p_size})
-    out_count = await db.outward_entries.count_documents({"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled"]}, "product": p_name, "size": p_size})
+    p_size = matched_p.get("size") or ""
+    size_variants = get_size_variants(p_size)
+
+    in_q: Dict[str, Any] = {"company_id": cid, "product": {"$regex": f"^{re.escape(p_name)}$", "$options": "i"}}
+    if size_variants:
+        in_q["size"] = {"$in": size_variants}
+
+    out_q: Dict[str, Any] = {"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled"]}, "product": {"$regex": f"^{re.escape(p_name)}$", "$options": "i"}}
+    if size_variants:
+        out_q["size"] = {"$in": size_variants}
+
+    last_in_rows = await db.inward_entries.find(in_q, {"_id": 0, "date": 1, "product_id": 1, "product": 1, "size": 1}).sort("date", -1).to_list(1000)
+    last_out_rows = await db.outward_entries.find(out_q, {"_id": 0, "date": 1, "product_id": 1, "product": 1, "size": 1}).sort("date", -1).to_list(1000)
+
+    matched_in_rows = [r for r in last_in_rows if match_transaction_to_product(r, matched_p)]
+    matched_out_rows = [r for r in last_out_rows if match_transaction_to_product(r, matched_p)]
+
+    in_count = len(matched_in_rows)
+    out_count = len(matched_out_rows)
 
     return {
         "product": matched_p,
         "opening_stock": op_stock,
         "total_in": total_in, "total_out": total_out, "balance": balance,
-        "last_inward_date": (last_in_rows[0].get("date") if last_in_rows else None),
-        "last_outward_date": (last_out_rows[0].get("date") if last_out_rows else None),
+        "last_inward_date": (matched_in_rows[0].get("date") if matched_in_rows else None),
+        "last_outward_date": (matched_out_rows[0].get("date") if matched_out_rows else None),
         "transaction_count": in_count + out_count,
         "inward_count": in_count, "outward_count": out_count,
     }
@@ -7952,11 +8080,11 @@ async def product_transactions(
     search: Optional[str] = None,
 ):
     cid = user["company_id"]
-    p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1})
+    p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1, "id": 1})
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
     return await inv_history(
-        request=request, user=user, type=type, product=p["name"], size=p.get("size") or "", vendor=vendor, client=client,
+        request=request, user=user, type=type, product_id=product_id, product=p["name"], size=p.get("size") or "", vendor=vendor, client=client,
         challan=challan, from_date=from_date, to_date=to_date, search=search,
         page=1, page_size=10000,
     )
@@ -7966,6 +8094,7 @@ async def product_transactions(
 
 
 class BulkRow(BaseModel):
+    product_id: Optional[str] = ""
     product: Optional[str] = ""
     size: Optional[str] = ""
     brand: Optional[str] = ""

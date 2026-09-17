@@ -6,7 +6,7 @@ import { getCachedProducts, setCachedProducts, fetchProductsDeduplicated, invali
 
 const STALE_TIME = 15 * 60 * 1000; // 15 min - inventory changes infrequently
 
-export function useProductList(filters = {}) {
+export function useProductList(filters = {}, options = {}) {
   return useQuery({
     queryKey: queryKeys.inventory.products(filters),
     queryFn: async () => {
@@ -15,14 +15,15 @@ export function useProductList(filters = {}) {
       setCachedProducts(list);
       return list;
     },
-    initialData: () => {
+    placeholderData: () => {
       const cached = getCachedProducts();
       return (Array.isArray(cached) && cached.length > 0) ? cached : undefined;
     },
-    staleTime: 60 * 1000,
+    staleTime: 5 * 1000,
     gcTime: 30 * 60 * 1000,
-    refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
+    ...options,
   });
 }
 
@@ -33,7 +34,8 @@ export function useInventoryStats() {
       const { data } = await api.get("/inventory/stats");
       return data;
     },
-    staleTime: STALE_TIME,
+    staleTime: 5 * 1000,
+    refetchOnMount: true,
   });
 }
 
@@ -42,6 +44,7 @@ export function useInvalidateInventory() {
   return () => {
     invalidateFrontendProductCache();
     queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all() });
+    queryClient.invalidateQueries({ queryKey: ["inventory"] });
   };
 }
 

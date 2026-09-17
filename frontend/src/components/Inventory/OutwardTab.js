@@ -220,6 +220,9 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
 
 
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 25;
+
   const filtered = useMemo(() => {
     const list = Array.isArray(entries) ? entries : [];
     if (!globalSearch) return list;
@@ -232,6 +235,15 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
       (e.remarks || "").toLowerCase().includes(s)
     );
   }, [entries, globalSearch]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [globalSearch]);
+
+  const totalPages = Math.ceil((filtered?.length ?? 0) / itemsPerPage);
+  const paginated = useMemo(() => {
+    return (filtered || []).slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  }, [filtered, currentPage, itemsPerPage]);
 
   const pendingCount = (Array.isArray(entries) ? entries : []).filter((e) => e.status === "Pending").length;
 
@@ -521,7 +533,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
               <tbody>
                 {filtered.length === 0 ? (
                   <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-400">No outward entries yet</td></tr>
-                ) : filtered.map((e) => (
+                ) : paginated.map((e) => (
                   <tr key={e.id} className="border-t border-slate-100 hover:bg-slate-50/60" data-testid={`outward-row-${e.id}`}>
                     <td className="px-4 py-2.5 text-xs text-slate-700 tabular-nums">{dayjs(e.date).format("DD MMM YYYY")}</td>
                     <td className="px-4 py-2.5">
@@ -559,6 +571,18 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
               </tbody>
             </table>
           </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 bg-slate-50/50">
+              <div className="text-xs text-slate-500">
+                Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, (filtered?.length ?? 0))} of {(filtered?.length ?? 0)} entries
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</Button>
+                <span className="text-xs text-slate-600 font-medium">Page {currentPage} of {totalPages}</span>
+                <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Next</Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

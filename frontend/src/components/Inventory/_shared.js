@@ -102,7 +102,8 @@ export function applyDefaults(target, defaults, alwaysKeep = []) {
 }
 
 export function ProductAutocompleteInput({ value, onChange, products, placeholder, className, testid, required, inputRef, highValueOnly = false }) {
-  const { data: hookProducts = [] } = useProductList();
+  const hasProducts = Boolean(products && products.length > 0);
+  const { data: hookProducts = [] } = useProductList(undefined, { enabled: !hasProducts });
   const [open, setOpen] = useState(false);
   const [inputVal, setInputVal] = useState(value || "");
   const [debouncedSearch, setDebouncedSearch] = useState(value || "");
