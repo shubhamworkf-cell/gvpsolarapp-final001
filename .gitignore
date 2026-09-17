@@ -51,3 +51,11 @@ backend/local_storage/
 .vscode/
 *.swp
 *.swo
+
+# Temporary & scratch files
+temp*
+*temp*
+old_*
+stable_*
+*_stable.*
+test_server.py
