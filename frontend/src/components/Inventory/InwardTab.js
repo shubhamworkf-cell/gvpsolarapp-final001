@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Save, RotateCcw, Settings, Pencil, Trash2, Paperclip, ChevronDown, ChevronUp, FileText, FileImage, FileSpreadsheet, Wand2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
-import { Field, SelectField, TextareaField, ConfirmDialog, UNIT_OPTIONS, REF_TYPES, SRC_TYPES, today, applyDefaults, digitsOnly, ProductAutocompleteInput } from "./_shared";
+import { Field, SelectField, TextareaField, ConfirmDialog, UNIT_OPTIONS, REF_TYPES, SRC_TYPES, today, applyDefaults, digitsOnly, ProductAutocompleteInput, normalizeUnit } from "./_shared";
 import ManualBulkImport from "@/components/ManualBulkImport";
 import HighValueBulkImport from "@/components/HighValueBulkImport";
 import { usePermission } from "@/lib/permissions";
@@ -32,7 +32,7 @@ const EMPTY = () => ({
   reference_number: "", reference_type: "Challan Number",
   source_type: "Supplier", source_name: "",
   client_id: "", client_name: "",
-  product: "", size: "", quantity: "", unit: "Nos",
+  product: "", size: "", quantity: "", unit: "NOS",
   bill_number: "", remarks: "",
   attachment_file_id: "", attachment_filename: "",
   high_value_asset: false,
@@ -122,7 +122,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
     }
     setBusy(true);
     try {
-      const payload = { ...form, quantity: Number(form.quantity) };
+      const payload = { ...form, quantity: Number(form.quantity), unit: normalizeUnit(form.unit) };
       if (editing) {
         await api.patch(`/inventory/inward/${editing.id}`, payload);
         const { data: updated } = await api.get("/inventory/inward");
@@ -156,7 +156,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
       source_type: e.source_type || "Supplier", source_name: e.source_name || "",
       client_id: e.client_id || "", client_name: e.client_name || "",
       product: e.product || "", size: e.size || "", quantity: e.quantity || "",
-      unit: e.unit || "Nos",
+      unit: normalizeUnit(e.unit),
       bill_number: e.bill_number || "", remarks: e.remarks || "",
       attachment_file_id: e.attachment_file_id || "", attachment_filename: e.attachment_filename || "",
       high_value_asset: e.high_value_asset || false,
@@ -363,7 +363,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                   onChange={(v) => {
                     let pName = "";
                     let sizeVal = form.size || "";
-                    let unitVal = form.unit || "Nos";
+                    let unitVal = normalizeUnit(form.unit);
                     let rateVal = form.rate || "";
                     let isHighValue = false;
                     let isSerialRequired = false;
@@ -371,7 +371,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                     if (typeof v === "object" && v !== null) {
                       pName = (v.name || "").toUpperCase();
                       sizeVal = v.size || "";
-                      unitVal = v.unit || "Nos";
+                      unitVal = normalizeUnit(v.unit);
                       rateVal = (v.rate !== undefined && v.rate !== null) ? String(v.rate) : "";
                       isHighValue = Boolean(v.high_value_goods || v.high_value_asset);
                       isSerialRequired = Boolean(v.serial_number_required);
@@ -382,7 +382,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                         isHighValue = Boolean(matched.high_value_goods || matched.high_value_asset);
                         isSerialRequired = Boolean(matched.serial_number_required);
                         sizeVal = matched.size || "";
-                        unitVal = matched.unit || "Nos";
+                        unitVal = normalizeUnit(matched.unit);
                         rateVal = (matched.rate !== undefined && matched.rate !== null) ? String(matched.rate) : "";
                       } else {
                         const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
@@ -590,7 +590,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
                       <div className="font-semibold text-slate-900 text-xs">{e.product}</div>
                       {e.size && <div className="text-[10px] text-slate-400 mt-0.5">{e.size}</div>}
                     </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{e.quantity} <span className="text-[10px] text-slate-500 font-normal">{e.unit || "Nos"}</span></td>
+                    <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{e.quantity} <span className="text-[10px] text-slate-500 font-normal">{normalizeUnit(e.unit)}</span></td>
                     <td className="px-4 py-2.5 text-xs">
                       <div className="font-medium text-slate-700">{e.source_name || "—"}</div>
                       <div className="text-[10px] text-slate-400">{e.source_type}</div>
@@ -640,7 +640,7 @@ export default function InwardTab({ products, defaults, onSaveDefaults, onChange
         open={!!confirmDel}
         onOpenChange={(v) => !v && setConfirmDel(null)}
         title="Delete inward entry?"
-        description={confirmDel ? `${confirmDel.product} × ${confirmDel.quantity} ${confirmDel.unit || "Nos"} from ${confirmDel.source_name || "—"}. This cannot be undone.` : ""}
+        description={confirmDel ? `${confirmDel.product} × ${confirmDel.quantity} ${normalizeUnit(confirmDel.unit)} from ${confirmDel.source_name || "—"}. This cannot be undone.` : ""}
         onConfirm={doDelete}
       />
     </div>

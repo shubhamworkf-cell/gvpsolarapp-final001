@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Pencil, Trash2, Plus, Boxes, Search, Download, FileSpreadsheet, FileText, Upload } from "lucide-react";
 import { toast } from "sonner";
-import { Field, SelectField, ConfirmDialog, UNIT_OPTIONS, CATEGORY_OPTIONS, normalizeSizeForMatching } from "./_shared";
+import { Field, SelectField, ConfirmDialog, UNIT_OPTIONS, CATEGORY_OPTIONS, normalizeSizeForMatching, normalizeUnit } from "./_shared";
 import ProductDrawer from "./ProductDrawer";
 import ProductImportModal from "./ProductImportModal";
 
@@ -18,7 +18,7 @@ const STATUS_STYLES = {
   "Out Of Stock": "bg-red-50 text-red-700 border-red-200",
 };
 
-const EMPTY = () => ({ name: "", size: "", category: "Solar Panel", unit: "Nos", min_stock: 0, rate: "", status: "Active", high_value_goods: false, serial_number_required: false });
+const EMPTY = () => ({ name: "", size: "", category: "Solar Panel", unit: "NOS", min_stock: 0, rate: "", status: "Active", high_value_goods: false, serial_number_required: false });
 
 export default function ProductMasterTab({ products, onChanged, globalSearch }) {
   const [open, setOpen] = useState(false);
@@ -38,7 +38,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
     if (!form.name?.trim()) { toast.error("Product name required"); return; }
     setBusy(true);
     try {
-      const payload = { ...form, min_stock: Number(form.min_stock) || 0, rate: Number(form.rate) || 0 };
+      const payload = { ...form, min_stock: Number(form.min_stock) || 0, rate: Number(form.rate) || 0, unit: normalizeUnit(form.unit) };
       if (editing) {
         await api.patch(`/inventory/products/${editing.id}`, payload);
         toast.success("Product updated");
@@ -95,7 +95,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
       "Product Name": p.name || "",
       "Size": p.size || "",
       "Category": p.category || "Solar",
-      "Unit": p.unit || "Nos",
+      "Unit": normalizeUnit(p.unit),
       "Min Stock": p.min_stock || 0,
       "Rate": p.rate || 0,
       "Current Stock": p.balance || 0,
@@ -218,7 +218,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
                     <td className="px-4 py-2.5 text-xs">
                       <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 text-[10px]">{p.category || "Solar"}</Badge>
                     </td>
-                    <td className="px-4 py-2.5 text-xs text-center text-slate-600">{p.unit || "Nos"}</td>
+                    <td className="px-4 py-2.5 text-xs text-center text-slate-600">{normalizeUnit(p.unit)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-xs text-slate-600">{p.min_stock || 0}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-xs text-slate-600">₹ {p.rate || 0}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{p.balance}</td>

@@ -1302,14 +1302,16 @@ class LocalFileCollection:
         if isinstance(filter_val, dict):
             for op, val in filter_val.items():
                 if op == "$regex":
-                    pattern = val
-                    if isinstance(pattern, str):
-                        pattern = pattern.replace("\\", "")
+                    pattern = str(val or "")
+                    opts = str(filter_val.get("$options") or "")
+                    flags = re.IGNORECASE if "i" in opts else 0
                     try:
-                        if not re.search(pattern, str(doc_val or ""), re.IGNORECASE):
+                        if not re.search(pattern, str(doc_val or ""), flags):
                             return False
                     except Exception:
-                        return False
+                        clean_pat = pattern.replace("\\", "").lower()
+                        if clean_pat not in str(doc_val or "").lower():
+                            return False
                 elif op == "$nin":
                     if doc_val in val:
                         return False
@@ -5616,7 +5618,7 @@ class InwardIn(BaseModel):
     product: str
     size: Optional[str] = ""
     quantity: float
-    unit: Optional[str] = "Nos"
+    unit: Optional[str] = "NOS"
     reference_number: Optional[str] = ""  # Challan No
     reference_type: Optional[str] = "Challan Number"
     bill_number: Optional[str] = ""
@@ -5626,8 +5628,8 @@ class InwardIn(BaseModel):
     client_name: Optional[str] = ""
     date: Optional[str] = ""
     remarks: Optional[str] = ""
-    attachment_file_id: Optional[str] = ""
-    attachment_filename: Optional[str] = ""
+    attachment_file_id: Optional[str] = None
+    attachment_filename: Optional[str] = None
     high_value_asset: Optional[bool] = False
     high_value_goods: Optional[bool] = False
     serial_number_required: Optional[bool] = False
@@ -5639,7 +5641,7 @@ class OutwardIn(BaseModel):
     product: str
     size: Optional[str] = ""
     quantity: float
-    unit: Optional[str] = "Nos"
+    unit: Optional[str] = "NOS"
     client_id: Optional[str] = ""
     client_name: Optional[str] = ""
     project_id: Optional[str] = ""
@@ -5650,8 +5652,8 @@ class OutwardIn(BaseModel):
     date: Optional[str] = ""
     remarks: Optional[str] = ""
     status: Optional[str] = "Dispatched"  # Pending | Dispatched | Cancelled
-    attachment_file_id: Optional[str] = ""
-    attachment_filename: Optional[str] = ""
+    attachment_file_id: Optional[str] = None
+    attachment_filename: Optional[str] = None
     high_value_asset: Optional[bool] = False
     high_value_goods: Optional[bool] = False
     serial_number_required: Optional[bool] = False
@@ -5670,7 +5672,7 @@ class ProductIn(BaseModel):
     name: str
     size: Optional[str] = ""
     category: Optional[str] = ""
-    unit: Optional[str] = "Nos"
+    unit: Optional[str] = "NOS"
     min_stock: Optional[float] = 0
     opening_stock: Optional[float] = 0.0
     rate: Optional[float] = 0.0
@@ -5682,17 +5684,32 @@ class InventoryDefaults(BaseModel):
     inward: Optional[Dict[str, Any]] = None
     outward: Optional[Dict[str, Any]] = None
 
+CANONICAL_UNITS = ["NOS", "PAIR", "MTR", "SET", "BOX", "PCS", "KG", "LTR", "ROLL", "PKT"]
+
+UNIT_NORMALIZATION_MAP = {
+    "NOS": "NOS", "NO": "NOS", "NOS.": "NOS", "NO.": "NOS", "NUMBERS": "NOS", "NUMBER": "NOS", "NUM": "NOS",
+    "PAIR": "PAIR", "PAIRS": "PAIR", "PR": "PAIR",
+    "MTR": "MTR", "MTRS": "MTR", "MTR.": "MTR", "METER": "MTR", "METERS": "MTR", "METRE": "MTR", "METRES": "MTR", "M": "MTR",
+    "SET": "SET", "SETS": "SET",
+    "BOX": "BOX", "BOXES": "BOX", "BX": "BOX",
+    "PCS": "PCS", "PC": "PCS", "PIECE": "PCS", "PIECES": "PCS", "PCS.": "PCS",
+    "KG": "KG", "KGS": "KG", "KILOGRAM": "KG", "KILOGRAMS": "KG",
+    "LTR": "LTR", "LTRS": "LTR", "LITER": "LTR", "LITERS": "LTR", "LITRE": "LTR", "LITRES": "LTR", "L": "LTR",
+    "ROLL": "ROLL", "ROLLS": "ROLL", "RL": "ROLL",
+    "PKT": "PKT", "PKTS": "PKT", "PKT.": "PKT", "PACKET": "PKT", "PACKETS": "PKT", "PACK": "PKT", "PACKS": "PKT", "PKG": "PKT",
+}
+
 def norm_str(s: Optional[str]) -> str:
     if not s:
         return ""
     val = s.strip()
-    val = re.sub(r'\s*[xX×\*]\s*', '*', val)
+    val = re.sub(r'(\d)\s*[xX×\*]\s*(\d)', r'\1*\2', val)
     return re.sub(r'\s+', ' ', val).strip().upper()
 
 def norm_product_name(s: Optional[str]) -> str:
     if not s:
         return ""
-    return re.sub(r'\s+', ' ', s).strip().upper()
+    return re.sub(r'\s+', ' ', str(s)).strip().upper()
 
 def get_canonical_key(name: Optional[str], size: Optional[str] = "") -> Tuple[str, str]:
     return (norm_product_name(name), norm_str(size))
@@ -5717,55 +5734,55 @@ def get_size_variants(size_str: Optional[str]) -> List[str]:
 def match_transaction_to_product(tx: Dict[str, Any], prod: Dict[str, Any]) -> bool:
     """Matches a transaction (inward or outward entry) to a product using:
        1. Direct product_id match if present
-       2. Canonical (name, size) match
+       2. Canonical (name, size) match when size is specified
+       3. Canonical name match when target size is not specified or wildcard
     """
     tx_pid = str(tx.get("product_id") or "").strip()
     prod_id = str(prod.get("id") or "").strip()
     if tx_pid and prod_id and tx_pid == prod_id:
         return True
-    tx_key = get_canonical_key(tx.get("product") or tx.get("name"), tx.get("size"))
-    prod_key = get_canonical_key(prod.get("name"), prod.get("size"))
-    return tx_key == prod_key and bool(tx_key[0])
+    tx_name = norm_product_name(tx.get("product") or tx.get("name"))
+    target_name = norm_product_name(prod.get("name") or prod.get("product"))
+    if not tx_name or not target_name:
+        return False
+    if tx_name != target_name and target_name not in tx_name:
+        return False
+    target_size_raw = prod.get("size")
+    if target_size_raw is not None and str(target_size_raw).strip() != "":
+        tx_size = norm_str(tx.get("size"))
+        target_size = norm_str(str(target_size_raw))
+        return tx_size == target_size
+    return True
 
 def norm_unit(u: Optional[str]) -> str:
     if not u:
-        return "Nos"
+        return "NOS"
     val = u.strip().upper()
-    if val in ["MTR", "MTRS", "METER", "METERS"]:
-        return "Mtr"
-    if val in ["NOS", "NO", "NUMBERS", "NUMBER"]:
-        return "Nos"
-    if val in ["SET", "SETS"]:
-        return "Set"
-    if val in ["KG", "KGS", "KILOGRAM"]:
-        return "Kg"
-    return u.strip().capitalize() or "Nos"
+    return UNIT_NORMALIZATION_MAP.get(val, val) or "NOS"
 
-async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "Nos", min_stock: float = 0, brand: str = "", high_value_goods: bool = False):
+async def ensure_product(company_id: str, name: str, size: str = "", category: str = "", unit: str = "NOS", min_stock: float = 0, brand: str = "", high_value_goods: bool = False):
     n = norm_product_name(name)
-    s = norm_str(size)
+    s = (size or "").strip()
+    s_norm = norm_str(s)
     u = norm_unit(unit)
     if not n: return None
     
-    query: Dict[str, Any] = {"company_id": company_id, "name": n, "size": s}
-    existing = await db.products.find_one(query)
-
-    if not existing:
-        try:
-            all_prods = await db.products.find({"company_id": company_id, "name": n}).to_list(1000)
-            for p in all_prods:
-                if norm_str(p.get("size")) == s:
-                    existing = p
-                    break
-        except Exception:
-            pass
+    query: Dict[str, Any] = {"company_id": company_id, "name": n}
+    all_prods = await db.products.find(query).to_list(1000)
+    existing = None
+    for p in all_prods:
+        if norm_str(p.get("size")) == s_norm:
+            existing = p
+            break
 
     if existing:
         patch = {}
         if not existing.get("category") and category: patch["category"] = category
         if high_value_goods and not existing.get("high_value_goods"): patch["high_value_goods"] = True
+        if existing.get("unit") != u: patch["unit"] = u
         if patch:
             await db.products.update_one({"id": existing["id"]}, {"$set": patch})
+            existing.update(patch)
         return existing
 
     doc = {
@@ -5774,7 +5791,7 @@ async def ensure_product(company_id: str, name: str, size: str = "", category: s
         "name": n,
         "size": s,
         "category": category or "Solar",
-        "unit": u or "Nos",
+        "unit": u or "NOS",
         "min_stock": float(min_stock or 0),
         "status": "Active",
         "high_value_goods": high_value_goods,
@@ -6059,6 +6076,8 @@ async def _compute_inventory_balances(cid: str):
     for p in items:
         p_name = norm_product_name(p.get("name"))
         p_size = norm_str(p.get("size"))
+        p["name"] = p_name
+        p["unit"] = norm_unit(p.get("unit"))
         if p.get("id"):
             prod_id_map[p["id"]] = p
         if p_name:
@@ -6130,7 +6149,7 @@ async def _compute_inventory_balances(cid: str):
                 "name": k[0],
                 "size": k[1],
                 "category": "Solar",
-                "unit": "Nos",
+                "unit": "NOS",
                 "min_stock": 0.0,
                 "opening_stock": 0.0,
                 "status": "Active"
@@ -6141,11 +6160,14 @@ async def _compute_inventory_balances(cid: str):
     local_rates = _load_local_rates()
     local_high_values = _load_local_high_value_products()
 
+    consolidated_items: Dict[Tuple[str, str], Dict] = {}
     for p in items:
         p_name = norm_product_name(p["name"])
         p_size = norm_str(p.get("size"))
         k = get_canonical_key(p_name, p_size)
 
+        p["name"] = p_name
+        p["unit"] = norm_unit(p.get("unit"))
         op_stock = float(p.get("opening_stock") or 0.0)
         tot_in = round(in_map.get(k, 0.0), 2)
         tot_out = round(out_map.get(k, 0.0), 2)
@@ -6173,6 +6195,14 @@ async def _compute_inventory_balances(cid: str):
         else:
             p["stock_status"] = "Normal"
 
+        if k not in consolidated_items:
+            consolidated_items[k] = p
+        else:
+            existing_p = consolidated_items[k]
+            existing_p["opening_stock"] = round(float(existing_p.get("opening_stock") or 0.0) + op_stock, 2)
+            existing_p["balance"] = round(existing_p["opening_stock"] + existing_p["total_in"] - existing_p["total_out"], 2)
+
+    items = list(consolidated_items.values())
     return items, in_map, out_map, ret_map
 
 @api_router.get("/inventory/products")
@@ -6542,7 +6572,7 @@ async def create_product(data: ProductIn, user=Depends(get_current_user)):
     doc = {
         "id": str(uuid.uuid4()), "company_id": user["company_id"], "name": name,
         "size": size, "category": data.category or "Solar",
-        "unit": unit or "Nos", "min_stock": data.min_stock or 0.0,
+        "unit": unit or "NOS", "min_stock": data.min_stock or 0.0,
         "opening_stock": data.opening_stock or 0.0,
         "rate": rate_val,
         "status": data.status or "Active", "created_at": now_iso(),
@@ -6566,7 +6596,7 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
         raise HTTPException(status_code=404, detail="Product not found")
     new_name = norm_product_name(data.name) if data.name else existing["name"]
     new_size = norm_str(data.size) if data.size is not None else norm_str(existing.get("size", ""))
-    new_unit = norm_unit(data.unit) if data.unit is not None else norm_unit(existing.get("unit", "Nos"))
+    new_unit = norm_unit(data.unit) if data.unit is not None else norm_unit(existing.get("unit", "NOS"))
     if new_name != existing["name"] or new_size != norm_str(existing.get("size", "")):
         dup = await db.products.find_one({"company_id": cid, "name": new_name, "size": new_size})
         if dup and dup["id"] != product_id:
@@ -6582,7 +6612,7 @@ async def update_product(product_id: str, data: ProductIn, user=Depends(get_curr
         _save_local_high_value_product(new_name, data.high_value_goods)
     patch = {
         "name": new_name, "size": new_size, "category": data.category or "",
-        "unit": new_unit or "Nos", "min_stock": float(data.min_stock or 0),
+        "unit": new_unit or "NOS", "min_stock": float(data.min_stock or 0),
         "opening_stock": float(data.opening_stock if data.opening_stock is not None else existing.get("opening_stock", 0.0)),
         "rate": rate_val,
         "status": data.status or existing.get("status") or "Active",
@@ -6677,9 +6707,11 @@ def _enrich_outward_with_assets(outward_doc: Optional[dict]) -> Optional[dict]:
     return outward_doc
 
 async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = "", skip_activity_log: bool = False):
-    pn = data.product.strip().upper()
+    pn = norm_product_name(data.product)
+    pu = norm_unit(data.unit)
+    ps = (data.size or "").strip()
     is_hv = data.high_value_asset or data.high_value_goods or _load_local_high_value_products().get(pn, False) or any(kw in pn for kw in ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"])
-    prod = await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos", brand=data.source_name or "", high_value_goods=is_hv)
+    prod = await ensure_product(company_id, pn, size=ps, unit=pu, brand=data.source_name or "", high_value_goods=is_hv)
     prod_id_val = getattr(data, "product_id", "") or (prod.get("id") if prod else "")
     
     source_type_val = data.source_type or "Supplier"
@@ -6715,9 +6747,9 @@ async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str,
         "company_id": company_id,
         "product_id": prod_id_val,
         "product": pn,
-        "size": data.size or "",
+        "size": ps,
         "quantity": data.quantity,
-        "unit": data.unit or "Nos",
+        "unit": pu,
         "reference_number": numeric_only(data.reference_number),
         "reference_type": data.reference_type or "Challan Number",
         "bill_number": numeric_only(data.bill_number),
@@ -6797,8 +6829,10 @@ async def save_inward_entry_logic(data: InwardIn, company_id: str, user_id: str,
     return doc
 
 async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: str, user_name: str, source: str = "manual", import_batch: str = ""):
-    pn = data.product.strip().upper()
-    prod = await ensure_product(company_id, pn, size=data.size or "", unit=data.unit or "Nos")
+    pn = norm_product_name(data.product)
+    pu = norm_unit(data.unit)
+    ps = (data.size or "").strip()
+    prod = await ensure_product(company_id, pn, size=ps, unit=pu)
     prod_id_val = getattr(data, "product_id", "") or (prod.get("id") if prod else "")
     
     client_id_val = data.client_id or ""
@@ -6832,9 +6866,9 @@ async def save_outward_entry_logic(data: OutwardIn, company_id: str, user_id: st
         "company_id": company_id,
         "product_id": prod_id_val,
         "product": pn,
-        "size": data.size or "",
+        "size": ps,
         "quantity": data.quantity,
-        "unit": data.unit or "Nos",
+        "unit": pu,
         "client_id": client_id_val,
         "client_name": client_name_val,
         "project_id": project_id_val,
@@ -7053,8 +7087,10 @@ async def update_inward(entry_id: str, data: InwardIn, user=Depends(get_current_
     existing = await db.inward_entries.find_one({"id": entry_id, "company_id": cid})
     if not existing:
         raise HTTPException(status_code=404, detail="Inward entry not found")
-    pn = (data.product or existing["product"]).strip().upper()
-    await ensure_product(cid, pn, size=data.size or "", unit=data.unit or existing.get("unit") or "Nos", brand=data.source_name or "")
+    pn = norm_product_name(data.product or existing.get("product", ""))
+    clean_sz = (data.size if data.size is not None else existing.get("size", "")).strip()
+    u = norm_unit(data.unit or existing.get("unit") or "NOS")
+    await ensure_product(cid, pn, size=clean_sz, unit=u, brand=data.source_name or "")
     
     remarks_val = data.remarks or ""
     source_type_val = data.source_type or existing.get("source_type") or "Supplier"
@@ -7062,15 +7098,18 @@ async def update_inward(entry_id: str, data: InwardIn, user=Depends(get_current_
     if source_type_val == "Return From Client" and client_id_val:
         remarks_val = f"{remarks_val} [client_id:{client_id_val}]".strip()
         
+    att_id = existing.get("attachment_file_id", "") if data.attachment_file_id is None else data.attachment_file_id
+    att_name = existing.get("attachment_filename", "") if data.attachment_filename is None else data.attachment_filename
+
     patch = {
-        "product": pn, "size": data.size or "", "quantity": data.quantity,
-        "unit": data.unit or existing.get("unit") or "Nos",
+        "product": pn, "size": clean_sz, "quantity": data.quantity,
+        "unit": u,
         "reference_number": numeric_only(data.reference_number), "reference_type": data.reference_type or "Challan Number",
         "bill_number": numeric_only(data.bill_number),
         "source_type": source_type_val, "source_name": data.source_name or existing.get("source_name") or "",
         "date": data.date or existing.get("date") or now_iso(), "remarks": remarks_val,
-        "attachment_file_id": data.attachment_file_id if data.attachment_file_id is not None else existing.get("attachment_file_id", ""),
-        "attachment_filename": data.attachment_filename if data.attachment_filename is not None else existing.get("attachment_filename", ""),
+        "attachment_file_id": att_id or "",
+        "attachment_filename": att_name or "",
         "updated_at": now_iso(),
     }
     await db.inward_entries.update_one({"id": entry_id, "company_id": cid}, {"$set": patch})
@@ -7194,11 +7233,15 @@ async def update_outward(entry_id: str, data: OutwardIn, user=Depends(get_curren
     existing = await db.outward_entries.find_one({"id": entry_id, "company_id": cid})
     if not existing:
         raise HTTPException(status_code=404, detail="Outward entry not found")
-    pn = (data.product or existing["product"]).strip().upper()
-    await ensure_product(cid, pn, size=data.size or "", unit=data.unit or existing.get("unit") or "Nos")
+    pn = norm_product_name(data.product or existing.get("product", ""))
+    clean_sz = (data.size if data.size is not None else existing.get("size", "")).strip()
+    u = norm_unit(data.unit or existing.get("unit") or "NOS")
+    await ensure_product(cid, pn, size=clean_sz, unit=u)
+    att_id = existing.get("attachment_file_id", "") if data.attachment_file_id is None else data.attachment_file_id
+    att_name = existing.get("attachment_filename", "") if data.attachment_filename is None else data.attachment_filename
     patch = {
-        "product": pn, "size": data.size or "", "quantity": data.quantity,
-        "unit": data.unit or existing.get("unit") or "Nos",
+        "product": pn, "size": clean_sz, "quantity": data.quantity,
+        "unit": u,
         "client_id": data.client_id or "", "client_name": data.client_name or "",
         "project_id": data.project_id or "", "project_name": data.project_name or "",
         "outward_challan_no": numeric_only(data.outward_challan_no),
@@ -7207,8 +7250,8 @@ async def update_outward(entry_id: str, data: OutwardIn, user=Depends(get_curren
         "date": data.date or existing.get("date") or now_iso(),
         "remarks": data.remarks or "",
         "status": data.status or existing.get("status") or "Dispatched",
-        "attachment_file_id": data.attachment_file_id if data.attachment_file_id is not None else existing.get("attachment_file_id", ""),
-        "attachment_filename": data.attachment_filename if data.attachment_filename is not None else existing.get("attachment_filename", ""),
+        "attachment_file_id": att_id or "",
+        "attachment_filename": att_name or "",
         "updated_at": now_iso(),
     }
     await db.outward_entries.update_one({"id": entry_id, "company_id": cid}, {"$set": patch})
@@ -7808,22 +7851,24 @@ async def inv_history(
     def _search_match(rec: Dict[str, Any]) -> bool:
         if not search or not search.strip():
             return True
-        clean_s = norm_str(search).lower().strip()
+        clean_s = search.strip().lower()
         tokens = [t for t in clean_s.split() if t]
         if not tokens:
             return True
         
-        prod = norm_product_name(rec.get("product"))
-        raw_size = rec.get("size") or ""
-        sz = norm_str(raw_size)
+        prod = norm_product_name(rec.get("product")).lower()
+        raw_size = (rec.get("size") or "").lower()
+        sz = norm_str(rec.get("size") or "").lower()
+        u = norm_unit(rec.get("unit")).lower()
         src = (rec.get("source_name") or rec.get("client_name") or "").lower()
         proj = (rec.get("project_name") or "").lower()
         ref = (rec.get("reference_number") or rec.get("outward_challan_no") or "").lower()
         bill = (rec.get("bill_number") or "").lower()
         rem = (rec.get("remarks") or "").lower()
         by = (rec.get("created_by_name") or "").lower()
+        st = (rec.get("status") or "").lower()
         
-        full_text = f"{prod} {sz} {raw_size} {src} {proj} {ref} {bill} {rem} {by}".lower()
+        full_text = f"{prod} {sz} {raw_size} {u} {src} {proj} {ref} {bill} {rem} {by} {st}".lower()
         return all(t in full_text for t in tokens)
 
     size_variants = get_size_variants(size) if (size is not None and size != "") else []
@@ -7851,7 +7896,7 @@ async def inv_history(
                 if _search_match(enriched):
                     if product_id and not enriched.get("product_id"):
                         enriched["product_id"] = product_id
-                    rows.append({**enriched, "type": "Inward"})
+                    rows.append({**enriched, "type": "Inward", "unit": norm_unit(enriched.get("unit"))})
 
     if (not type or type == "outward") and not bill_number:
         q = {"company_id": cid}
@@ -7875,7 +7920,7 @@ async def inv_history(
                 if _search_match(enriched):
                     if product_id and not enriched.get("product_id"):
                         enriched["product_id"] = product_id
-                    rows.append({**enriched, "type": "Outward"})
+                    rows.append({**enriched, "type": "Outward", "unit": norm_unit(enriched.get("unit"))})
 
     rows.sort(key=lambda x: (x.get("date") or x.get("created_at") or ""), reverse=True)
     total = len(rows)
@@ -8099,7 +8144,7 @@ class BulkRow(BaseModel):
     size: Optional[str] = ""
     brand: Optional[str] = ""
     quantity: Optional[Union[float, int, str]] = 0.0
-    unit: Optional[str] = "Nos"
+    unit: Optional[str] = "NOS"
     date: Optional[str] = ""
     reference_number: Optional[str] = ""
     reference_type: Optional[str] = "Challan Number"
@@ -8110,6 +8155,8 @@ class BulkRow(BaseModel):
     client_name: Optional[str] = ""
     bill_number: Optional[str] = ""
     remarks: Optional[str] = ""
+    attachment_file_id: Optional[str] = None
+    attachment_filename: Optional[str] = None
     high_value_asset: Optional[bool] = False
     high_value_goods: Optional[bool] = False
     serial_number_required: Optional[bool] = False
@@ -8138,6 +8185,23 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
     all_assets = _load_local_assets()
     hv_products = _load_local_high_value_products()
     
+    # 0. Validation and Zero Silent Loss Tracking
+    failures = []
+    valid_rows = []
+    for idx, r in enumerate(data.rows):
+        pn = norm_product_name(r.product or "")
+        try:
+            qty = float(r.quantity) if r.quantity not in (None, "") else 0.0
+        except (ValueError, TypeError):
+            qty = 0.0
+        if not pn:
+            failures.append({"row_index": idx + 1, "product": r.product or "", "reason": "Missing product name"})
+            continue
+        if qty <= 0:
+            failures.append({"row_index": idx + 1, "product": pn, "reason": f"Quantity must be greater than 0 (got {r.quantity})"})
+            continue
+        valid_rows.append((idx, r, pn, qty))
+
     # 1. Pre-fetch existing products and clients for company in bulk
     existing_prods, existing_clients = await asyncio.gather(
         db.products.find({"company_id": cid}).to_list(10000),
@@ -8157,13 +8221,10 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
 
     # 2. Pre-pass: Resolve & bulk-insert missing products in 1 batch query
     new_prods_to_insert = []
-    for r in data.rows:
-        pn = (r.product or "").strip().upper()
-        if not pn:
-            continue
-        ps = r.size or ""
-        pu = r.unit or gd.get("unit") or "Nos"
-        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
+    for idx, r, pn, qty in valid_rows:
+        ps = (r.size or "").strip()
+        pu = norm_unit(r.unit or gd.get("unit") or "NOS")
+        cache_key = (cid, pn, norm_str(ps), pu)
         if cache_key not in prod_cache:
             prod_doc = {
                 "id": str(uuid.uuid4()),
@@ -8171,7 +8232,7 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
                 "name": pn,
                 "size": ps,
                 "category": "Solar",
-                "unit": pu or "Nos",
+                "unit": pu,
                 "min_stock": 0.0,
                 "status": "Active",
                 "created_at": now_iso()
@@ -8186,22 +8247,14 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
             pass
 
     # 3. Build documents in-memory
-    for r in data.rows:
-        pn = (r.product or "").strip().upper()
-        if not pn:
-            continue
-        try:
-            qty = float(r.quantity) if r.quantity not in (None, "") else 0.0
-        except (ValueError, TypeError):
-            qty = 0.0
-            
+    for idx, r, pn, qty in valid_rows:
         remarks_val = r.remarks or gd.get("remarks", "")
         source_type_val = r.source_type or gd.get("source_type", "Supplier")
         client_id_val = r.client_id or gd.get("client_id", "")
         client_name_val = r.client_name or gd.get("client_name", "")
-        source_name_val = r.source_name or gd.get("source_name", "")
-        ps = r.size or ""
-        pu = r.unit or gd.get("unit") or "Nos"
+        source_name_val = r.source_name or getattr(r, 'vendor', None) or gd.get("source_name", "") or gd.get("vendor", "")
+        ps = (r.size or "").strip()
+        pu = norm_unit(r.unit or gd.get("unit") or "NOS")
         
         # Client ID resolution from name case-insensitively for Return From Client
         if source_type_val == "Return From Client":
@@ -8234,9 +8287,9 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
             "source_name": source_name_val,
             "date": date_val,
             "remarks": remarks_val,
-            "attachment_file_id": "",
-            "attachment_filename": "",
-            "source": "ai-bulk-import",
+            "attachment_file_id": (r.attachment_file_id or "").strip(),
+            "attachment_filename": (r.attachment_filename or "").strip(),
+            "source": "bulk-import",
             "created_by": user["id"],
             "created_by_name": user["name"],
             "created_at": now_iso()
@@ -8301,11 +8354,20 @@ async def bulk_inward(data: BulkInwardIn, user=Depends(get_current_user)):
             _save_local_assets(all_assets)
         invalidate_products_cache(cid)
         asyncio.create_task(log_activity(cid, user["id"], user["name"], "Bulk Inward Import", f"{len(docs_to_insert)} entries"))
-        asyncio.create_task(push_notification(cid, "admin", "Bulk Inventory Import", f"{user['name']} imported {len(docs_to_insert)} inward entries via AI"))
+        asyncio.create_task(push_notification(cid, "admin", "Bulk Inventory Import", f"{user['name']} imported {len(docs_to_insert)} inward entries via Bulk Import"))
         if new_prods_to_insert:
             asyncio.create_task(sync_inventory_master(cid))
 
-    return {"inserted": len(inserted_ids), "ids": inserted_ids}
+    return {
+        "received": len(data.rows),
+        "imported": len(inserted_ids),
+        "skipped": 0,
+        "failed": len(failures),
+        "failures": failures,
+        "count": len(inserted_ids),
+        "inserted": len(inserted_ids),
+        "ids": inserted_ids
+    }
 
 
 @api_router.post("/inventory/bulk-inward-high-value")
@@ -8323,6 +8385,23 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
     all_assets = _load_local_assets()
     hv_products = _load_local_high_value_products()
     
+    # 0. Validation and Zero Silent Loss Tracking
+    failures = []
+    valid_rows = []
+    for idx, r in enumerate(data.rows):
+        pn = norm_product_name(r.product or "")
+        try:
+            qty = float(r.quantity) if r.quantity not in (None, "") else 0.0
+        except (ValueError, TypeError):
+            qty = 0.0
+        if not pn:
+            failures.append({"row_index": idx + 1, "product": r.product or "", "reason": "Missing product name"})
+            continue
+        if qty <= 0:
+            failures.append({"row_index": idx + 1, "product": pn, "reason": f"Quantity must be greater than 0 (got {r.quantity})"})
+            continue
+        valid_rows.append((idx, r, pn, qty))
+
     # 1. Pre-fetch all existing products for company in 1 single bulk query
     prod_cache: Dict[Tuple[str, str, str, str], Any] = {}
     existing_prods = await db.products.find({"company_id": cid}).to_list(10000)
@@ -8335,20 +8414,15 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
 
     # 2. Pre-pass: Resolve products & bulk update high_value_goods flag in 1 DB query
     prod_ids_to_hv = set()
-    for r in data.rows:
-        pn = (r.product or "").strip().upper()
-        if not pn:
-            continue
+    for idx, r, pn, qty in valid_rows:
         ps = (r.size or "").strip()
-        pu = (r.unit or gd.get("unit") or "Nos").strip()
+        pu = norm_unit(r.unit or gd.get("unit") or "NOS")
         brand_val = (getattr(r, 'brand', None) or r.source_name or gd.get("vendor") or gd.get("source_name") or "Unknown").strip()
 
         _save_local_high_value_product(pn, True)
-        _save_local_high_value_product(norm_product_name(pn), True)
         hv_products[pn] = True
-        hv_products[norm_product_name(pn)] = True
 
-        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
+        cache_key = (cid, pn, norm_str(ps), pu)
         if cache_key not in prod_cache:
             prod_doc = await ensure_product(cid, pn, size=ps, unit=pu, brand=brand_val, high_value_goods=True)
             prod_cache[cache_key] = prod_doc
@@ -8368,17 +8442,9 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
             pass
 
     # 3. Build documents in-memory with ZERO database queries inside loop
-    for r in data.rows:
-        pn = (r.product or "").strip().upper()
-        if not pn:
-            continue
-        try:
-            qty = float(r.quantity) if r.quantity not in (None, "") else 0.0
-        except (ValueError, TypeError):
-            qty = 0.0
-            
+    for idx, r, pn, qty in valid_rows:
         ps = (r.size or "").strip()
-        pu = (r.unit or gd.get("unit") or "Nos").strip()
+        pu = norm_unit(r.unit or gd.get("unit") or "NOS")
         brand_val = (getattr(r, 'brand', None) or r.source_name or gd.get("vendor") or gd.get("source_name") or "Unknown").strip()
         source_name_val = (r.source_name or getattr(r, 'vendor', None) or gd.get("vendor") or gd.get("source_name") or "").strip()
         source_type_val = r.source_type or gd.get("source_type", "Supplier")
@@ -8404,8 +8470,8 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
             "remarks": remarks_val,
             "high_value_goods": True,
             "high_value_asset": True,
-            "attachment_file_id": "",
-            "attachment_filename": "",
+            "attachment_file_id": (r.attachment_file_id or "").strip(),
+            "attachment_filename": (r.attachment_filename or "").strip(),
             "source": "high-value-manual-import",
             "created_by": user["id"],
             "created_by_name": user["name"],
@@ -8470,16 +8536,28 @@ async def bulk_inward_high_value(data: BulkInwardIn, user=Depends(get_current_us
         await push_notification(cid, "admin", "High Value Manual Import", f"{user['name']} imported {len(docs_to_insert)} high value goods entries")
         asyncio.create_task(sync_inventory_master(cid))
 
-    return {"inserted": len(inserted_ids), "ids": inserted_ids, "message": f"Successfully imported {len(inserted_ids)} High Value Goods"}
+    return {
+        "received": len(data.rows),
+        "imported": len(inserted_ids),
+        "skipped": 0,
+        "failed": len(failures),
+        "failures": failures,
+        "count": len(inserted_ids),
+        "inserted": len(inserted_ids),
+        "ids": inserted_ids,
+        "message": f"Successfully imported {len(inserted_ids)} High Value Goods"
+    }
 
 
 
 # ---- AI Bulk Import (Outward) ----
 class BulkOutwardRow(BaseModel):
+    product_id: Optional[str] = ""
     product: str
     size: Optional[str] = ""
+    brand: Optional[str] = ""
     quantity: float
-    unit: Optional[str] = "Nos"
+    unit: Optional[str] = "NOS"
     date: Optional[str] = ""
     outward_challan_no: Optional[str] = ""
     reference_number: Optional[str] = ""
@@ -8490,6 +8568,8 @@ class BulkOutwardRow(BaseModel):
     project_name: Optional[str] = ""
     status: Optional[str] = "Dispatched"
     remarks: Optional[str] = ""
+    attachment_file_id: Optional[str] = None
+    attachment_filename: Optional[str] = None
     high_value_asset: Optional[bool] = False
     high_value_goods: Optional[bool] = False
     serial_numbers: Optional[List[str]] = []
@@ -8520,6 +8600,23 @@ async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
     prod_cache: Dict[Tuple[str, str, str, str], Any] = {}
     docs_to_insert = []
 
+    # 0. Validation and Zero Silent Loss Tracking
+    failures = []
+    valid_rows = []
+    for idx, r in enumerate(data.rows):
+        pn = norm_product_name(r.product or "")
+        try:
+            qty = float(r.quantity) if r.quantity not in (None, "") else 0.0
+        except (ValueError, TypeError):
+            qty = 0.0
+        if not pn:
+            failures.append({"row_index": idx + 1, "product": r.product or "", "reason": "Missing product name"})
+            continue
+        if qty <= 0:
+            failures.append({"row_index": idx + 1, "product": pn, "reason": f"Quantity must be greater than 0 (got {r.quantity})"})
+            continue
+        valid_rows.append((idx, r, pn, qty))
+
     # 1. Pre-fetch existing products and clients for company in bulk
     existing_prods, existing_clients = await asyncio.gather(
         db.products.find({"company_id": cid}).to_list(10000),
@@ -8539,13 +8636,10 @@ async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
 
     # 2. Pre-pass: Resolve & bulk-insert missing products in 1 batch query
     new_prods_to_insert = []
-    for r in data.rows:
-        pn = (r.product or "").strip().upper()
-        if not pn or r.quantity <= 0:
-            continue
-        ps = r.size or ""
-        pu = r.unit or gd.get("unit") or "Nos"
-        cache_key = (cid, norm_product_name(pn), norm_str(ps), norm_unit(pu))
+    for idx, r, pn, qty in valid_rows:
+        ps = (r.size or "").strip()
+        pu = norm_unit(r.unit or gd.get("unit") or "NOS")
+        cache_key = (cid, pn, norm_str(ps), pu)
         if cache_key not in prod_cache:
             prod_doc = {
                 "id": str(uuid.uuid4()),
@@ -8553,7 +8647,7 @@ async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
                 "name": pn,
                 "size": ps,
                 "category": "Solar",
-                "unit": pu or "Nos",
+                "unit": pu,
                 "min_stock": 0.0,
                 "status": "Active",
                 "created_at": now_iso()
@@ -8568,11 +8662,7 @@ async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
             pass
 
     # 3. Build documents in-memory
-    for r in data.rows:
-        pn = (r.product or "").strip().upper()
-        if not pn or r.quantity <= 0:
-            continue
-
+    for idx, r, pn, qty in valid_rows:
         client_id_val = r.client_id or g_client_id
         client_name_val = r.client_name or g_client_name
         project_id_val = r.project_id or gd.get("project_id", "")
@@ -8598,14 +8688,16 @@ async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
         ref_num = r.reference_number or r.outward_challan_no or gd.get("reference_number", "")
         challan_no = r.outward_challan_no or ref_num
         date_val = r.date or gd.get("date", "") or now_iso()
+        ps = (r.size or "").strip()
+        pu = norm_unit(r.unit or gd.get("unit") or "NOS")
 
         doc = {
             "id": entry_id,
             "company_id": cid,
             "product": pn,
-            "size": r.size or "",
-            "quantity": r.quantity,
-            "unit": r.unit or gd.get("unit") or "Nos",
+            "size": ps,
+            "quantity": qty,
+            "unit": pu,
             "client_id": client_id_val,
             "client_name": client_name_val,
             "project_id": project_id_val,
@@ -8616,9 +8708,9 @@ async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
             "date": date_val,
             "remarks": r.remarks or gd.get("remarks", ""),
             "status": status_val,
-            "attachment_file_id": "",
-            "attachment_filename": "",
-            "source": "ai-bulk-import",
+            "attachment_file_id": (r.attachment_file_id or "").strip(),
+            "attachment_filename": (r.attachment_filename or "").strip(),
+            "source": "bulk-import",
             "created_by": user["id"],
             "created_by_name": user["name"],
             "created_at": now_iso()
@@ -8634,11 +8726,20 @@ async def bulk_outward(data: BulkOutwardIn, user=Depends(get_current_user)):
         await db.outward_entries.insert_many(docs_to_insert)
         invalidate_products_cache(cid)
         asyncio.create_task(log_activity(cid, user["id"], user["name"], "Bulk Outward Import", f"{len(docs_to_insert)} entries"))
-        asyncio.create_task(push_notification(cid, "admin", "Bulk Outward Import", f"{user['name']} imported {len(docs_to_insert)} outward entries via AI"))
+        asyncio.create_task(push_notification(cid, "admin", "Bulk Outward Import", f"{user['name']} imported {len(docs_to_insert)} outward entries via Bulk Import"))
         if new_prods_to_insert:
             asyncio.create_task(sync_inventory_master(cid))
 
-    return {"inserted": len(inserted_ids), "ids": inserted_ids}
+    return {
+        "received": len(data.rows),
+        "imported": len(inserted_ids),
+        "skipped": 0,
+        "failed": len(failures),
+        "failures": failures,
+        "count": len(inserted_ids),
+        "inserted": len(inserted_ids),
+        "ids": inserted_ids
+    }
 
 
 # ============== Sprint 4: Client Data & Asset Management ==============

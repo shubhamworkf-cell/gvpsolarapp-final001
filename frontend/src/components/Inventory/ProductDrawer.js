@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
-import { Field, SelectField, UNIT_OPTIONS, CATEGORY_OPTIONS, ConfirmDialog } from "./_shared";
+import { Field, SelectField, UNIT_OPTIONS, CATEGORY_OPTIONS, ConfirmDialog, normalizeUnit } from "./_shared";
 import EditTransactionDialog from "./EditTransactionDialog";
 
 const STATUS_STYLES = {
@@ -39,7 +39,7 @@ export default function ProductDrawer({ product, open, onClose, onChanged }) {
   useEffect(() => {
     if (!product || !open) return;
     setTab("details");
-    setForm({ name: product.name, size: product.size || "", category: product.category || "Solar Panel", unit: product.unit || "Nos", min_stock: product.min_stock || 0, rate: product.rate || 0, status: product.status || "Active", high_value_goods: product.high_value_goods || false, serial_number_required: product.serial_number_required || false });
+    setForm({ name: product.name, size: product.size || "", category: product.category || "Solar Panel", unit: normalizeUnit(product.unit), min_stock: product.min_stock || 0, rate: product.rate || 0, status: product.status || "Active", high_value_goods: product.high_value_goods || false, serial_number_required: product.serial_number_required || false });
     loadStats();
   }, [product, open, loadStats]);
 
@@ -241,7 +241,7 @@ export default function ProductDrawer({ product, open, onClose, onChanged }) {
                           </td>
                           <td className="px-4 py-2 text-xs">{r.type === "Inward" ? r.source_name : r.client_name || "—"}</td>
                           <td className="px-4 py-2 text-right tabular-nums font-semibold">{r.quantity}</td>
-                          <td className="px-4 py-2 text-xs text-center">{r.unit || "Nos"}</td>
+                          <td className="px-4 py-2 text-xs text-center">{normalizeUnit(r.unit)}</td>
                           <td className="px-4 py-2 text-[10px] text-slate-500">{r.created_by_name || "—"}</td>
                           <td className="px-2 py-2 text-center">
                             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingTxn(r)} data-testid={`pd-tx-edit-${r.id}`}><Pencil className="w-3.5 h-3.5" /></Button>

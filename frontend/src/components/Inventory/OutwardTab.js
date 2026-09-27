@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Save, RotateCcw, Settings, Pencil, Trash2, Paperclip, ChevronDown, ChevronUp, FileText, FileImage, FileSpreadsheet, CheckCircle2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import dayjs from "dayjs";
-import { Field, SelectField, TextareaField, ConfirmDialog, UNIT_OPTIONS, OUTWARD_REF_TYPES, today, applyDefaults, digitsOnly, ProductAutocompleteInput } from "./_shared";
+import { Field, SelectField, TextareaField, ConfirmDialog, UNIT_OPTIONS, OUTWARD_REF_TYPES, today, applyDefaults, digitsOnly, ProductAutocompleteInput, normalizeUnit } from "./_shared";
 import { usePermission } from "@/lib/permissions";
 import ManualBulkImport from "@/components/ManualBulkImport";
 import { Textarea } from "@/components/ui/textarea";
@@ -42,7 +42,7 @@ const EMPTY = () => ({
   project_id: "", project_name: "",
   outward_challan_no: "",
   reference_type: "Challan Number",
-  product: "", size: "", quantity: "", unit: "Nos",
+  product: "", size: "", quantity: "", unit: "NOS",
   remarks: "", status: "Dispatched",
   attachment_file_id: "", attachment_filename: "",
   high_value_goods: false,
@@ -132,6 +132,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
       const payload = {
         ...form,
         quantity: Number(form.quantity),
+        unit: normalizeUnit(form.unit),
         ...hvData
       };
       if (editing) {
@@ -189,7 +190,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
       outward_challan_no: e.outward_challan_no || "",
       reference_type: e.reference_type || "Challan Number",
       product: e.product || "", size: e.size || "", quantity: e.quantity || "",
-      unit: e.unit || "Nos",
+      unit: normalizeUnit(e.unit),
       remarks: e.remarks || "", status: e.status || "Dispatched",
       attachment_file_id: e.attachment_file_id || "", attachment_filename: e.attachment_filename || "",
       high_value_goods: e.high_value_goods || e.high_value_asset || false,
@@ -382,14 +383,14 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                   onChange={(v) => {
                     let pName = "";
                     let sizeVal = form.size || "";
-                    let unitVal = form.unit || "Nos";
+                    let unitVal = normalizeUnit(form.unit);
                     let isHighValue = form.high_value_goods || false;
                     let isSerialRequired = false;
 
                     if (typeof v === "object" && v !== null) {
                       pName = (v.name || "").toUpperCase();
                       sizeVal = v.size || "";
-                      unitVal = v.unit || "Nos";
+                      unitVal = normalizeUnit(v.unit);
                       isHighValue = Boolean(form.high_value_goods || v.high_value_goods || v.high_value_asset);
                       isSerialRequired = Boolean(v.serial_number_required);
                     } else {
@@ -399,7 +400,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                         isHighValue = Boolean(form.high_value_goods || matched.high_value_goods || matched.high_value_asset);
                         isSerialRequired = Boolean(matched.serial_number_required);
                         sizeVal = matched.size || "";
-                        unitVal = matched.unit || "Nos";
+                        unitVal = normalizeUnit(matched.unit);
                       } else if (!form.high_value_goods) {
                         const highValueKeywords = ["SOLAR PANEL", "INVERTER", "ACDB", "DCDB", "NET METER", "BATTERY"];
                         isHighValue = highValueKeywords.some(keyword => pName.includes(keyword));
@@ -540,7 +541,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
                       <div className="font-semibold text-slate-900 text-xs">{e.product}</div>
                       {e.size && <div className="text-[10px] text-slate-400 mt-0.5">{e.size}</div>}
                     </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{e.quantity} <span className="text-[10px] text-slate-500 font-normal">{e.unit || "Nos"}</span></td>
+                    <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{e.quantity} <span className="text-[10px] text-slate-500 font-normal">{normalizeUnit(e.unit)}</span></td>
                     <td className="px-4 py-2.5 text-xs">
                       <div className="font-medium text-slate-700">{e.client_name || "—"}</div>
                       {e.project_name && e.project_name !== e.client_name && <div className="text-[10px] text-slate-400">{e.project_name}</div>}
@@ -590,7 +591,7 @@ export default function OutwardTab({ products, defaults, onSaveDefaults, onChang
         open={!!confirmDel}
         onOpenChange={(v) => !v && setConfirmDel(null)}
         title="Delete outward entry?"
-        description={confirmDel ? `${confirmDel.product} × ${confirmDel.quantity} ${confirmDel.unit || "Nos"} to ${confirmDel.client_name || "—"}. Stock will be added back.` : ""}
+        description={confirmDel ? `${confirmDel.product} × ${confirmDel.quantity} ${normalizeUnit(confirmDel.unit)} to ${confirmDel.client_name || "—"}. Stock will be added back.` : ""}
         onConfirm={doDelete}
       />
 

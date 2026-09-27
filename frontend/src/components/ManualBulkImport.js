@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { FileSpreadsheet, Upload, Clipboard, CheckCircle2, ArrowLeft, X } from "lucide-react";
 import { fetchProductsDeduplicated, getCachedProducts } from "@/lib/productCache";
-import { normalizeSizeForMatching } from "./Inventory/_shared";
+import { normalizeSizeForMatching, normalizeUnit, CANONICAL_UNITS } from "./Inventory/_shared";
 
 const MODE_CONFIG = {
   inward: {
@@ -29,7 +29,7 @@ const MODE_CONFIG = {
 
 const REF_TYPES = ["Challan Number", "Invoice Number", "Book Number", "GRN Number", "Transport Number"];
 const SRC_TYPES = ["Supplier", "Vendor", "Client Return", "Other"];
-const UNIT_OPTIONS = ["Nos", "Pair", "Mtr", "Set", "Box", "Pcs", "Kg", "Ltr", "Roll"];
+const UNIT_OPTIONS = CANONICAL_UNITS;
 const STATUS_OPTIONS = ["Dispatched", "Pending", "Cancelled"];
 
 const stripNumeric = (value) => String(value ?? "").replace(/\D+/g, "");
@@ -155,7 +155,7 @@ const parseArraysToRows = (arrays, mode = "inward", clients = []) => {
       product: get("product").toUpperCase(),
       size: get("size"),
       quantity: get("quantity") !== "" ? (Number(get("quantity").replace(/,/g, "")) || 0) : "",
-      unit: get("unit") || "Nos",
+      unit: normalizeUnit(get("unit")),
       source_type: "",
       source_name: get("source_name") || "",
       reference_number: get("reference_number") || "",
@@ -190,7 +190,7 @@ const getBlankRow = (mode) => ({
   product: "",
   size: "",
   quantity: 1,
-  unit: "Nos",
+  unit: "NOS",
   source_type: "Supplier",
   source_name: "",
   reference_number: "",
@@ -516,6 +516,10 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
     const CHUNK_SIZE = 25;
     const totalRows = validRows.length;
     let importedCount = 0;
+    let totalReceived = 0;
+    let totalImported = 0;
+    let totalSkipped = 0;
+    const allFailures = [];
 
     try {
       const totalBatches = Math.ceil(totalRows / CHUNK_SIZE);
@@ -528,7 +532,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
         const batchNum = Math.floor(i / CHUNK_SIZE) + 1;
         const chunk = validRows.slice(i, i + CHUNK_SIZE);
         console.log(`[IMPORT] sending batch ${batchNum}/${totalBatches} (${chunk.length} rows)`);
-        await api.post(
+        const res = await api.post(
           cfg.bulkEndpoint,
           {
             rows: chunk,
@@ -537,6 +541,14 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
           },
           { timeout: 120000 }
         );
+        const data = res?.data || {};
+        totalReceived += data.received ?? chunk.length;
+        totalImported += data.imported ?? data.inserted ?? chunk.length;
+        totalSkipped += data.skipped ?? 0;
+        if (Array.isArray(data.failures) && data.failures.length > 0) {
+          allFailures.push(...data.failures);
+        }
+
         importedCount += chunk.length;
         const progressPct = Math.round((importedCount / totalRows) * 100);
         console.log(`[IMPORT] batch ${batchNum} complete. Progress: ${progressPct}%`);
@@ -564,7 +576,11 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
         }
 
         // 2. Display success toast
-        toast.success(`Successfully imported ${validRows.length} ${mode} entries.`);
+        if (allFailures.length > 0) {
+          toast.warning(`Import completed with issues: ${totalImported} imported, ${allFailures.length} failed. (${allFailures[0]?.reason || "Validation error"})`);
+        } else {
+          toast.success(`Successfully imported ${totalImported} ${mode} entries.`);
+        }
 
         // 3. Reset internal state to initial Step 1 ("input")
         resetState();
@@ -817,7 +833,12 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
                     <Button variant="outline" size="sm" className="text-red-600 border-red-200 hover:bg-red-50" onClick={deleteSelectedRows}>Delete Selected</Button>
                     <Button variant="outline" size="sm" className="text-blue-600 border-blue-200 hover:bg-blue-50" onClick={addBlankRow}><PlusIcon className="w-4 h-4 mr-1" /> Add Row</Button>
                   </div>
-                  {invalidRowsCount > 0 && <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">{invalidRowsCount} Invalid Rows</Badge>}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200">{rows.length} Total</Badge>
+                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">{selectedRows.length} Selected</Badge>
+                    <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">{selectedRows.length - invalidRowsCount} Valid</Badge>
+                    {invalidRowsCount > 0 && <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">{invalidRowsCount} Invalid</Badge>}
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto bg-white border rounded-3xl">
@@ -868,7 +889,7 @@ export default function ManualBulkImport({ open, onOpenChange, onImported, mode 
                               <td className="px-3 py-2.5 align-top"><Input value={row.size || ""} onChange={(e) => updateCell(originalIndex, "size", e.target.value)} className="text-xs h-8 bg-white border-slate-200" /></td>
                               <td className="px-3 py-2.5 align-top"><Input type="number" value={row.quantity ?? ""} onChange={(e) => updateCell(originalIndex, "quantity", e.target.value === "" ? "" : (Number(e.target.value) || 0))} className="text-xs h-8 bg-white border-slate-200 w-20" /></td>
                               <td className="px-3 py-2.5 align-top">
-                                <Select value={row.unit || "Nos"} onValueChange={(value) => updateCell(originalIndex, "unit", value)}>
+                                <Select value={normalizeUnit(row.unit)} onValueChange={(value) => updateCell(originalIndex, "unit", normalizeUnit(value))}>
                                   <SelectTrigger className="h-8 text-xs bg-white border-slate-200"><SelectValue /></SelectTrigger>
                                   <SelectContent>{UNIT_OPTIONS.map((unit) => <SelectItem key={unit} value={unit}>{unit}</SelectItem>)}</SelectContent>
                                 </Select>

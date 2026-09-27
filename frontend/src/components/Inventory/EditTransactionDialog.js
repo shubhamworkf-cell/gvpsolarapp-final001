@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Save, Paperclip, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
 import { toast } from "sonner";
-import { Field, SelectField, TextareaField, UNIT_OPTIONS, REF_TYPES, SRC_TYPES, digitsOnly, ProductAutocompleteInput } from "./_shared";
+import { Field, SelectField, TextareaField, UNIT_OPTIONS, REF_TYPES, SRC_TYPES, digitsOnly, ProductAutocompleteInput, normalizeUnit } from "./_shared";
 
 const OUTWARD_STATUSES = ["Pending", "Dispatched", "Cancelled"];
 
@@ -24,7 +24,7 @@ export default function EditTransactionDialog({ transaction, onClose, onSaved, p
 
   useEffect(() => {
     if (!transaction) { setForm(null); return; }
-    setForm({ ...transaction, date: (transaction.date || "").slice(0, 10) });
+    setForm({ ...transaction, unit: normalizeUnit(transaction.unit), date: (transaction.date || "").slice(0, 10) });
   }, [transaction]);
 
   if (!transaction || !form) return null;
@@ -48,7 +48,7 @@ export default function EditTransactionDialog({ transaction, onClose, onSaved, p
     }
     setBusy(true);
     const url = isInward ? `/inventory/inward/${form.id}` : `/inventory/outward/${form.id}`;
-    const payload = { ...form, quantity: Number(form.quantity) };
+    const payload = { ...form, quantity: Number(form.quantity), unit: normalizeUnit(form.unit) };
     try {
       await api.patch(url, payload);
       // Explicitly GET to verify database row as requested
@@ -135,19 +135,19 @@ export default function EditTransactionDialog({ transaction, onClose, onSaved, p
                 onChange={(v) => {
                   let pName = "";
                   let sizeVal = form.size || "";
-                  let unitVal = form.unit || "Nos";
+                  let unitVal = normalizeUnit(form.unit);
                   let rateVal = form.rate || "";
                   if (typeof v === "object" && v !== null) {
                     pName = (v.name || "").toUpperCase();
                     sizeVal = v.size || "";
-                    unitVal = v.unit || "Nos";
+                    unitVal = normalizeUnit(v.unit);
                     rateVal = (v.rate !== undefined && v.rate !== null) ? String(v.rate) : "";
                   } else {
-                    pName = v.toUpperCase();
-                    const matched = products.find(p => p.name.toUpperCase() === pName);
+                    pName = String(v || "").toUpperCase();
+                    const matched = products.find(p => (p.name || "").toUpperCase() === pName);
                     if (matched) {
                       sizeVal = matched.size || "";
-                      unitVal = matched.unit || "Nos";
+                      unitVal = normalizeUnit(matched.unit);
                       rateVal = (matched.rate !== undefined && matched.rate !== null) ? String(matched.rate) : "";
                     }
                   }
@@ -167,7 +167,7 @@ export default function EditTransactionDialog({ transaction, onClose, onSaved, p
           </div>
           <Field label="Size / Spec" value={form.size} onChange={(v) => upd({ size: v })} testid="et-size" />
           <Field label="Quantity" type="number" value={form.quantity} onChange={(v) => upd({ quantity: v })} required testid="et-qty" />
-          <SelectField label="Unit" value={form.unit} onChange={(v) => upd({ unit: v })} options={UNIT_OPTIONS} testid="et-unit" />
+          <SelectField label="Unit" value={normalizeUnit(form.unit)} onChange={(v) => upd({ unit: normalizeUnit(v) })} options={UNIT_OPTIONS} testid="et-unit" />
 
           <TextareaField label="Remarks" value={form.remarks} onChange={(v) => upd({ remarks: v })} testid="et-remarks" full />
 

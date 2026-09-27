@@ -11,9 +11,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { FileSpreadsheet, Upload, Clipboard, ShieldCheck, Plus, Trash2, X } from "lucide-react";
 import { fetchProductsDeduplicated, getCachedProducts } from "@/lib/productCache";
 import { toast } from "sonner";
+import { CANONICAL_UNITS, normalizeUnit } from "./Inventory/_shared";
 
 const REF_TYPES = ["Challan Number", "Bill Number", "Invoice Number", "GRN Number"];
-const UNIT_OPTIONS = ["Nos", "Pair", "Mtr", "Set", "Box", "Pcs", "Kg", "Ltr", "Roll"];
+const UNIT_OPTIONS = CANONICAL_UNITS;
 
 const parseCsvLine = (line) => {
   const row = [];
@@ -106,7 +107,7 @@ const parseArraysToRows = (arrays) => {
       size: get("size"),
       brand: get("brand"),
       quantity: get("quantity") !== "" ? (Number(get("quantity").replace(/,/g, "")) || 0) : "",
-      unit: get("unit") || "Nos",
+      unit: normalizeUnit(get("unit") || "NOS"),
       vendor: get("vendor"),
       bill_number: get("bill_number"),
       date: get("date"),
@@ -281,7 +282,7 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
         size: "",
         brand: "",
         quantity: 1,
-        unit: "Nos",
+        unit: "NOS",
         vendor: globalDefaults.vendor || "",
         bill_number: globalDefaults.bill_number || "",
         date: globalDefaults.date || new Date().toISOString().split("T")[0],
@@ -364,6 +365,10 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
     const CHUNK_SIZE = 25;
     const totalRows = validRows.length;
     let importedCount = 0;
+    let totalReceived = 0;
+    let totalImported = 0;
+    let totalSkipped = 0;
+    const allFailures = [];
 
     try {
       const payloadRows = validRows.map((r) => ({
@@ -373,7 +378,7 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
         source_name: (r.vendor || r.source_name || "").trim(),
         source_type: "Supplier",
         quantity: Number(r.quantity),
-        unit: r.unit || "Nos",
+        unit: normalizeUnit(r.unit || "NOS"),
         bill_number: r.bill_number || "",
         reference_number: r.bill_number || "",
         reference_type: r.reference_type || globalDefaults.reference_type || "Challan Number",
@@ -387,7 +392,7 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
 
       for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
         const chunk = payloadRows.slice(i, i + CHUNK_SIZE);
-        await api.post(
+        const res = await api.post(
           "/inventory/bulk-inward-high-value",
           {
             rows: chunk,
@@ -396,13 +401,25 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
           },
           { timeout: 120000 }
         );
+        const data = res?.data || {};
+        totalReceived += data.received ?? chunk.length;
+        totalImported += data.imported ?? data.inserted ?? chunk.length;
+        totalSkipped += data.skipped ?? 0;
+        if (Array.isArray(data.failures) && data.failures.length > 0) {
+          allFailures.push(...data.failures);
+        }
+
         importedCount += chunk.length;
         setImportProgress(Math.round((importedCount / totalRows) * 100));
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
 
       setImportProgress(100);
-      toast.success(`Successfully imported ${payloadRows.length} High Value Goods!`);
+      if (allFailures.length > 0) {
+        toast.warning(`Import completed with issues: ${totalImported} imported, ${allFailures.length} failed. (${allFailures[0]?.reason || "Validation error"})`);
+      } else {
+        toast.success(`Successfully imported ${totalImported} High Value Goods!`);
+      }
       setStep("input");
       setFile(null);
       setFileName("");
@@ -581,15 +598,23 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
                     <Button variant="outline" size="sm" onClick={addBlankRow} className="text-amber-700 border-amber-300 hover:bg-amber-50">
                       <Plus className="w-4 h-4 mr-1" /> Add High Value Row
                     </Button>
-                    <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300">
-                      {selectedRows.length} Rows Selected
-                    </Badge>
                   </div>
-                  {invalidRowsCount > 0 && (
-                    <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
-                      {invalidRowsCount} Invalid / Duplicate Rows
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200">
+                      {rows.length} Total
                     </Badge>
-                  )}
+                    <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300">
+                      {selectedRows.length} Selected
+                    </Badge>
+                    <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                      {selectedRows.length - invalidRowsCount} Valid
+                    </Badge>
+                    {invalidRowsCount > 0 && (
+                      <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                        {invalidRowsCount} Invalid / Duplicate Rows
+                      </Badge>
+                    )}
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto bg-white border rounded-3xl shadow-sm">
@@ -636,7 +661,7 @@ export default function HighValueBulkImport({ open, onOpenChange, onImported, pr
                                 {hasErr && rowErrs.includes("Quantity >= 0 required") && <div className="text-[10px] text-red-600 mt-0.5">Qty &gt;= 0 required</div>}
                               </td>
                               <td className="px-3 py-2 align-top">
-                                <Select value={row.unit} onValueChange={(v) => updateCell(idx, "unit", v)}>
+                                <Select value={normalizeUnit(row.unit || "NOS")} onValueChange={(v) => updateCell(idx, "unit", normalizeUnit(v))}>
                                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                                   <SelectContent>{UNIT_OPTIONS.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
                                 </Select>

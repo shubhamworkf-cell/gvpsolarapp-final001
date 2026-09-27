@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, Activity, Download } from "lucide-react";
 import { toast } from "sonner";
-import { CATEGORY_OPTIONS, normalizeSizeForMatching } from "./_shared";
+import { CATEGORY_OPTIONS, normalizeSizeForMatching, normalizeUnit } from "./_shared";
 
 const STATUS_STYLES = {
   "Normal": "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -24,7 +24,7 @@ export default function BalanceTab({ products, globalSearch }) {
   const filtered = useMemo(() => {
     const list = Array.isArray(products) ? products : [];
     const rawSearch = (globalSearch || search || "").toLowerCase().trim();
-    const cleanSearch = rawSearch.replace(/\s*[xX×\*]\s*/g, "*");
+    const cleanSearch = rawSearch.replace(/(\d)\s*[xX×\*]\s*(\d)/g, "$1*$2");
     const tokens = cleanSearch.split(/\s+/).filter(Boolean);
 
     return list.filter((p) => {
@@ -34,12 +34,13 @@ export default function BalanceTab({ products, globalSearch }) {
         const name = (p.name || "").toLowerCase();
         const rawSize = (p.size || "").toLowerCase();
         const size = normalizeSizeForMatching(p.size);
+        const u = normalizeUnit(p.unit).toLowerCase();
         const brand = (p.brand || "").toLowerCase();
         const category = (p.category || "").toLowerCase();
         const challan = (p.challan_number || p.challan || p.reference_number || "").toLowerCase();
         const sku = (p.sku || p.code || p.product_code || "").toLowerCase();
 
-        const fullText = `${name} ${size} ${rawSize} ${brand} ${category} ${challan} ${sku}`;
+        const fullText = `${name} ${size} ${rawSize} ${u} ${brand} ${category} ${challan} ${sku}`;
         const match = tokens.every((token) => fullText.includes(token));
 
         if (!match) return false;
@@ -70,7 +71,7 @@ export default function BalanceTab({ products, globalSearch }) {
       p.total_in || 0,
       p.total_out || 0,
       p.balance || 0,
-      `"${(p.unit || "Nos").replace(/"/g, '""')}"`,
+      `"${normalizeUnit(p.unit).replace(/"/g, '""')}"`,
       p.min_stock || 0,
       `"${(p.stock_status || "Normal").replace(/"/g, '""')}"`
     ]);
@@ -170,7 +171,7 @@ export default function BalanceTab({ products, globalSearch }) {
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-emerald-700 font-medium">{p.total_in || 0}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-amber-700 font-medium">{p.total_out || 0}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums font-bold text-slate-900">{p.balance}{" "}<span className="text-[10px] text-slate-500 font-normal">{p.unit || "Nos"}</span></td>
+                    <td className="px-4 py-2.5 text-right tabular-nums font-bold text-slate-900">{p.balance}{" "}<span className="text-[10px] text-slate-500 font-normal">{normalizeUnit(p.unit)}</span></td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-xs text-slate-500">{p.min_stock || 0}</td>
                     <td className="px-4 py-2.5 text-center">
                       <Badge variant="outline" className={`${STATUS_STYLES[p.stock_status] || ""} text-[10px]`}>{p.stock_status}</Badge>

@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import dayjs from "dayjs";
 import { toast } from "sonner";
-import { ConfirmDialog } from "./_shared";
+import { ConfirmDialog, normalizeUnit } from "./_shared";
 import EditTransactionDialog from "./EditTransactionDialog";
 
 export default function HistoryTab({ globalSearch, products, onChanged }) {
@@ -101,7 +101,7 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
       const party = r.type === "Inward" ? r.source_name : r.client_name;
       const row = [
         (r.date || r.created_at || "").slice(0, 10), r.type, r.product, r.size || "",
-        r.quantity || 0, r.unit || "Nos", ref, bill, party || "",
+        r.quantity || 0, normalizeUnit(r.unit), ref, bill, party || "",
         r.project_name || "", r.status || "", (r.remarks || "").replace(/"/g, '""'),
         r.created_by_name || "",
       ];
@@ -203,7 +203,7 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
               </SelectContent>
             </Select>
             <Input placeholder="Product" value={filters.product} onChange={(e) => setFilters({ ...filters, product: e.target.value })} className="w-40" data-testid="hist-product" list="hist-product-list" />
-            <datalist id="hist-product-list">{(products || []).map((p) => <option key={p.id} value={p.name} />)}</datalist>
+            <datalist id="hist-product-list">{Array.from(new Set((products || []).map(p => p.name).filter(Boolean))).map((name) => <option key={name} value={name} />)}</datalist>
             <Input placeholder="Vendor" value={filters.vendor} onChange={(e) => setFilters({ ...filters, vendor: e.target.value })} className="w-32" data-testid="hist-vendor" />
             <Input placeholder="Client" value={filters.client} onChange={(e) => setFilters({ ...filters, client: e.target.value })} className="w-32" data-testid="hist-client" />
             <div className="flex items-center gap-1">
@@ -343,7 +343,7 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
                           </button>
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{r.quantity} <span className="text-[10px] text-slate-500 font-normal">{r.unit || "Nos"}</span></td>
+                      <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{r.quantity} <span className="text-[10px] text-slate-500 font-normal">{normalizeUnit(r.unit)}</span></td>
                       <td className="px-4 py-2.5 text-xs">{r.type === "Inward" ? r.source_name : r.client_name || "—"}</td>
                       <td className="px-4 py-2.5 text-xs">
                         <div className="font-mono text-slate-700">{r.reference_number || r.outward_challan_no || "—"}</div>

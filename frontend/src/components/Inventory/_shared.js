@@ -8,7 +8,47 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { AlertTriangle } from "lucide-react";
 import { getCachedProducts, fetchProductsDeduplicated } from "@/lib/productCache";
 import { useProductList } from "@/hooks/useInventory";
-export const UNIT_OPTIONS = ["Nos", "Pair", "Mtr", "Set", "Box", "Pcs", "Kg", "Ltr", "Roll"];
+export const CANONICAL_UNITS = ["NOS", "PAIR", "MTR", "SET", "BOX", "PCS", "KG", "LTR", "ROLL", "PKT"];
+export const UNIT_OPTIONS = CANONICAL_UNITS;
+export const UNIT_NORMALIZATION_MAP = {
+  NOS: "NOS",
+  NO: "NOS",
+  NUM: "NOS",
+  NUMBERS: "NOS",
+  PAIR: "PAIR",
+  PAIRS: "PAIR",
+  MTR: "MTR",
+  METER: "MTR",
+  METERS: "MTR",
+  SET: "SET",
+  SETS: "SET",
+  BOX: "BOX",
+  BOXES: "BOX",
+  PCS: "PCS",
+  PC: "PCS",
+  PIECE: "PCS",
+  PIECES: "PCS",
+  KG: "KG",
+  KGS: "KG",
+  LTR: "LTR",
+  LTRS: "LTR",
+  LITER: "LTR",
+  LITERS: "LTR",
+  ROLL: "ROLL",
+  ROLLS: "ROLL",
+  PKT: "PKT",
+  PACKET: "PKT",
+  PACKETS: "PKT",
+  PACK: "PKT",
+  PACKS: "PKT",
+};
+
+export function normalizeUnit(u) {
+  if (!u) return "NOS";
+  const val = String(u).trim().toUpperCase();
+  return UNIT_NORMALIZATION_MAP[val] || (CANONICAL_UNITS.includes(val) ? val : "NOS");
+}
+
 export const CATEGORY_OPTIONS = ["Solar Panel", "Inverter", "Battery", "BoS", "Cable", "Structure", "MC4 / Connector", "Earthing", "Net Meter", "Tools", "Other"];
 export const REF_TYPES = ["Challan Number", "Invoice Number", "Book Number", "GRN Number", "Transport Number"];
 export const OUTWARD_REF_TYPES = ["Challan Number", "Book Number", "Other"];
@@ -21,7 +61,7 @@ export const digitsOnly = (v) => String(v ?? "").replace(/\D+/g, "");
 export function normalizeSizeForMatching(size) {
   if (!size) return "";
   let s = String(size).toLowerCase();
-  s = s.replace(/\s*[xX×\*]\s*/g, "*");
+  s = s.replace(/(\d)\s*[xX×\*]\s*(\d)/g, "$1*$2");
   s = s.replace(/\s+/g, "");
   return s;
 }
@@ -162,7 +202,7 @@ export function ProductAutocompleteInput({ value, onChange, products, placeholde
   // ── Fast token-based filter ──────────────────────────────────────────────
   const filterList = useCallback((list, query) => {
     if (!query) return list;
-    const cleanSearch = query.toUpperCase().replace(/\s*[xX×*]\s*/g, "*");
+    const cleanSearch = query.toUpperCase().replace(/(\d)\s*[xX×*]\s*(\d)/g, "$1*$2");
     const tokens = cleanSearch.split(/\s+/).filter(Boolean);
     if (tokens.length === 0) return list;
     return list.filter(p => tokens.every(token => p._searchKey.includes(token)));
