@@ -3298,7 +3298,28 @@ async def list_clients(
             {"consumer_number": {"$regex": s}},
             {"sol_id":          {"$regex": s, "$options": "i"}},
         ]
-    return await db.clients.find(q, projection).sort("created_at", -1).skip(skip).to_list(limit)
+    res = await db.clients.find(q, projection).sort("created_at", -1).skip(skip).to_list(limit)
+    if not status and not phase_type and subsidy_eligible is None:
+        existing_names = {(c.get("full_name") or "").strip().upper() for c in res}
+        out_clients = await db.outward_entries.find({"company_id": user["company_id"]}, {"_id": 0, "client_name": 1, "client_id": 1}).to_list(2000)
+        seen_names = set()
+        for o in out_clients:
+            cname = (o.get("client_name") or "").strip()
+            norm_cn = cname.upper()
+            if norm_cn and norm_cn not in existing_names and norm_cn not in seen_names:
+                if not search or search.lower() in cname.lower():
+                    seen_names.add(norm_cn)
+                    res.append({
+                        "id": o.get("client_id") or f"ext_{abs(hash(norm_cn))}",
+                        "full_name": cname,
+                        "mobile": "",
+                        "consumer_number": "",
+                        "status": "Direct Dispatch",
+                        "system_kw": 0,
+                        "sol_id": "",
+                        "stages": {}
+                    })
+    return res
 
 @api_router.get("/clients/stats")
 async def client_stats(user=Depends(get_current_user)):
@@ -5711,6 +5732,14 @@ def norm_product_name(s: Optional[str]) -> str:
         return ""
     return re.sub(r'\s+', ' ', str(s)).strip().upper()
 
+def norm_spec(name: Optional[str], size: Optional[str] = "") -> str:
+    name_str = norm_product_name(name)
+    size_str = norm_str(size)
+    full = f"{name_str} {size_str}".strip()
+    full = re.sub(r'(\d)\s*[xX×\*]\s*(\d)', r'\1*\2', full)
+    full = re.sub(r'(\d+)\s*(MM|SQMM|KW|W|V|A|AH|NOS|MTR)\b', r'\1 \2', full)
+    return re.sub(r'\s+', ' ', full).strip()
+
 def get_canonical_key(name: Optional[str], size: Optional[str] = "") -> Tuple[str, str]:
     return (norm_product_name(name), norm_str(size))
 
@@ -5731,11 +5760,27 @@ def get_size_variants(size_str: Optional[str]) -> List[str]:
                 variants.add(f"{a}{sep}{b}")
     return [v for v in variants if v]
 
+def get_product_search_regex(name: Optional[str], size: Optional[str] = "") -> str:
+    """Return a regex pattern matching product name variants with embedded or separate sizes."""
+    name_clean = (name or "").strip()
+    size_clean = (size or "").strip()
+    if not name_clean:
+        return ""
+    patterns = [re.escape(name_clean)]
+    m = re.match(r'^(.*?)\s+(\d+(?:\.\d+)?\s*(?:MM|SQMM|KW|W|V|A|AH|NOS|MTR))$', name_clean, re.I)
+    if m:
+        patterns.append(re.escape(m.group(1).strip()))
+    if size_clean:
+        patterns.append(re.escape(f"{name_clean} {size_clean}"))
+        patterns.append(re.escape(f"{name_clean} {size_clean.replace(' ', '')}"))
+    return "|".join(patterns)
+
 def match_transaction_to_product(tx: Dict[str, Any], prod: Dict[str, Any]) -> bool:
     """Matches a transaction (inward or outward entry) to a product using:
        1. Direct product_id match if present
-       2. Canonical (name, size) match when size is specified
-       3. Canonical name match when target size is not specified or wildcard
+       2. Direct canonical (name, size) match
+       3. Combined spec match (e.g. 'DC CABLE BLACK 4 MM' vs 'DC CABLE BLACK' + '4 MM')
+       4. Canonical name match when target size is not specified or wildcard
     """
     tx_pid = str(tx.get("product_id") or "").strip()
     prod_id = str(prod.get("id") or "").strip()
@@ -5745,12 +5790,23 @@ def match_transaction_to_product(tx: Dict[str, Any], prod: Dict[str, Any]) -> bo
     target_name = norm_product_name(prod.get("name") or prod.get("product"))
     if not tx_name or not target_name:
         return False
+
+    tx_size = norm_str(tx.get("size"))
+    target_size = norm_str(prod.get("size"))
+
+    # Direct exact name and size match
+    if tx_name == target_name and (not target_size or tx_size == target_size):
+        return True
+
+    # Combined spec match (e.g. 'DC CABLE BLACK 4 MM' vs 'DC CABLE BLACK' + '4 MM')
+    tx_spec = norm_spec(tx_name, tx_size)
+    prod_spec = norm_spec(target_name, target_size)
+    if tx_spec and prod_spec and tx_spec == prod_spec:
+        return True
+
     if tx_name != target_name and target_name not in tx_name:
         return False
-    target_size_raw = prod.get("size")
-    if target_size_raw is not None and str(target_size_raw).strip() != "":
-        tx_size = norm_str(tx.get("size"))
-        target_size = norm_str(str(target_size_raw))
+    if target_size:
         return tx_size == target_size
     return True
 
@@ -6072,6 +6128,7 @@ async def _compute_inventory_balances(cid: str):
     prod_id_map: Dict[str, Dict] = {}
     prod_key_map: Dict[Tuple[str, str], Dict] = {}
     prod_name_map: Dict[str, List[Dict]] = {}
+    prod_spec_map: Dict[str, List[Dict]] = {}
 
     for p in items:
         p_name = norm_product_name(p.get("name"))
@@ -6084,6 +6141,9 @@ async def _compute_inventory_balances(cid: str):
             key = get_canonical_key(p_name, p_size)
             prod_key_map[key] = p
             prod_name_map.setdefault(p_name, []).append(p)
+            spec = norm_spec(p_name, p_size)
+            if spec:
+                prod_spec_map.setdefault(spec, []).append(p)
 
     in_map: Dict[Tuple[str, str], float] = {}
     out_map: Dict[Tuple[str, str], float] = {}
@@ -6103,8 +6163,14 @@ async def _compute_inventory_balances(cid: str):
         # Priority 2: Match by exact normalized canonical (name, size)
         if pk in prod_key_map:
             return pk
-            
-        # Priority 3: Match by product name if single product match in master
+
+        # Priority 3: Match by combined spec (e.g. 'DC CABLE BLACK 4 MM' vs 'DC CABLE BLACK' + '4 MM')
+        spec = norm_spec(raw_pn, raw_ps)
+        if spec and spec in prod_spec_map and len(prod_spec_map[spec]) == 1:
+            target = prod_spec_map[spec][0]
+            return get_canonical_key(target.get("name"), target.get("size"))
+
+        # Priority 4: Match by product name if single product match in master
         pn_n = pk[0]
         if pn_n in prod_name_map and len(prod_name_map[pn_n]) == 1:
             target = prod_name_map[pn_n][0]
@@ -7841,7 +7907,19 @@ async def inv_history(
         return [{field: _text_filter(value)} for field in field_names if field]
 
     def _date_match(rec: Dict[str, Any]) -> bool:
-        d = (rec.get("date") or rec.get("created_at") or "")[:10]
+        raw_d = str(rec.get("date") or rec.get("created_at") or "").strip()
+        if not raw_d:
+            return True
+        d = ""
+        m1 = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', raw_d)
+        if m1:
+            d = f"{m1.group(1)}-{int(m1.group(2)):02d}-{int(m1.group(3)):02d}"
+        else:
+            m2 = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})', raw_d)
+            if m2:
+                d = f"{m2.group(3)}-{int(m2.group(2)):02d}-{int(m2.group(1)):02d}"
+            else:
+                d = raw_d[:10]
         if from_date and d < from_date: return False
         if to_date and d > to_date: return False
         return True
@@ -7876,12 +7954,15 @@ async def inv_history(
 
     if (not type or type == "inward") and not status:
         q: Dict[str, Any] = {"company_id": cid}
-        if product: q["product"] = _text_filter(product)
+        if product:
+            p_regex = get_product_search_regex(product, size or "")
+            q["product"] = {"$regex": p_regex, "$options": "i"}
         if size_variants:
             q["size"] = {"$in": size_variants}
         elif size is not None and size != "":
             q["size"] = norm_str(size)
         if vendor: q["source_name"] = _text_filter(vendor)
+        if client: q["source_name"] = _text_filter(client)
         if challan: q["reference_number"] = _text_filter(challan)
         if bill_number: q["bill_number"] = _text_filter(bill_number)
         if user_id: q["created_by"] = user_id
@@ -7900,12 +7981,15 @@ async def inv_history(
 
     if (not type or type == "outward") and not bill_number:
         q = {"company_id": cid}
-        if product: q["product"] = _text_filter(product)
+        if product:
+            p_regex = get_product_search_regex(product, size or "")
+            q["product"] = {"$regex": p_regex, "$options": "i"}
         if size_variants:
             q["size"] = {"$in": size_variants}
         elif size is not None and size != "":
             q["size"] = norm_str(size)
-        if client: q["client_name"] = _text_filter(client)
+        if client:
+            q["$or"] = [{"client_name": _text_filter(client)}, {"client_id": client}]
         if challan: q["$or"] = [{"outward_challan_no": _text_filter(challan)}, {"reference_number": _text_filter(challan)}]
         if user_id: q["created_by"] = user_id
         if status: q["status"] = status
@@ -8083,13 +8167,14 @@ async def product_stats(product_id: str, user=Depends(get_current_user)):
     p_size = matched_p.get("size") or ""
     size_variants = get_size_variants(p_size)
 
-    in_q: Dict[str, Any] = {"company_id": cid, "product": {"$regex": f"^{re.escape(p_name)}$", "$options": "i"}}
+    p_regex = get_product_search_regex(p_name, p_size)
+    in_q: Dict[str, Any] = {"company_id": cid, "product": {"$regex": p_regex, "$options": "i"}}
     if size_variants:
-        in_q["size"] = {"$in": size_variants}
+        in_q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
 
-    out_q: Dict[str, Any] = {"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled"]}, "product": {"$regex": f"^{re.escape(p_name)}$", "$options": "i"}}
+    out_q: Dict[str, Any] = {"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled", "cancelled"]}, "product": {"$regex": p_regex, "$options": "i"}}
     if size_variants:
-        out_q["size"] = {"$in": size_variants}
+        out_q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
 
     last_in_rows = await db.inward_entries.find(in_q, {"_id": 0, "date": 1, "product_id": 1, "product": 1, "size": 1}).sort("date", -1).to_list(1000)
     last_out_rows = await db.outward_entries.find(out_q, {"_id": 0, "date": 1, "product_id": 1, "product": 1, "size": 1}).sort("date", -1).to_list(1000)
@@ -10339,53 +10424,86 @@ async def list_assignable_users(user=Depends(get_current_user)):
 
 # ---------- Client Inventory Ledger Logic ----------
 async def calculate_client_ledger(company_id: str, client_id: str):
+    # Try finding client by id or by name
     client = await db.clients.find_one({"id": client_id, "company_id": company_id}, {"_id": 0})
     if not client:
-        return None
-        
-    # Run both queries in parallel
-    outwards, inwards_raw = await asyncio.gather(
-        db.outward_entries.find({
+        # Check by full_name
+        client = await db.clients.find_one({"full_name": {"$regex": f"^{re.escape(client_id)}$", "$options": "i"}, "company_id": company_id}, {"_id": 0})
+    
+    # If still not found in clients table, check if outward entries exist for this client name or client_id
+    if not client:
+        sample_out = await db.outward_entries.find_one({
             "company_id": company_id,
-            "client_id": client_id,
-            "status": "Dispatched"
-        }, {"_id": 0}).to_list(1000),
-        # inward_entries stores client_id inside remarks as [client_id:UUID],
-        # so we can only filter by company_id + source_type in the DB,
-        # then use parse_inward_client_info to extract & match client_id in Python.
+            "$or": [
+                {"client_id": client_id},
+                {"client_name": {"$regex": f"^{re.escape(client_id)}$", "$options": "i"}}
+            ]
+        }, {"_id": 0, "client_id": 1, "client_name": 1})
+        if sample_out:
+            client = {
+                "id": sample_out.get("client_id") or client_id,
+                "full_name": sample_out.get("client_name") or client_id,
+                "sol_id": "",
+                "mobile": "",
+                "status": "Direct Dispatch"
+            }
+        else:
+            return None
+
+    actual_client_id = client.get("id") or client_id
+    actual_client_name = client.get("full_name") or ""
+
+    # Build outward query matching either client_id or client_name, excluding only cancelled
+    outward_query: Dict[str, Any] = {
+        "company_id": company_id,
+        "status": {"$nin": ["Cancelled", "draft_cancelled", "cancelled"]}
+    }
+    or_clauses = []
+    if actual_client_id and not str(actual_client_id).startswith("ext_"):
+        or_clauses.append({"client_id": actual_client_id})
+    if actual_client_name:
+        or_clauses.append({"client_name": {"$regex": f"^{re.escape(actual_client_name)}$", "$options": "i"}})
+    if or_clauses:
+        outward_query["$or"] = or_clauses
+
+    outwards, inwards_raw = await asyncio.gather(
+        db.outward_entries.find(outward_query, {"_id": 0}).to_list(10000),
         db.inward_entries.find({
             "company_id": company_id,
-            "source_type": "Return From Client",
-        }, {"_id": 0}).to_list(5000),
+            "status": {"$nin": ["Cancelled", "draft_cancelled", "cancelled"]}
+        }, {"_id": 0}).to_list(10000),
     )
     
-    # Parse client_id out of remarks and filter to this client
+    # Filter inwards: match client_id in remarks OR source_name / client_name matching client
     inwards = []
+    norm_cname = actual_client_name.strip().upper() if actual_client_name else ""
     for inv in inwards_raw:
         inv = parse_inward_client_info(inv)
-        if inv.get("client_id") == client_id:
-            inwards.append(inv)
+        src_type = str(inv.get("source_type") or "").strip().lower()
+        if "return" in src_type or "client" in src_type:
+            inv_cid = str(inv.get("client_id") or "").strip()
+            inv_src = str(inv.get("source_name") or "").strip().upper()
+            if (actual_client_id and inv_cid == actual_client_id) or (norm_cname and (inv_src == norm_cname or norm_cname in inv_src or inv_src in norm_cname)):
+                inwards.append(inv)
     
     ledger = {}
     
     for out in outwards:
         raw_prod = (out.get("product") or "").strip()
-        norm_name = raw_prod.upper()
+        norm_name = norm_product_name(raw_prod)
         if not norm_name:
             continue
         raw_size = (out.get("size") or "").strip()
-        norm_size = raw_size.upper()
-        unit = (out.get("unit") or "Nos").strip()
+        unit = norm_unit(out.get("unit") or "NOS")
         
-        # Report identity key: normalized Product Name + normalized Size/Spec
-        # Unit MUST NOT be part of the identity key.
-        key = (norm_name, norm_size)
+        # Report identity key: canonical spec (product name + size)
+        key = norm_spec(norm_name, raw_size)
         qty = float(out.get("quantity") or 0)
         date_str = out.get("date") or out.get("created_at") or ""
         
         if key not in ledger:
             ledger[key] = {
-                "product": raw_prod.upper(),
+                "product": norm_name,
                 "size": raw_size,
                 "unit": unit,
                 "total_outward": 0.0,
@@ -10394,6 +10512,8 @@ async def calculate_client_ledger(company_id: str, client_id: str):
                 "serial_numbers": [],
                 "last_movement_date": ""
             }
+        if not ledger[key]["size"] and raw_size:
+            ledger[key]["size"] = raw_size
         ledger[key]["total_outward"] += qty
         
         serials = out.get("serial_numbers") or out.get("serials") or ([out.get("serial_number")] if out.get("serial_number") else [])
@@ -10408,21 +10528,20 @@ async def calculate_client_ledger(company_id: str, client_id: str):
 
     for inv in inwards:
         raw_prod = (inv.get("product") or "").strip()
-        norm_name = raw_prod.upper()
+        norm_name = norm_product_name(raw_prod)
         if not norm_name:
             continue
         raw_size = (inv.get("size") or "").strip()
-        norm_size = raw_size.upper()
-        unit = (inv.get("unit") or "Nos").strip()
+        unit = norm_unit(inv.get("unit") or "NOS")
         
-        # Report identity key: normalized Product Name + normalized Size/Spec
-        key = (norm_name, norm_size)
+        # Report identity key: canonical spec
+        key = norm_spec(norm_name, raw_size)
         qty = float(inv.get("quantity") or 0)
         date_str = inv.get("date") or inv.get("created_at") or ""
         
         if key not in ledger:
             ledger[key] = {
-                "product": raw_prod.upper(),
+                "product": norm_name,
                 "size": raw_size,
                 "unit": unit,
                 "total_outward": 0.0,
@@ -10431,6 +10550,8 @@ async def calculate_client_ledger(company_id: str, client_id: str):
                 "serial_numbers": [],
                 "last_movement_date": ""
             }
+        if not ledger[key]["size"] and raw_size:
+            ledger[key]["size"] = raw_size
         ledger[key]["total_returned"] += qty
         
         serials = inv.get("serial_numbers") or inv.get("serials") or ([inv.get("serial_number")] if inv.get("serial_number") else [])
@@ -10450,7 +10571,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
     negative_items_count = 0
     
     for key, item in ledger.items():
-        balance = item["total_outward"] - item["total_returned"]
+        item["total_outward"] = round(item["total_outward"], 2)
+        item["total_returned"] = round(item["total_returned"], 2)
+        balance = round(item["total_outward"] - item["total_returned"], 2)
         item["current_balance"] = balance
         
         if balance > 0:
@@ -10484,9 +10607,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         
     summary = {
         "total_products": len(items),
-        "total_outward_qty": total_outward_qty,
-        "total_returned_qty": total_returned_qty,
-        "current_balance": current_balance_qty,
+        "total_outward_qty": round(total_outward_qty, 2),
+        "total_returned_qty": round(total_returned_qty, 2),
+        "current_balance": round(current_balance_qty, 2),
         "negative_items": negative_items_count
     }
     
