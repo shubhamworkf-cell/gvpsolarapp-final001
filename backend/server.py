@@ -7863,6 +7863,7 @@ async def inv_history(
     inward_projection = {
         "_id": 0,
         "id": 1,
+        "product_id": 1,
         "date": 1,
         "created_at": 1,
         "product": 1,
@@ -7883,6 +7884,7 @@ async def inv_history(
     outward_projection = {
         "_id": 0,
         "id": 1,
+        "product_id": 1,
         "date": 1,
         "created_at": 1,
         "product": 1,
@@ -7954,13 +7956,25 @@ async def inv_history(
 
     if (not type or type == "inward") and not status:
         q: Dict[str, Any] = {"company_id": cid}
-        if product:
-            p_regex = get_product_search_regex(product, size or "")
-            q["product"] = {"$regex": p_regex, "$options": "i"}
-        if size_variants:
-            q["size"] = {"$in": size_variants}
-        elif size is not None and size != "":
-            q["size"] = norm_str(size)
+        if product_id:
+            # Match directly by product_id OR by product regex/size
+            prod_cond: Dict[str, Any] = {}
+            if product:
+                p_regex = get_product_search_regex(product, size or "")
+                prod_cond["product"] = {"$regex": p_regex, "$options": "i"}
+            if size_variants:
+                prod_cond["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
+            elif size is not None and size != "":
+                prod_cond["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
+            q["$or"] = [{"product_id": product_id}, prod_cond] if prod_cond else [{"product_id": product_id}]
+        else:
+            if product:
+                p_regex = get_product_search_regex(product, size or "")
+                q["product"] = {"$regex": p_regex, "$options": "i"}
+            if size_variants:
+                q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
+            elif size is not None and size != "":
+                q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
         if vendor: q["source_name"] = _text_filter(vendor)
         if client: q["source_name"] = _text_filter(client)
         if challan: q["reference_number"] = _text_filter(challan)
@@ -7981,13 +7995,25 @@ async def inv_history(
 
     if (not type or type == "outward") and not bill_number:
         q = {"company_id": cid}
-        if product:
-            p_regex = get_product_search_regex(product, size or "")
-            q["product"] = {"$regex": p_regex, "$options": "i"}
-        if size_variants:
-            q["size"] = {"$in": size_variants}
-        elif size is not None and size != "":
-            q["size"] = norm_str(size)
+        if product_id:
+            # Match directly by product_id OR by product regex/size
+            prod_cond: Dict[str, Any] = {}
+            if product:
+                p_regex = get_product_search_regex(product, size or "")
+                prod_cond["product"] = {"$regex": p_regex, "$options": "i"}
+            if size_variants:
+                prod_cond["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
+            elif size is not None and size != "":
+                prod_cond["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
+            q["$or"] = [{"product_id": product_id}, prod_cond] if prod_cond else [{"product_id": product_id}]
+        else:
+            if product:
+                p_regex = get_product_search_regex(product, size or "")
+                q["product"] = {"$regex": p_regex, "$options": "i"}
+            if size_variants:
+                q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
+            elif size is not None and size != "":
+                q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
         if client:
             q["$or"] = [{"client_name": _text_filter(client)}, {"client_id": client}]
         if challan: q["$or"] = [{"outward_challan_no": _text_filter(challan)}, {"reference_number": _text_filter(challan)}]
@@ -8141,8 +8167,6 @@ async def list_vendors(user=Depends(get_current_user)):
 async def product_stats(product_id: str, user=Depends(get_current_user)):
     cid = user["company_id"]
     p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0})
-    if not p:
-        raise HTTPException(status_code=404, detail="Product not found")
 
     now = time.monotonic()
     if cid in _PRODUCTS_CACHE and (now - _PRODUCTS_CACHE[cid][0]) < _PRODUCTS_CACHE_TTL_S:
@@ -8152,10 +8176,13 @@ async def product_stats(product_id: str, user=Depends(get_current_user)):
         _PRODUCTS_CACHE[cid] = (now, items)
 
     matched_p = next((item for item in items if item.get("id") == product_id), None)
-    if not matched_p:
+    if not matched_p and p:
         name = norm_product_name(p["name"])
         size = norm_str(p.get("size"))
         matched_p = next((item for item in items if norm_product_name(item.get("name")) == name and norm_str(item.get("size")) == size), p)
+
+    if not matched_p:
+        raise HTTPException(status_code=404, detail="Product not found")
 
     op_stock = float(matched_p.get("opening_stock") or 0.0)
     total_in = matched_p.get("total_in", 0.0)
@@ -8211,6 +8238,15 @@ async def product_transactions(
 ):
     cid = user["company_id"]
     p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1, "id": 1})
+    if not p:
+        now = time.monotonic()
+        if cid in _PRODUCTS_CACHE and (now - _PRODUCTS_CACHE[cid][0]) < _PRODUCTS_CACHE_TTL_S:
+            items = _PRODUCTS_CACHE[cid][1]
+        else:
+            items, _, _, _ = await _compute_inventory_balances(cid)
+            _PRODUCTS_CACHE[cid] = (now, items)
+        p = next((item for item in items if item.get("id") == product_id), None)
+
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
     return await inv_history(
