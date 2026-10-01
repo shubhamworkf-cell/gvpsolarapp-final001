@@ -7956,25 +7956,13 @@ async def inv_history(
 
     if (not type or type == "inward") and not status:
         q: Dict[str, Any] = {"company_id": cid}
-        if product_id:
-            # Match directly by product_id OR by product regex/size
-            prod_cond: Dict[str, Any] = {}
-            if product:
-                p_regex = get_product_search_regex(product, size or "")
-                prod_cond["product"] = {"$regex": p_regex, "$options": "i"}
-            if size_variants:
-                prod_cond["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
-            elif size is not None and size != "":
-                prod_cond["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
-            q["$or"] = [{"product_id": product_id}, prod_cond] if prod_cond else [{"product_id": product_id}]
-        else:
-            if product:
-                p_regex = get_product_search_regex(product, size or "")
-                q["product"] = {"$regex": p_regex, "$options": "i"}
-            if size_variants:
-                q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
-            elif size is not None and size != "":
-                q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
+        if product:
+            p_regex = get_product_search_regex(product, size or "")
+            q["product"] = {"$regex": p_regex, "$options": "i"}
+        if size_variants:
+            q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
+        elif size is not None and size != "":
+            q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
         if vendor: q["source_name"] = _text_filter(vendor)
         if client: q["source_name"] = _text_filter(client)
         if challan: q["reference_number"] = _text_filter(challan)
@@ -7995,25 +7983,13 @@ async def inv_history(
 
     if (not type or type == "outward") and not bill_number:
         q = {"company_id": cid}
-        if product_id:
-            # Match directly by product_id OR by product regex/size
-            prod_cond: Dict[str, Any] = {}
-            if product:
-                p_regex = get_product_search_regex(product, size or "")
-                prod_cond["product"] = {"$regex": p_regex, "$options": "i"}
-            if size_variants:
-                prod_cond["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
-            elif size is not None and size != "":
-                prod_cond["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
-            q["$or"] = [{"product_id": product_id}, prod_cond] if prod_cond else [{"product_id": product_id}]
-        else:
-            if product:
-                p_regex = get_product_search_regex(product, size or "")
-                q["product"] = {"$regex": p_regex, "$options": "i"}
-            if size_variants:
-                q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
-            elif size is not None and size != "":
-                q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
+        if product:
+            p_regex = get_product_search_regex(product, size or "")
+            q["product"] = {"$regex": p_regex, "$options": "i"}
+        if size_variants:
+            q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
+        elif size is not None and size != "":
+            q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
         if client:
             q["$or"] = [{"client_name": _text_filter(client)}, {"client_id": client}]
         if challan: q["$or"] = [{"outward_challan_no": _text_filter(challan)}, {"reference_number": _text_filter(challan)}]
