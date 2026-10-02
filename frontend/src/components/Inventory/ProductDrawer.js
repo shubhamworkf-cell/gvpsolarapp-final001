@@ -39,6 +39,7 @@ export default function ProductDrawer({ product, open, onClose, onChanged }) {
   useEffect(() => {
     if (!product || !open) return;
     setTab("details");
+    setFilters({ type: "all", search: "", challan: "", vendor: "", client: "", from_date: "", to_date: "" });
     setForm({ name: product.name, size: product.size || "", category: product.category || "Solar Panel", unit: normalizeUnit(product.unit), min_stock: product.min_stock || 0, rate: product.rate || 0, status: product.status || "Active", high_value_goods: product.high_value_goods || false, serial_number_required: product.serial_number_required || false });
     loadStats();
   }, [product, open, loadStats]);
@@ -202,6 +203,11 @@ export default function ProductDrawer({ product, open, onClose, onChanged }) {
                 <Input placeholder="Client…" className="h-9 w-32" value={filters.client} onChange={(e) => setFilters({ ...filters, client: e.target.value })} />
                 <Input type="date" className="h-9 w-36" value={filters.from_date} onChange={(e) => setFilters({ ...filters, from_date: e.target.value })} />
                 <Input type="date" className="h-9 w-36" value={filters.to_date} onChange={(e) => setFilters({ ...filters, to_date: e.target.value })} />
+                {(filters.from_date || filters.to_date || filters.search || filters.challan || filters.vendor || filters.client || filters.type !== "all") && (
+                  <Button variant="ghost" size="sm" className="h-9 text-xs text-slate-500 hover:text-slate-800" onClick={() => setFilters({ type: "all", search: "", challan: "", vendor: "", client: "", from_date: "", to_date: "" })}>
+                    Clear
+                  </Button>
+                )}
               </div>
 
               <div className="rounded-xl border border-slate-200 overflow-hidden">

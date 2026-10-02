@@ -806,7 +806,10 @@ class CollectionAdapter:
                         else:
                             if "->" in col and isinstance(cond_v, bool):
                                 cond_v = str(cond_v).lower()
-                            parts.append(f"{col}.eq.{cond_v}")
+                            if cond_v is None:
+                                parts.append(f"{col}.is.null")
+                            else:
+                                parts.append(f"{col}.eq.{cond_v}")
                 or_str = ",".join(parts)
                 builder = builder.or_(or_str)
             elif k == "$and":
@@ -830,24 +833,33 @@ class CollectionAdapter:
                             val_str = f"({','.join(str(x) for x in val)})"
                             builder = builder.filter(col, "not.in", val_str)
                         elif op == "$regex":
-                            clean_val = val
-                            if isinstance(val, str):
-                                clean_val = val.replace("\\", "")
-                                starts_with_caret = clean_val.startswith("^")
-                                ends_with_dollar = clean_val.endswith("$")
-                                if starts_with_caret:
-                                    clean_val = clean_val[1:]
-                                if ends_with_dollar:
-                                    clean_val = clean_val[:-1]
-                                if starts_with_caret and ends_with_dollar:
-                                    pass
-                                elif starts_with_caret:
-                                    clean_val = f"{clean_val}%"
-                                elif ends_with_dollar:
-                                    clean_val = f"%{clean_val}"
-                                else:
-                                    clean_val = f"%{clean_val}%"
-                            builder = builder.filter(col, "ilike", clean_val)
+                            if isinstance(val, str) and "|" in val:
+                                or_subparts = []
+                                for sub in val.split("|"):
+                                    clean_sub = sub.replace("\\", "").strip("^$")
+                                    if clean_sub:
+                                        or_subparts.append(f"{col}.ilike.%{clean_sub}%")
+                                if or_subparts:
+                                    builder = builder.or_(",".join(or_subparts))
+                            else:
+                                clean_val = val
+                                if isinstance(val, str):
+                                    clean_val = val.replace("\\", "")
+                                    starts_with_caret = clean_val.startswith("^")
+                                    ends_with_dollar = clean_val.endswith("$")
+                                    if starts_with_caret:
+                                        clean_val = clean_val[1:]
+                                    if ends_with_dollar:
+                                        clean_val = clean_val[:-1]
+                                    if starts_with_caret and ends_with_dollar:
+                                        pass
+                                    elif starts_with_caret:
+                                        clean_val = f"{clean_val}%"
+                                    elif ends_with_dollar:
+                                        clean_val = f"%{clean_val}"
+                                    else:
+                                        clean_val = f"%{clean_val}%"
+                                builder = builder.filter(col, "ilike", clean_val)
                         else:
                             builder = builder.filter(col, op_str, val)
                 else:
@@ -5780,7 +5792,7 @@ def match_transaction_to_product(tx: Dict[str, Any], prod: Dict[str, Any]) -> bo
        1. Direct product_id match if present
        2. Direct canonical (name, size) match
        3. Combined spec match (e.g. 'DC CABLE BLACK 4 MM' vs 'DC CABLE BLACK' + '4 MM')
-       4. Canonical name match when target size is not specified or wildcard
+       4. Exact canonical name match when target size or tx size is empty
     """
     tx_pid = str(tx.get("product_id") or "").strip()
     prod_id = str(prod.get("id") or "").strip()
@@ -5795,7 +5807,7 @@ def match_transaction_to_product(tx: Dict[str, Any], prod: Dict[str, Any]) -> bo
     target_size = norm_str(prod.get("size"))
 
     # Direct exact name and size match
-    if tx_name == target_name and (not target_size or tx_size == target_size):
+    if tx_name == target_name and tx_size == target_size:
         return True
 
     # Combined spec match (e.g. 'DC CABLE BLACK 4 MM' vs 'DC CABLE BLACK' + '4 MM')
@@ -5804,11 +5816,7 @@ def match_transaction_to_product(tx: Dict[str, Any], prod: Dict[str, Any]) -> bo
     if tx_spec and prod_spec and tx_spec == prod_spec:
         return True
 
-    if tx_name != target_name and target_name not in tx_name:
-        return False
-    if target_size:
-        return tx_size == target_size
-    return True
+    return False
 
 def norm_unit(u: Optional[str]) -> str:
     if not u:
@@ -6210,7 +6218,7 @@ async def _compute_inventory_balances(cid: str):
     for k in all_tx_keys:
         if k not in existing_keys and k[0]:
             synthetic = {
-                "id": str(uuid.uuid4()),
+                "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{cid}:{k[0]}:{k[1]}")),
                 "company_id": cid,
                 "name": k[0],
                 "size": k[1],
@@ -7859,7 +7867,7 @@ async def inv_history(
 
     cid = user["company_id"]
     page = max(1, page)
-    page_size = max(1, min(page_size, 500))
+    page_size = max(1, min(page_size, 10000))
     inward_projection = {
         "_id": 0,
         "id": 1,
@@ -7956,13 +7964,13 @@ async def inv_history(
 
     if (not type or type == "inward") and not status:
         q: Dict[str, Any] = {"company_id": cid}
-        if product:
+        if not product_id and product:
             p_regex = get_product_search_regex(product, size or "")
             q["product"] = {"$regex": p_regex, "$options": "i"}
-        if size_variants:
-            q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
-        elif size is not None and size != "":
-            q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
+            if size_variants:
+                q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
+            elif size is not None and size != "":
+                q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
         if vendor: q["source_name"] = _text_filter(vendor)
         if client: q["source_name"] = _text_filter(client)
         if challan: q["reference_number"] = _text_filter(challan)
@@ -7983,13 +7991,13 @@ async def inv_history(
 
     if (not type or type == "outward") and not bill_number:
         q = {"company_id": cid}
-        if product:
+        if not product_id and product:
             p_regex = get_product_search_regex(product, size or "")
             q["product"] = {"$regex": p_regex, "$options": "i"}
-        if size_variants:
-            q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
-        elif size is not None and size != "":
-            q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
+            if size_variants:
+                q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
+            elif size is not None and size != "":
+                q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
         if client:
             q["$or"] = [{"client_name": _text_filter(client)}, {"client_id": client}]
         if challan: q["$or"] = [{"outward_challan_no": _text_filter(challan)}, {"reference_number": _text_filter(challan)}]
@@ -8165,22 +8173,9 @@ async def product_stats(product_id: str, user=Depends(get_current_user)):
     total_out = matched_p.get("total_out", 0.0)
     balance = matched_p.get("balance", 0.0)
 
-    # Fetch last dates using size variants and canonical matching
-    p_name = norm_product_name(matched_p.get("name"))
-    p_size = matched_p.get("size") or ""
-    size_variants = get_size_variants(p_size)
-
-    p_regex = get_product_search_regex(p_name, p_size)
-    in_q: Dict[str, Any] = {"company_id": cid, "product": {"$regex": p_regex, "$options": "i"}}
-    if size_variants:
-        in_q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
-
-    out_q: Dict[str, Any] = {"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled", "cancelled"]}, "product": {"$regex": p_regex, "$options": "i"}}
-    if size_variants:
-        out_q["$or"] = [{"size": {"$in": size_variants}}, {"size": ""}, {"size": None}]
-
-    last_in_rows = await db.inward_entries.find(in_q, {"_id": 0, "date": 1, "product_id": 1, "product": 1, "size": 1}).sort("date", -1).to_list(1000)
-    last_out_rows = await db.outward_entries.find(out_q, {"_id": 0, "date": 1, "product_id": 1, "product": 1, "size": 1}).sort("date", -1).to_list(1000)
+    # Fetch last dates using canonical matching
+    last_in_rows = await db.inward_entries.find({"company_id": cid}, {"_id": 0, "date": 1, "product_id": 1, "product": 1, "size": 1}).sort("date", -1).to_list(10000)
+    last_out_rows = await db.outward_entries.find({"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled", "cancelled"]}}, {"_id": 0, "date": 1, "product_id": 1, "product": 1, "size": 1}).sort("date", -1).to_list(10000)
 
     matched_in_rows = [r for r in last_in_rows if match_transaction_to_product(r, matched_p)]
     matched_out_rows = [r for r in last_out_rows if match_transaction_to_product(r, matched_p)]
@@ -8214,19 +8209,28 @@ async def product_transactions(
 ):
     cid = user["company_id"]
     p = await db.products.find_one({"id": product_id, "company_id": cid}, {"_id": 0, "name": 1, "size": 1, "unit": 1, "id": 1})
-    if not p:
-        now = time.monotonic()
-        if cid in _PRODUCTS_CACHE and (now - _PRODUCTS_CACHE[cid][0]) < _PRODUCTS_CACHE_TTL_S:
-            items = _PRODUCTS_CACHE[cid][1]
-        else:
-            items, _, _, _ = await _compute_inventory_balances(cid)
-            _PRODUCTS_CACHE[cid] = (now, items)
-        p = next((item for item in items if item.get("id") == product_id), None)
 
-    if not p:
+    now = time.monotonic()
+    if cid in _PRODUCTS_CACHE and (now - _PRODUCTS_CACHE[cid][0]) < _PRODUCTS_CACHE_TTL_S:
+        items = _PRODUCTS_CACHE[cid][1]
+    else:
+        items, _, _, _ = await _compute_inventory_balances(cid)
+        _PRODUCTS_CACHE[cid] = (now, items)
+
+    matched_p = next((item for item in items if item.get("id") == product_id), None)
+    if not matched_p and p:
+        name = norm_product_name(p["name"])
+        size = norm_str(p.get("size"))
+        matched_p = next((item for item in items if norm_product_name(item.get("name")) == name and norm_str(item.get("size")) == size), p)
+
+    if not matched_p:
+        matched_p = p
+
+    if not matched_p:
         raise HTTPException(status_code=404, detail="Product not found")
+
     return await inv_history(
-        request=request, user=user, type=type, product_id=product_id, product=p["name"], size=p.get("size") or "", vendor=vendor, client=client,
+        request=request, user=user, type=type, product_id=product_id, product=matched_p["name"], size=matched_p.get("size") or "", vendor=vendor, client=client,
         challan=challan, from_date=from_date, to_date=to_date, search=search,
         page=1, page_size=10000,
     )
