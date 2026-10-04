@@ -773,6 +773,10 @@ class CollectionAdapter:
         for k, v in query.items():
             if self.table_name == "products" and k == "brand":
                 continue
+            if self.table_name == "inward_entries" and k in ("status", "product_id", "client_id", "client_name"):
+                continue
+            if self.table_name == "outward_entries" and k in ("source_type", "product_id", "bill_number"):
+                continue
             if k == "$or":
                 parts = []
                 for cond in v:
@@ -979,8 +983,10 @@ class CollectionAdapter:
             document = _clean_products_doc(document)
         
         supabase_doc = document
-        if self.table_name in ("inward_entries", "outward_entries"):
-            supabase_doc = {k: v for k, v in document.items() if k != "product_id"}
+        if self.table_name == "inward_entries":
+            supabase_doc = {k: v for k, v in document.items() if k not in ("product_id", "status", "client_id", "client_name")}
+        elif self.table_name == "outward_entries":
+            supabase_doc = {k: v for k, v in document.items() if k not in ("product_id", "source_type", "bill_number")}
         
         while True:
             try:
@@ -1017,8 +1023,10 @@ class CollectionAdapter:
         if self.table_name == "products" and not _PRODUCTS_HAS_RATE:
             documents = [{k: v for k, v in doc.items() if k != "rate"} for doc in documents]
         supabase_docs = documents
-        if self.table_name in ("inward_entries", "outward_entries"):
-            supabase_docs = [{k: v for k, v in doc.items() if k != "product_id"} for doc in documents]
+        if self.table_name == "inward_entries":
+            supabase_docs = [{k: v for k, v in doc.items() if k not in ("product_id", "status", "client_id", "client_name")} for doc in documents]
+        elif self.table_name == "outward_entries":
+            supabase_docs = [{k: v for k, v in doc.items() if k not in ("product_id", "source_type", "bill_number")} for doc in documents]
         try:
             res = supabase.table(self.table_name).insert(supabase_docs, returning="minimal").execute()
         except Exception as e:
@@ -1100,8 +1108,10 @@ class CollectionAdapter:
             return UpdateResult(1, 1)
 
         supabase_patch = patch
-        if self.table_name in ("inward_entries", "outward_entries"):
-            supabase_patch = {k: v for k, v in patch.items() if k != "product_id"}
+        if self.table_name == "inward_entries":
+            supabase_patch = {k: v for k, v in patch.items() if k not in ("product_id", "status", "client_id", "client_name")}
+        elif self.table_name == "outward_entries":
+            supabase_patch = {k: v for k, v in patch.items() if k not in ("product_id", "source_type", "bill_number")}
 
         try:
             builder = supabase.table(self.table_name).update(supabase_patch)
@@ -6710,10 +6720,11 @@ def parse_inward_client_info(entry):
         if m:
             cid = m.group(1).strip()
             entry["remarks"] = re.sub(r"\s*\[client_id:[^\]]+\]", "", r).strip()
-    entry["client_id"] = cid
+    if cid:
+        entry["client_id"] = cid
     if not entry.get("client_name"):
         src_t = str(entry.get("source_type") or "").strip().lower()
-        if "return" in src_t or "client" in src_t:
+        if "return" in src_t or "client" in src_t or cid:
             entry["client_name"] = entry.get("source_name") or ""
     return entry
 
@@ -10448,6 +10459,20 @@ async def _fetch_all_untruncated(collection, filter_dict: Dict[str, Any], projec
             break
     return all_docs
 
+def _get_business_tx_date(rec: dict) -> str:
+    """Extracts the original business transaction date, strictly preserving stored value without using updated_at."""
+    raw = rec.get("date") or rec.get("transaction_date")
+    if not raw:
+        raw = rec.get("created_at")
+    if not raw:
+        return ""
+    raw_str = str(raw).strip()
+    if "T" in raw_str:
+        return raw_str.split("T")[0]
+    if " " in raw_str:
+        return raw_str.split(" ")[0]
+    return raw_str[:10] if len(raw_str) >= 10 else raw_str
+
 def _match_outward_to_client(out: dict, client_id: str, sol_id: str, norm_name: str) -> bool:
     """Matches an outward entry to an onboarded client using ID first, then fallback to name if ID absent."""
     out_cid = str(out.get("client_id") or "").strip()
@@ -10481,46 +10506,57 @@ def _match_outward_to_client(out: dict, client_id: str, sol_id: str, norm_name: 
     return False
 
 def _match_inward_to_client(inv: dict, client_id: str, sol_id: str, norm_name: str) -> bool:
-    """Matches a returned inward entry to an onboarded client."""
-    src_type = str(inv.get("source_type") or "").strip().lower()
-    source = str(inv.get("source") or "").strip().lower()
+    """Matches an inward client-return entry to an onboarded client.
+    Determines actual source relationship so Client -> Company returns are included,
+    while unrelated Supplier/Vendor -> Company inwards are strictly excluded.
+    """
     remarks = str(inv.get("remarks") or "")
     
-    is_return = (
-        "return" in src_type or 
-        "client" in src_type or 
-        "site" in src_type or
-        "client-return" in source or
-        "[client_id:" in remarks or
-        "return" in remarks.lower()
-    )
-    if not is_return:
-        return False
-
+    # 1. Direct Client ID / SOL ID match
     inv_cid = str(inv.get("client_id") or "").strip()
     if not inv_cid and "[client_id:" in remarks:
         m = re.search(r"\[client_id:([^\]]+)\]", remarks)
         if m:
             inv_cid = m.group(1).strip()
+    if not inv_cid:
+        inv_cid = str(inv.get("client") or inv.get("project_id") or "").strip()
 
     if inv_cid:
         if client_id and inv_cid.lower() == client_id.lower():
             return True
         if sol_id and inv_cid.upper() == sol_id:
             return True
-        return False
 
+    # 2. Direct Name match (client_name, source_name, project_name, client)
     inv_src = str(inv.get("source_name") or "").strip().upper()
     inv_cname = str(inv.get("client_name") or "").strip().upper()
-    
-    target_names = [n for n in [inv_src, inv_cname] if n]
-    for name in target_names:
-        if norm_name and name == norm_name:
-            return True
-        clean_name = re.sub(r'[^A-Z0-9]', '', name)
+    inv_pname = str(inv.get("project_name") or "").strip().upper()
+    inv_client_field = str(inv.get("client") or "").strip().upper()
+
+    candidate_names = [n for n in [inv_cname, inv_src, inv_pname, inv_client_field] if n]
+    if norm_name:
         clean_norm = re.sub(r'[^A-Z0-9]', '', norm_name)
-        if clean_name and clean_name == clean_norm:
+        for name in candidate_names:
+            if name == norm_name:
+                return True
+            clean_name = re.sub(r'[^A-Z0-9]', '', name)
+            if clean_name and clean_name == clean_norm:
+                return True
+            # Handle common plural/suffix variations (e.g. NIKI FABRIC vs NIKI FABRICS)
+            if clean_name and clean_norm and min(len(clean_name), len(clean_norm)) >= 6:
+                if clean_name.startswith(clean_norm) or clean_norm.startswith(clean_name):
+                    return True
+
+    # 3. Remarks match (e.g. "Return from NIKI FABRIC" or containing client SOL ID)
+    if remarks:
+        rem_upper = remarks.upper()
+        if sol_id and sol_id in rem_upper:
             return True
+        if norm_name and len(norm_name) >= 4 and norm_name in rem_upper:
+            src_type = str(inv.get("source_type") or "").strip().lower()
+            source = str(inv.get("source") or "").strip().lower()
+            if any(k in src_type or k in source or k in rem_upper.lower() for k in ["return", "client", "site"]):
+                return True
 
     return False
 
@@ -10544,7 +10580,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
     actual_client_name = str(client.get("full_name") or "").strip()
     norm_cname = actual_client_name.upper()
 
-    # Retrieve all company outward and inward entries without truncation
+    # Retrieve all company outward and inward entries without truncation.
+    # Note: inward_entries in Supabase does not have a physical 'status' column,
+    # so we query inward_entries by company_id only, and filter status in Python.
     outwards_all, inwards_all = await asyncio.gather(
         _fetch_all_untruncated(db.outward_entries, {
             "company_id": company_id,
@@ -10552,12 +10590,20 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         }, {"_id": 0}),
         _fetch_all_untruncated(db.inward_entries, {
             "company_id": company_id,
-            "status": {"$nin": ["Cancelled", "draft_cancelled", "cancelled"]}
         }, {"_id": 0}),
     )
 
+    # Inward entries in Supabase do not have a Postgres 'status' column.
+    # Filter cancelled entries safely in memory and parse embedded client IDs.
+    parsed_inwards_all = []
+    for raw_inv in inwards_all:
+        inv_stat = str(raw_inv.get("status") or "").lower()
+        if inv_stat in ("cancelled", "draft_cancelled"):
+            continue
+        parsed_inwards_all.append(parse_inward_client_info(dict(raw_inv)))
+
     outwards = [o for o in outwards_all if _match_outward_to_client(o, actual_client_id, actual_sol_id, norm_cname)]
-    inwards = [i for i in inwards_all if _match_inward_to_client(i, actual_client_id, actual_sol_id, norm_cname)]
+    inwards = [i for i in parsed_inwards_all if _match_inward_to_client(i, actual_client_id, actual_sol_id, norm_cname)]
 
     ledger = {}
     transactions = []
@@ -10571,8 +10617,8 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         std_size = norm_str(raw_size)
         unit = norm_unit(out.get("unit") or "NOS")
         qty = float(out.get("quantity") or 0.0)
-        date_str = out.get("date") or out.get("created_at") or ""
-        short_date = date_str[:10] if date_str else ""
+        tx_date = _get_business_tx_date(out)
+        raw_date_str = str(out.get("date") or out.get("transaction_date") or out.get("created_at") or "")
         
         # Product Identity Key: ONLY (Product Name, Normalized Size) - Unit is NOT used for identity
         key = (norm_name, std_size)
@@ -10600,9 +10646,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
             if sn and sn not in ledger[key]["serial_numbers"]:
                 ledger[key]["serial_numbers"].append(sn)
 
-        if short_date:
-            if not ledger[key]["last_movement_date"] or short_date > ledger[key]["last_movement_date"]:
-                ledger[key]["last_movement_date"] = short_date
+        if tx_date:
+            if not ledger[key]["last_movement_date"] or tx_date > ledger[key]["last_movement_date"]:
+                ledger[key]["last_movement_date"] = tx_date
 
         challan = out.get("outward_challan_no") or out.get("reference_number") or ""
         transactions.append({
@@ -10610,8 +10656,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
             "transaction_id": out.get("id"),
             "type": "Outward",
             "direction": "Issued",
-            "date": short_date,
-            "created_at": date_str,
+            "date": tx_date,
+            "created_at": raw_date_str,
+            "original_date": tx_date,
             "product": norm_name,
             "size": raw_size,
             "quantity": round(qty, 2),
@@ -10635,8 +10682,8 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         std_size = norm_str(raw_size)
         unit = norm_unit(inv.get("unit") or "NOS")
         qty = float(inv.get("quantity") or 0.0)
-        date_str = inv.get("date") or inv.get("created_at") or ""
-        short_date = date_str[:10] if date_str else ""
+        tx_date = _get_business_tx_date(inv)
+        raw_date_str = str(inv.get("date") or inv.get("transaction_date") or inv.get("created_at") or "")
         
         # Product Identity Key: ONLY (Product Name, Normalized Size) - Unit is NOT used for identity
         key = (norm_name, std_size)
@@ -10664,9 +10711,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
             if sn in ledger[key]["serial_numbers"]:
                 ledger[key]["serial_numbers"].remove(sn)
 
-        if short_date:
-            if not ledger[key]["last_movement_date"] or short_date > ledger[key]["last_movement_date"]:
-                ledger[key]["last_movement_date"] = short_date
+        if tx_date:
+            if not ledger[key]["last_movement_date"] or tx_date > ledger[key]["last_movement_date"]:
+                ledger[key]["last_movement_date"] = tx_date
 
         challan = inv.get("reference_number") or inv.get("bill_number") or ""
         clean_remarks = re.sub(r"\s*\[client_id:[^\]]+\]", "", inv.get("remarks") or "").strip()
@@ -10675,8 +10722,9 @@ async def calculate_client_ledger(company_id: str, client_id: str):
             "transaction_id": inv.get("id"),
             "type": "Inward",
             "direction": "Returned",
-            "date": short_date,
-            "created_at": date_str,
+            "date": tx_date,
+            "created_at": raw_date_str,
+            "original_date": tx_date,
             "product": norm_name,
             "size": raw_size,
             "quantity": round(qty, 2),
