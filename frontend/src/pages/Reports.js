@@ -8,10 +8,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   ArrowLeft, Search, FileText, Download, ScrollText, Boxes, ArrowUpFromLine, ArrowDownToLine,
-  Activity, AlertTriangle, FileSpreadsheet, Eye
+  Activity, AlertTriangle, FileSpreadsheet, Eye, History, ArrowUpRight, ArrowDownLeft, ListFilter
 } from "lucide-react";
 import { toast } from "sonner";
 import StatusBadge from "@/components/StatusBadge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 export default function Reports() {
   const { data: clients = [], isLoading: loadingClients } = useClientList();
@@ -25,6 +26,10 @@ export default function Reports() {
   const itemsPerPage = 20;
 
   const [ledgerSearch, setLedgerSearch] = useState("");
+  const [activeTab, setActiveTab] = useState("summary");
+  const [txTypeFilter, setTxTypeFilter] = useState("all");
+  const [txPage, setTxPage] = useState(1);
+  const txPerPage = 25;
 
   useEffect(() => {
     setCurrentPage(1);
@@ -109,6 +114,54 @@ export default function Reports() {
       return aName.localeCompare(bName);
     });
   }, [ledger, ledgerSearch]);
+
+  useEffect(() => {
+    setTxPage(1);
+  }, [ledgerSearch, txTypeFilter]);
+
+  // Filter and paginate individual source transactions for full traceability
+  const filteredTransactions = useMemo(() => {
+    if (!ledger?.transactions) return [];
+    let list = [...ledger.transactions];
+    if (txTypeFilter === "outward") {
+      list = list.filter((tx) => (tx.type || "").toUpperCase().includes("OUTWARD"));
+    } else if (txTypeFilter === "inward") {
+      list = list.filter((tx) => {
+        const t = (tx.type || "").toUpperCase();
+        return t.includes("INWARD") || t.includes("RETURN");
+      });
+    }
+
+    if (ledgerSearch.trim()) {
+      const s = ledgerSearch.toLowerCase().trim();
+      list = list.filter((tx) => {
+        const id = (tx.transaction_id || tx.id || "").toLowerCase();
+        const challan = (tx.challan_no || tx.reference || "").toLowerCase();
+        const product = (tx.product || "").toLowerCase();
+        const size = (tx.size || "").toLowerCase();
+        const date = (tx.date || "").toLowerCase();
+        const remarks = (tx.remarks || "").toLowerCase();
+        const unit = (tx.unit || "").toLowerCase();
+        return (
+          id.includes(s) ||
+          challan.includes(s) ||
+          product.includes(s) ||
+          size.includes(s) ||
+          date.includes(s) ||
+          remarks.includes(s) ||
+          unit.includes(s)
+        );
+      });
+    }
+
+    // Sort newest transactions first
+    return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  }, [ledger, txTypeFilter, ledgerSearch]);
+
+  const totalTxPages = Math.ceil(filteredTransactions.length / txPerPage);
+  const paginatedTransactions = useMemo(() => {
+    return filteredTransactions.slice((txPage - 1) * txPerPage, txPage * txPerPage);
+  }, [filteredTransactions, txPage, txPerPage]);
 
   return (
     <div className="space-y-6">
@@ -345,78 +398,243 @@ export default function Reports() {
                 </Card>
               </div>
 
-              {/* Ledger Table */}
-              <Card className="border-slate-200">
-                <CardContent className="p-0">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500 border-b border-slate-100">
-                        <tr>
-                          <th className="text-left px-5 py-3 font-semibold">Product</th>
-                          <th className="text-left px-5 py-3 font-semibold">Size</th>
-                          <th className="text-left px-5 py-3 font-semibold">Unit</th>
-                          <th className="text-right px-5 py-3 font-semibold">Total Outward</th>
-                          <th className="text-right px-5 py-3 font-semibold">Total Returned</th>
-                          <th className="text-right px-5 py-3 font-semibold font-bold">Current Balance</th>
-                          <th className="text-center px-5 py-3 font-semibold">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {filteredLedgerItems.length === 0 ? (
-                          <tr>
-                            <td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">
-                              No ledger items match your search.
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredLedgerItems.map((row, idx) => {
-                          let statusStyle = "bg-slate-100 text-slate-700";
-                          let balanceStyle = "text-slate-900";
-                          
-                          if (row.current_balance < 0) {
-                            statusStyle = "bg-red-50 text-red-700 font-semibold border border-red-200";
-                            balanceStyle = "text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded";
-                          } else if (row.current_balance === 0) {
-                            statusStyle = "bg-slate-100 text-slate-400";
-                            balanceStyle = "text-slate-400";
-                          } else if (row.current_balance > 0) {
-                            statusStyle = "bg-amber-50 text-amber-700 font-semibold border border-amber-200";
-                            balanceStyle = "text-slate-900 font-semibold";
-                          }
+              {/* Ledger Views Tabs: Summary vs Source Transactions Traceability */}
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <TabsList className="bg-slate-100 p-1">
+                    <TabsTrigger value="summary" className="gap-2 text-xs" data-testid="tab-product-summary">
+                      <Boxes className="w-3.5 h-3.5" />
+                      Product Balance Summary ({ledger?.items?.length || 0})
+                    </TabsTrigger>
+                    <TabsTrigger value="transactions" className="gap-2 text-xs" data-testid="tab-source-transactions">
+                      <History className="w-3.5 h-3.5" />
+                      Source Transactions Traceability ({ledger?.transactions?.length || 0})
+                    </TabsTrigger>
+                  </TabsList>
 
-                          return (
-                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                              <td className="px-5 py-3.5">
-                                <div className="font-medium text-slate-900">{row.product}</div>
-                                {row.serial_numbers && row.serial_numbers.length > 0 && (
-                                  <div className="text-[11px] text-slate-500 font-mono mt-1 space-y-0.5 text-left">
-                                    {row.serial_numbers.map((sn, snIdx) => (
-                                      <div key={snIdx}>{sn}</div>
-                                    ))}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="px-5 py-3.5 text-slate-600">{row.size || "—"}</td>
-                              <td className="px-5 py-3.5 text-slate-600">{row.unit}</td>
-                              <td className="px-5 py-3.5 text-right text-slate-700 tabular-nums">{row.total_outward}</td>
-                              <td className="px-5 py-3.5 text-right text-slate-700 tabular-nums">{row.total_returned}</td>
-                              <td className="px-5 py-3.5 text-right tabular-nums">
-                                <span className={balanceStyle}>{row.current_balance}</span>
-                              </td>
-                              <td className="px-5 py-3.5 text-center">
-                                <Badge className={`text-[10px] capitalize shadow-none ${statusStyle}`}>
-                                  {row.status}
-                                </Badge>
-                              </td>
+                  {activeTab === "transactions" && (
+                    <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg">
+                      <Button
+                        type="button"
+                        variant={txTypeFilter === "all" ? "default" : "ghost"}
+                        size="sm"
+                        className={`h-7 text-xs px-2.5 font-medium ${txTypeFilter === "all" ? "bg-white text-slate-900 shadow-sm hover:bg-white" : "text-slate-600 hover:text-slate-900"}`}
+                        onClick={() => setTxTypeFilter("all")}
+                      >
+                        All ({ledger?.transactions?.length || 0})
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={txTypeFilter === "outward" ? "default" : "ghost"}
+                        size="sm"
+                        className={`h-7 text-xs px-2.5 font-medium ${txTypeFilter === "outward" ? "bg-amber-500 text-white hover:bg-amber-600" : "text-amber-700 hover:text-amber-800 hover:bg-amber-50"}`}
+                        onClick={() => setTxTypeFilter("outward")}
+                      >
+                        <ArrowUpRight className="w-3 h-3 mr-1" />
+                        Outward ({ledger?.transactions?.filter(t => (t.type || "").toUpperCase().includes("OUTWARD")).length || 0})
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={txTypeFilter === "inward" ? "default" : "ghost"}
+                        size="sm"
+                        className={`h-7 text-xs px-2.5 font-medium ${txTypeFilter === "inward" ? "bg-emerald-600 text-white hover:bg-emerald-700" : "text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50"}`}
+                        onClick={() => setTxTypeFilter("inward")}
+                      >
+                        <ArrowDownLeft className="w-3 h-3 mr-1" />
+                        Returned / Inward ({ledger?.transactions?.filter(t => {
+                          const typ = (t.type || "").toUpperCase();
+                          return typ.includes("INWARD") || typ.includes("RETURN");
+                        }).length || 0})
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Tab 1: Product Balance Summary */}
+                <TabsContent value="summary" className="m-0">
+                  <Card className="border-slate-200">
+                    <CardContent className="p-0">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500 border-b border-slate-100">
+                            <tr>
+                              <th className="text-left px-5 py-3 font-semibold">Product</th>
+                              <th className="text-left px-5 py-3 font-semibold">Size</th>
+                              <th className="text-left px-5 py-3 font-semibold">Unit</th>
+                              <th className="text-right px-5 py-3 font-semibold">Total Outward</th>
+                              <th className="text-right px-5 py-3 font-semibold">Total Returned</th>
+                              <th className="text-right px-5 py-3 font-semibold font-bold">Current Balance</th>
+                              <th className="text-center px-5 py-3 font-semibold">Status</th>
                             </tr>
-                          );
-                        })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {filteredLedgerItems.length === 0 ? (
+                              <tr>
+                                <td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">
+                                  No ledger items match your search.
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredLedgerItems.map((row, idx) => {
+                                let statusStyle = "bg-slate-100 text-slate-700";
+                                let balanceStyle = "text-slate-900";
+                                
+                                if (row.current_balance < 0) {
+                                  statusStyle = "bg-red-50 text-red-700 font-semibold border border-red-200";
+                                  balanceStyle = "text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded";
+                                } else if (row.current_balance === 0) {
+                                  statusStyle = "bg-slate-100 text-slate-400";
+                                  balanceStyle = "text-slate-400";
+                                } else if (row.current_balance > 0) {
+                                  statusStyle = "bg-amber-50 text-amber-700 font-semibold border border-amber-200";
+                                  balanceStyle = "text-slate-900 font-semibold";
+                                }
+
+                                return (
+                                  <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                                    <td className="px-5 py-3.5">
+                                      <div className="font-medium text-slate-900">{row.product}</div>
+                                      {row.serial_numbers && row.serial_numbers.length > 0 && (
+                                        <div className="text-[11px] text-slate-500 font-mono mt-1 space-y-0.5 text-left">
+                                          {row.serial_numbers.map((sn, snIdx) => (
+                                            <div key={snIdx}>{sn}</div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="px-5 py-3.5 text-slate-600">{row.size || "—"}</td>
+                                    <td className="px-5 py-3.5 text-slate-600">{row.unit}</td>
+                                    <td className="px-5 py-3.5 text-right text-slate-700 tabular-nums">{row.total_outward}</td>
+                                    <td className="px-5 py-3.5 text-right text-slate-700 tabular-nums">{row.total_returned}</td>
+                                    <td className="px-5 py-3.5 text-right tabular-nums">
+                                      <span className={balanceStyle}>{row.current_balance}</span>
+                                    </td>
+                                    <td className="px-5 py-3.5 text-center">
+                                      <Badge className={`text-[10px] capitalize shadow-none ${statusStyle}`}>
+                                        {row.status}
+                                      </Badge>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                {/* Tab 2: Source Transactions Traceability */}
+                <TabsContent value="transactions" className="m-0 space-y-3">
+                  <Card className="border-slate-200">
+                    <CardContent className="p-0">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500 border-b border-slate-100">
+                            <tr>
+                              <th className="text-left px-5 py-3 font-semibold">Date</th>
+                              <th className="text-left px-5 py-3 font-semibold">Transaction ID</th>
+                              <th className="text-left px-5 py-3 font-semibold">Type</th>
+                              <th className="text-left px-5 py-3 font-semibold">Product & Size</th>
+                              <th className="text-right px-5 py-3 font-semibold">Quantity</th>
+                              <th className="text-left px-5 py-3 font-semibold">Unit</th>
+                              <th className="text-left px-5 py-3 font-semibold">Challan / Ref</th>
+                              <th className="text-left px-5 py-3 font-semibold">Remarks</th>
+                              <th className="text-center px-5 py-3 font-semibold">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {paginatedTransactions.length === 0 ? (
+                              <tr>
+                                <td colSpan={9} className="px-5 py-12 text-center text-sm text-slate-500">
+                                  No source transactions match your search / filter.
+                                </td>
+                              </tr>
+                            ) : (
+                              paginatedTransactions.map((tx, idx) => {
+                                const isOutward = (tx.type || "").toUpperCase().includes("OUTWARD");
+                                return (
+                                  <tr key={tx.id || tx.transaction_id || idx} className="hover:bg-slate-50 transition-colors">
+                                    <td className="px-5 py-3.5 text-slate-700 whitespace-nowrap text-xs font-medium">
+                                      {(tx.date || "").slice(0, 10) || "—"}
+                                    </td>
+                                    <td className="px-5 py-3.5 whitespace-nowrap">
+                                      <span className="font-mono text-xs bg-slate-100 text-slate-800 px-2 py-1 rounded border border-slate-200 font-semibold">
+                                        {tx.transaction_id || tx.id}
+                                      </span>
+                                    </td>
+                                    <td className="px-5 py-3.5 whitespace-nowrap">
+                                      {isOutward ? (
+                                        <Badge className="bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 text-[11px] gap-1 font-semibold shadow-none">
+                                          <ArrowUpRight className="w-3 h-3" /> OUTWARD (ISSUED)
+                                        </Badge>
+                                      ) : (
+                                        <Badge className="bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-[11px] gap-1 font-semibold shadow-none">
+                                          <ArrowDownLeft className="w-3 h-3" /> INWARD (RETURNED)
+                                        </Badge>
+                                      )}
+                                    </td>
+                                    <td className="px-5 py-3.5">
+                                      <div className="font-medium text-slate-900">{tx.product}</div>
+                                      {tx.size && (
+                                        <div className="text-xs text-slate-500 mt-0.5">Size: {tx.size}</div>
+                                      )}
+                                    </td>
+                                    <td className={`px-5 py-3.5 text-right tabular-nums font-semibold ${isOutward ? "text-amber-700" : "text-emerald-700"}`}>
+                                      {isOutward ? `+${tx.quantity}` : `-${tx.quantity}`}
+                                    </td>
+                                    <td className="px-5 py-3.5 text-slate-600 text-xs font-medium">
+                                      {tx.unit || "NOS"}
+                                    </td>
+                                    <td className="px-5 py-3.5 text-slate-700 text-xs font-mono">
+                                      {tx.challan_no || tx.reference || "—"}
+                                    </td>
+                                    <td className="px-5 py-3.5 text-slate-500 text-xs max-w-xs truncate" title={tx.remarks}>
+                                      {tx.remarks || "—"}
+                                    </td>
+                                    <td className="px-5 py-3.5 text-center">
+                                      <Badge variant="outline" className="text-[10px] capitalize shadow-none border-slate-200 text-slate-600">
+                                        {tx.status || "Completed"}
+                                      </Badge>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {totalTxPages > 1 && (
+                        <div className="p-4 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
+                          <div className="text-xs text-slate-500">
+                            Showing {(txPage - 1) * txPerPage + 1} to {Math.min(txPage * txPerPage, filteredTransactions.length)} of {filteredTransactions.length} source transactions
+                          </div>
+                          <div className="flex gap-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setTxPage((p) => Math.max(1, p - 1))}
+                              disabled={txPage === 1}
+                            >
+                              Previous
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setTxPage((p) => Math.min(totalTxPages, p + 1))}
+                              disabled={txPage === totalTxPages}
+                            >
+                              Next
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </Tabs>
             </>
           )}
         </div>

@@ -2371,6 +2371,51 @@ function MaterialLedgerSection({ ledger, loading }) {
             </tbody>
           </table>
         </div>
+
+        {ledger.transactions && ledger.transactions.length > 0 && (
+          <div className="space-y-2 pt-4 border-t border-slate-200">
+            <div className="text-xs font-semibold text-slate-700">Source Transactions Traceability ({ledger.transactions.length})</div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-xs border-separate border-spacing-0">
+                <thead className="bg-slate-50 text-slate-500 text-[10px] uppercase tracking-wider">
+                  <tr>
+                    <th className="px-3 py-2 border border-slate-200 font-semibold">Date</th>
+                    <th className="px-3 py-2 border border-slate-200 font-semibold">Trans ID</th>
+                    <th className="px-3 py-2 border border-slate-200 font-semibold">Type</th>
+                    <th className="px-3 py-2 border border-slate-200 font-semibold">Product</th>
+                    <th className="px-3 py-2 border border-slate-200 font-semibold">Size</th>
+                    <th className="px-3 py-2 border border-slate-200 font-semibold text-right">Quantity</th>
+                    <th className="px-3 py-2 border border-slate-200 font-semibold">Unit</th>
+                    <th className="px-3 py-2 border border-slate-200 font-semibold">Challan / Ref</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledger.transactions.map((tx, idx) => {
+                    const isOutward = (tx.type || "").toUpperCase().includes("OUTWARD");
+                    return (
+                      <tr key={tx.id || idx} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 border border-slate-200 text-slate-700 whitespace-nowrap">{(tx.date || "").slice(0, 10)}</td>
+                        <td className="px-3 py-2 border border-slate-200 font-mono text-[11px] text-slate-800">{tx.transaction_id || tx.id}</td>
+                        <td className="px-3 py-2 border border-slate-200">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isOutward ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                            {isOutward ? "OUTWARD" : "RETURN"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 border border-slate-200 font-medium text-slate-900">{tx.product}</td>
+                        <td className="px-3 py-2 border border-slate-200 text-slate-600">{tx.size || "—"}</td>
+                        <td className={`px-3 py-2 border border-slate-200 text-right font-semibold tabular-nums ${isOutward ? "text-amber-700" : "text-emerald-700"}`}>
+                          {isOutward ? `+${tx.quantity}` : `-${tx.quantity}`}
+                        </td>
+                        <td className="px-3 py-2 border border-slate-200 text-slate-600">{tx.unit || "NOS"}</td>
+                        <td className="px-3 py-2 border border-slate-200 font-mono text-slate-600">{tx.challan_no || tx.reference || "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

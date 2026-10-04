@@ -3311,26 +3311,6 @@ async def list_clients(
             {"sol_id":          {"$regex": s, "$options": "i"}},
         ]
     res = await db.clients.find(q, projection).sort("created_at", -1).skip(skip).to_list(limit)
-    if not status and not phase_type and subsidy_eligible is None:
-        existing_names = {(c.get("full_name") or "").strip().upper() for c in res}
-        out_clients = await db.outward_entries.find({"company_id": user["company_id"]}, {"_id": 0, "client_name": 1, "client_id": 1}).to_list(2000)
-        seen_names = set()
-        for o in out_clients:
-            cname = (o.get("client_name") or "").strip()
-            norm_cn = cname.upper()
-            if norm_cn and norm_cn not in existing_names and norm_cn not in seen_names:
-                if not search or search.lower() in cname.lower():
-                    seen_names.add(norm_cn)
-                    res.append({
-                        "id": o.get("client_id") or f"ext_{abs(hash(norm_cn))}",
-                        "full_name": cname,
-                        "mobile": "",
-                        "consumer_number": "",
-                        "status": "Direct Dispatch",
-                        "system_kw": 0,
-                        "sol_id": "",
-                        "stages": {}
-                    })
     return res
 
 @api_router.get("/clients/stats")
@@ -6723,15 +6703,18 @@ def parse_inward_client_info(entry):
     if not entry:
         return entry
     r = entry.get("remarks") or ""
-    cid = ""
+    cid = entry.get("client_id") or ""
     if "[client_id:" in r:
         import re
         m = re.search(r"\[client_id:([^\]]+)\]", r)
         if m:
-            cid = m.group(1)
+            cid = m.group(1).strip()
             entry["remarks"] = re.sub(r"\s*\[client_id:[^\]]+\]", "", r).strip()
     entry["client_id"] = cid
-    entry["client_name"] = entry.get("source_name") if entry.get("source_type") == "Return From Client" else ""
+    if not entry.get("client_name"):
+        src_t = str(entry.get("source_type") or "").strip().lower()
+        if "return" in src_t or "client" in src_t:
+            entry["client_name"] = entry.get("source_name") or ""
     return entry
 
 def _enrich_inward_with_assets(inward_doc: Optional[dict]) -> Optional[dict]:
@@ -7871,6 +7854,7 @@ async def inv_history(
     inward_projection = {
         "_id": 0,
         "id": 1,
+        "client_id": 1,
         "product_id": 1,
         "date": 1,
         "created_at": 1,
@@ -7892,6 +7876,7 @@ async def inv_history(
     outward_projection = {
         "_id": 0,
         "id": 1,
+        "client_id": 1,
         "product_id": 1,
         "date": 1,
         "created_at": 1,
@@ -7955,8 +7940,9 @@ async def inv_history(
         rem = (rec.get("remarks") or "").lower()
         by = (rec.get("created_by_name") or "").lower()
         st = (rec.get("status") or "").lower()
+        cid_txt = str(rec.get("client_id") or "").lower()
         
-        full_text = f"{prod} {sz} {raw_size} {u} {src} {proj} {ref} {bill} {rem} {by} {st}".lower()
+        full_text = f"{prod} {sz} {raw_size} {u} {src} {proj} {ref} {bill} {rem} {by} {st} {cid_txt}".lower()
         return all(t in full_text for t in tokens)
 
     size_variants = get_size_variants(size) if (size is not None and size != "") else []
@@ -7972,7 +7958,13 @@ async def inv_history(
             elif size is not None and size != "":
                 q["$or"] = [{"size": norm_str(size)}, {"size": ""}, {"size": None}]
         if vendor: q["source_name"] = _text_filter(vendor)
-        if client: q["source_name"] = _text_filter(client)
+        if client:
+            q["$or"] = [
+                {"source_name": _text_filter(client)},
+                {"client_name": _text_filter(client)},
+                {"client_id": client},
+                {"remarks": _text_filter(client)}
+            ]
         if challan: q["reference_number"] = _text_filter(challan)
         if bill_number: q["bill_number"] = _text_filter(bill_number)
         if user_id: q["created_by"] = user_id
@@ -10439,108 +10431,200 @@ async def list_assignable_users(user=Depends(get_current_user)):
 
 
 # ---------- Client Inventory Ledger Logic ----------
+async def _fetch_all_untruncated(collection, filter_dict: Dict[str, Any], projection: Optional[Dict[str, int]] = None) -> List[Dict[str, Any]]:
+    """Fetch all matching records from collection without PostgREST row-count truncation."""
+    all_docs = []
+    page_size = 1000
+    skip = 0
+    while True:
+        batch = await collection.find(filter_dict, projection).skip(skip).limit(page_size).to_list(page_size)
+        if not batch:
+            break
+        all_docs.extend(batch)
+        if len(batch) < page_size:
+            break
+        skip += len(batch)
+        if skip > 50000:
+            break
+    return all_docs
+
+def _match_outward_to_client(out: dict, client_id: str, sol_id: str, norm_name: str) -> bool:
+    """Matches an outward entry to an onboarded client using ID first, then fallback to name if ID absent."""
+    out_cid = str(out.get("client_id") or "").strip()
+    if out_cid:
+        if client_id and out_cid.lower() == client_id.lower():
+            return True
+        if sol_id and out_cid.upper() == sol_id:
+            return True
+        return False
+
+    out_pid = str(out.get("project_id") or "").strip()
+    if out_pid:
+        if client_id and out_pid.lower() == client_id.lower():
+            return True
+        if sol_id and out_pid.upper() == sol_id:
+            return True
+
+    out_cname = str(out.get("client_name") or "").strip().upper()
+    if norm_name and out_cname:
+        if out_cname == norm_name:
+            return True
+        clean_out = re.sub(r'[^A-Z0-9]', '', out_cname)
+        clean_norm = re.sub(r'[^A-Z0-9]', '', norm_name)
+        if clean_out and clean_out == clean_norm:
+            return True
+
+    out_pname = str(out.get("project_name") or "").strip().upper()
+    if norm_name and out_pname and out_pname == norm_name:
+        return True
+
+    return False
+
+def _match_inward_to_client(inv: dict, client_id: str, sol_id: str, norm_name: str) -> bool:
+    """Matches a returned inward entry to an onboarded client."""
+    src_type = str(inv.get("source_type") or "").strip().lower()
+    source = str(inv.get("source") or "").strip().lower()
+    remarks = str(inv.get("remarks") or "")
+    
+    is_return = (
+        "return" in src_type or 
+        "client" in src_type or 
+        "site" in src_type or
+        "client-return" in source or
+        "[client_id:" in remarks or
+        "return" in remarks.lower()
+    )
+    if not is_return:
+        return False
+
+    inv_cid = str(inv.get("client_id") or "").strip()
+    if not inv_cid and "[client_id:" in remarks:
+        m = re.search(r"\[client_id:([^\]]+)\]", remarks)
+        if m:
+            inv_cid = m.group(1).strip()
+
+    if inv_cid:
+        if client_id and inv_cid.lower() == client_id.lower():
+            return True
+        if sol_id and inv_cid.upper() == sol_id:
+            return True
+        return False
+
+    inv_src = str(inv.get("source_name") or "").strip().upper()
+    inv_cname = str(inv.get("client_name") or "").strip().upper()
+    
+    target_names = [n for n in [inv_src, inv_cname] if n]
+    for name in target_names:
+        if norm_name and name == norm_name:
+            return True
+        clean_name = re.sub(r'[^A-Z0-9]', '', name)
+        clean_norm = re.sub(r'[^A-Z0-9]', '', norm_name)
+        if clean_name and clean_name == clean_norm:
+            return True
+
+    return False
+
 async def calculate_client_ledger(company_id: str, client_id: str):
-    # Try finding client by id or by name
+    # Rule 2: Only onboarded clients should have Client Reports
+    # 1. Match by primary ID
     client = await db.clients.find_one({"id": client_id, "company_id": company_id}, {"_id": 0})
     if not client:
-        # Check by full_name
+        # 2. Match by sol_id (Project / Client code)
+        client = await db.clients.find_one({"sol_id": {"$regex": f"^{re.escape(client_id)}$", "$options": "i"}, "company_id": company_id}, {"_id": 0})
+    if not client:
+        # 3. Match by full_name
         client = await db.clients.find_one({"full_name": {"$regex": f"^{re.escape(client_id)}$", "$options": "i"}, "company_id": company_id}, {"_id": 0})
     
-    # If still not found in clients table, check if outward entries exist for this client name or client_id
+    # If not found in onboarded clients table, do NOT fabricate client records
     if not client:
-        sample_out = await db.outward_entries.find_one({
-            "company_id": company_id,
-            "$or": [
-                {"client_id": client_id},
-                {"client_name": {"$regex": f"^{re.escape(client_id)}$", "$options": "i"}}
-            ]
-        }, {"_id": 0, "client_id": 1, "client_name": 1})
-        if sample_out:
-            client = {
-                "id": sample_out.get("client_id") or client_id,
-                "full_name": sample_out.get("client_name") or client_id,
-                "sol_id": "",
-                "mobile": "",
-                "status": "Direct Dispatch"
-            }
-        else:
-            return None
+        return None
 
-    actual_client_id = client.get("id") or client_id
-    actual_client_name = client.get("full_name") or ""
+    actual_client_id = str(client.get("id") or client_id).strip()
+    actual_sol_id = str(client.get("sol_id") or "").strip().upper()
+    actual_client_name = str(client.get("full_name") or "").strip()
+    norm_cname = actual_client_name.upper()
 
-    # Build outward query matching either client_id or client_name, excluding only cancelled
-    outward_query: Dict[str, Any] = {
-        "company_id": company_id,
-        "status": {"$nin": ["Cancelled", "draft_cancelled", "cancelled"]}
-    }
-    or_clauses = []
-    if actual_client_id and not str(actual_client_id).startswith("ext_"):
-        or_clauses.append({"client_id": actual_client_id})
-    if actual_client_name:
-        or_clauses.append({"client_name": {"$regex": f"^{re.escape(actual_client_name)}$", "$options": "i"}})
-    if or_clauses:
-        outward_query["$or"] = or_clauses
-
-    outwards, inwards_raw = await asyncio.gather(
-        db.outward_entries.find(outward_query, {"_id": 0}).to_list(10000),
-        db.inward_entries.find({
+    # Retrieve all company outward and inward entries without truncation
+    outwards_all, inwards_all = await asyncio.gather(
+        _fetch_all_untruncated(db.outward_entries, {
             "company_id": company_id,
             "status": {"$nin": ["Cancelled", "draft_cancelled", "cancelled"]}
-        }, {"_id": 0}).to_list(10000),
+        }, {"_id": 0}),
+        _fetch_all_untruncated(db.inward_entries, {
+            "company_id": company_id,
+            "status": {"$nin": ["Cancelled", "draft_cancelled", "cancelled"]}
+        }, {"_id": 0}),
     )
-    
-    # Filter inwards: match client_id in remarks OR source_name / client_name matching client
-    inwards = []
-    norm_cname = actual_client_name.strip().upper() if actual_client_name else ""
-    for inv in inwards_raw:
-        inv = parse_inward_client_info(inv)
-        src_type = str(inv.get("source_type") or "").strip().lower()
-        if "return" in src_type or "client" in src_type:
-            inv_cid = str(inv.get("client_id") or "").strip()
-            inv_src = str(inv.get("source_name") or "").strip().upper()
-            if (actual_client_id and inv_cid == actual_client_id) or (norm_cname and (inv_src == norm_cname or norm_cname in inv_src or inv_src in norm_cname)):
-                inwards.append(inv)
-    
+
+    outwards = [o for o in outwards_all if _match_outward_to_client(o, actual_client_id, actual_sol_id, norm_cname)]
+    inwards = [i for i in inwards_all if _match_inward_to_client(i, actual_client_id, actual_sol_id, norm_cname)]
+
     ledger = {}
-    
+    transactions = []
+
     for out in outwards:
         raw_prod = (out.get("product") or "").strip()
         norm_name = norm_product_name(raw_prod)
         if not norm_name:
             continue
         raw_size = (out.get("size") or "").strip()
+        std_size = norm_str(raw_size)
         unit = norm_unit(out.get("unit") or "NOS")
-        
-        # Report identity key: canonical spec (product name + size)
-        key = norm_spec(norm_name, raw_size)
-        qty = float(out.get("quantity") or 0)
+        qty = float(out.get("quantity") or 0.0)
         date_str = out.get("date") or out.get("created_at") or ""
+        short_date = date_str[:10] if date_str else ""
+        
+        # Product Identity Key: ONLY (Product Name, Normalized Size) - Unit is NOT used for identity
+        key = (norm_name, std_size)
         
         if key not in ledger:
             ledger[key] = {
                 "product": norm_name,
                 "size": raw_size,
-                "unit": unit,
+                "unit": unit or "NOS",
                 "total_outward": 0.0,
                 "total_returned": 0.0,
                 "current_balance": 0.0,
                 "serial_numbers": [],
                 "last_movement_date": ""
             }
-        if not ledger[key]["size"] and raw_size:
+        if not ledger[key].get("size") and raw_size:
             ledger[key]["size"] = raw_size
+        if not ledger[key].get("unit") and unit:
+            ledger[key]["unit"] = unit
         ledger[key]["total_outward"] += qty
-        
+
         serials = out.get("serial_numbers") or out.get("serials") or ([out.get("serial_number")] if out.get("serial_number") else [])
         for s in serials:
             sn = (s or "").strip().upper()
             if sn and sn not in ledger[key]["serial_numbers"]:
                 ledger[key]["serial_numbers"].append(sn)
-        
-        if date_str:
-            if not ledger[key]["last_movement_date"] or date_str > ledger[key]["last_movement_date"]:
-                ledger[key]["last_movement_date"] = date_str
+
+        if short_date:
+            if not ledger[key]["last_movement_date"] or short_date > ledger[key]["last_movement_date"]:
+                ledger[key]["last_movement_date"] = short_date
+
+        challan = out.get("outward_challan_no") or out.get("reference_number") or ""
+        transactions.append({
+            "id": out.get("id"),
+            "transaction_id": out.get("id"),
+            "type": "Outward",
+            "direction": "Issued",
+            "date": short_date,
+            "created_at": date_str,
+            "product": norm_name,
+            "size": raw_size,
+            "quantity": round(qty, 2),
+            "unit": unit,
+            "challan": challan,
+            "challan_number": challan,
+            "reference_number": challan,
+            "bill_number": out.get("bill_number") or "",
+            "status": out.get("status") or "Dispatched",
+            "remarks": out.get("remarks") or "",
+            "created_by_name": out.get("created_by_name") or "",
+            "serial_numbers": serials,
+        })
 
     for inv in inwards:
         raw_prod = (inv.get("product") or "").strip()
@@ -10548,37 +10632,64 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         if not norm_name:
             continue
         raw_size = (inv.get("size") or "").strip()
+        std_size = norm_str(raw_size)
         unit = norm_unit(inv.get("unit") or "NOS")
-        
-        # Report identity key: canonical spec
-        key = norm_spec(norm_name, raw_size)
-        qty = float(inv.get("quantity") or 0)
+        qty = float(inv.get("quantity") or 0.0)
         date_str = inv.get("date") or inv.get("created_at") or ""
+        short_date = date_str[:10] if date_str else ""
+        
+        # Product Identity Key: ONLY (Product Name, Normalized Size) - Unit is NOT used for identity
+        key = (norm_name, std_size)
         
         if key not in ledger:
             ledger[key] = {
                 "product": norm_name,
                 "size": raw_size,
-                "unit": unit,
+                "unit": unit or "NOS",
                 "total_outward": 0.0,
                 "total_returned": 0.0,
                 "current_balance": 0.0,
                 "serial_numbers": [],
                 "last_movement_date": ""
             }
-        if not ledger[key]["size"] and raw_size:
+        if not ledger[key].get("size") and raw_size:
             ledger[key]["size"] = raw_size
+        if not ledger[key].get("unit") and unit:
+            ledger[key]["unit"] = unit
         ledger[key]["total_returned"] += qty
-        
+
         serials = inv.get("serial_numbers") or inv.get("serials") or ([inv.get("serial_number")] if inv.get("serial_number") else [])
         for s in serials:
             sn = (s or "").strip().upper()
             if sn in ledger[key]["serial_numbers"]:
                 ledger[key]["serial_numbers"].remove(sn)
-        
-        if date_str:
-            if not ledger[key]["last_movement_date"] or date_str > ledger[key]["last_movement_date"]:
-                ledger[key]["last_movement_date"] = date_str
+
+        if short_date:
+            if not ledger[key]["last_movement_date"] or short_date > ledger[key]["last_movement_date"]:
+                ledger[key]["last_movement_date"] = short_date
+
+        challan = inv.get("reference_number") or inv.get("bill_number") or ""
+        clean_remarks = re.sub(r"\s*\[client_id:[^\]]+\]", "", inv.get("remarks") or "").strip()
+        transactions.append({
+            "id": inv.get("id"),
+            "transaction_id": inv.get("id"),
+            "type": "Inward",
+            "direction": "Returned",
+            "date": short_date,
+            "created_at": date_str,
+            "product": norm_name,
+            "size": raw_size,
+            "quantity": round(qty, 2),
+            "unit": unit,
+            "challan": challan,
+            "challan_number": challan,
+            "reference_number": challan,
+            "bill_number": inv.get("bill_number") or "",
+            "status": inv.get("status") or "Returned",
+            "remarks": clean_remarks,
+            "created_by_name": inv.get("created_by_name") or "",
+            "serial_numbers": serials,
+        })
 
     items = []
     total_outward_qty = 0.0
@@ -10604,9 +10715,6 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         total_returned_qty += item["total_returned"]
         current_balance_qty += balance
         
-        if item["last_movement_date"]:
-            item["last_movement_date"] = item["last_movement_date"][:10]
-            
         items.append(item)
 
     hv_keywords = ["SOLAR PANEL", "PANEL", "INVERTER", "ACDB", "DCDB", "METER", "BATTERY"]
@@ -10620,24 +10728,32 @@ async def calculate_client_ledger(company_id: str, client_id: str):
         return False
 
     items.sort(key=lambda x: (0 if _is_item_hv(x) else 1, (x.get("product") or "").lower(), (x.get("size") or "").lower()))
+    transactions.sort(key=lambda t: (t.get("date") or "", t.get("created_at") or ""), reverse=True)
         
     summary = {
         "total_products": len(items),
         "total_outward_qty": round(total_outward_qty, 2),
         "total_returned_qty": round(total_returned_qty, 2),
         "current_balance": round(current_balance_qty, 2),
-        "negative_items": negative_items_count
+        "negative_items": negative_items_count,
+        "total_transactions": len(transactions),
+        "outward_count": len([t for t in transactions if t["type"] == "Outward"]),
+        "inward_count": len([t for t in transactions if t["type"] == "Inward"])
     }
     
     return {
         "client": {
-            "id": client.get("id"),
-            "full_name": client.get("full_name"),
-            "client_code": client.get("sol_id") or client.get("client_code"),
-            "sol_id": client.get("sol_id")
+            "id": actual_client_id,
+            "full_name": actual_client_name,
+            "client_code": actual_sol_id or client.get("client_code") or "",
+            "sol_id": actual_sol_id,
+            "mobile": client.get("mobile") or "",
+            "consumer_number": client.get("consumer_number") or "",
+            "status": client.get("status") or "Active"
         },
         "summary": summary,
-        "items": items
+        "items": items,
+        "transactions": transactions
     }
 
 @api_router.get("/inventory/ledger/{client_id}")
@@ -10660,21 +10776,35 @@ async def export_client_ledger(client_id: str, format: str = "csv", user=Depends
     summary = summary_val if isinstance(summary_val, dict) else {}
     items_val = ledger.get("items")
     items = items_val if isinstance(items_val, list) else []
+    transactions_val = ledger.get("transactions")
+    transactions = transactions_val if isinstance(transactions_val, list) else []
     
     if format == "csv":
         import csv
         buf = io.StringIO()
         writer = csv.writer(buf)
+        writer.writerow(["CLIENT MATERIAL LEDGER REPORT"])
         writer.writerow(["Client Name", client.get("full_name") or ""])
         writer.writerow(["Project ID", client.get("sol_id") or ""])
         writer.writerow(["Generated Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
         writer.writerow([])
+        writer.writerow(["--- PRODUCT BALANCE SUMMARY ---"])
         writer.writerow(["Product", "Size", "Unit", "Total Outward", "Total Returned", "Current Balance", "Status"])
         for item in items:
             writer.writerow([
                 item["product"], item["size"], item["unit"],
                 item["total_outward"], item["total_returned"],
                 item["current_balance"], item["status"]
+            ])
+        writer.writerow([])
+        writer.writerow(["--- TRANSACTION HISTORY (SOURCE TRACEABILITY) ---"])
+        writer.writerow(["Date", "Type", "Transaction ID", "Challan / Ref", "Product", "Size", "Quantity", "Unit", "Status", "Remarks"])
+        for tx in transactions:
+            writer.writerow([
+                tx.get("date") or "", tx.get("type") or "", tx.get("id") or "",
+                tx.get("challan") or "", tx.get("product") or "", tx.get("size") or "",
+                tx.get("quantity") or 0, tx.get("unit") or "", tx.get("status") or "",
+                tx.get("remarks") or ""
             ])
         from fastapi.responses import StreamingResponse
         buf.seek(0)
@@ -10694,7 +10824,7 @@ async def export_client_ledger(client_id: str, format: str = "csv", user=Depends
         ws = wb.active
         if ws is None:
             ws = wb.create_sheet()
-        ws.title = "Material Ledger"
+        ws.title = "Product Summary"
         
         title_font = Font(name="Calibri", size=14, bold=True, color="1d4ed8")
         bold_font = Font(name="Calibri", size=10, bold=True)
@@ -10770,6 +10900,51 @@ async def export_client_ledger(client_id: str, format: str = "csv", user=Depends
             if col_idx is not None:
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
                 ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+        # Sheet 2: Transaction History
+        ws_tx = wb.create_sheet(title="Transaction History")
+        ws_tx.cell(row=1, column=1, value="CLIENT TRANSACTION DETAILS").font = title_font
+        ws_tx.row_dimensions[1].height = 25
+
+        ws_tx.cell(row=3, column=1, value="Client Name").font = bold_font
+        ws_tx.cell(row=3, column=2, value=client.get("full_name") or "")
+        ws_tx.cell(row=4, column=1, value="Project ID").font = bold_font
+        ws_tx.cell(row=4, column=2, value=client.get("sol_id") or "")
+
+        tx_headers = ["Date", "Type", "Transaction ID", "Challan / Ref", "Product", "Size", "Quantity", "Unit", "Status", "Remarks"]
+        start_tx_row = 6
+        for col_idx, h in enumerate(tx_headers, 1):
+            cell = ws_tx.cell(row=start_tx_row, column=col_idx, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+        ws_tx.row_dimensions[start_tx_row].height = 20
+
+        cur_tx_row = start_tx_row + 1
+        for tx in transactions:
+            ws_tx.cell(row=cur_tx_row, column=1, value=tx.get("date") or "").border = thin_border
+            ws_tx.cell(row=cur_tx_row, column=2, value=tx.get("type") or "").border = thin_border
+            ws_tx.cell(row=cur_tx_row, column=3, value=tx.get("id") or "").border = thin_border
+            ws_tx.cell(row=cur_tx_row, column=4, value=tx.get("challan") or "").border = thin_border
+            ws_tx.cell(row=cur_tx_row, column=5, value=tx.get("product") or "").border = thin_border
+            ws_tx.cell(row=cur_tx_row, column=6, value=tx.get("size") or "").border = thin_border
+            
+            c_qty = ws_tx.cell(row=cur_tx_row, column=7, value=tx.get("quantity") or 0)
+            c_qty.border = thin_border
+            c_qty.alignment = Alignment(horizontal="right")
+            
+            ws_tx.cell(row=cur_tx_row, column=8, value=tx.get("unit") or "").border = thin_border
+            ws_tx.cell(row=cur_tx_row, column=9, value=tx.get("status") or "").border = thin_border
+            ws_tx.cell(row=cur_tx_row, column=10, value=tx.get("remarks") or "").border = thin_border
+            cur_tx_row += 1
+
+        for col in ws_tx.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_idx = col[0].column
+            if col_idx is not None:
+                col_letter = openpyxl.utils.get_column_letter(col_idx)
+                ws_tx.column_dimensions[col_letter].width = max(max_len + 3, 12)
             
         excel_stream = io.BytesIO()
         wb.save(excel_stream)

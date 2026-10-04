@@ -2279,6 +2279,47 @@ def generate_ledger_pdf(client: dict, ledger: dict, company: dict) -> bytes:
         
     story.append(_table(rows, col_widths=[5.5 * cm, 2.5 * cm, 1.5 * cm, 2 * cm, 2 * cm, 2 * cm, 2.5 * cm], header_row=True))
     
+    # Transaction History (Full Traceability)
+    tx_list = ledger.get("transactions") or []
+    if tx_list:
+        story.append(Spacer(1, 0.6 * cm))
+        story.append(Paragraph("<b>Transaction History (Source Traceability)</b>", H2))
+        story.append(Spacer(1, 0.2 * cm))
+        
+        tx_headers = [
+            Paragraph('<font color="#ffffff"><b>Date</b></font>', HEADER_TEXT_STYLE),
+            Paragraph('<font color="#ffffff"><b>Trans ID</b></font>', HEADER_TEXT_STYLE),
+            Paragraph('<font color="#ffffff"><b>Type</b></font>', HEADER_TEXT_STYLE),
+            Paragraph('<font color="#ffffff"><b>Product & Size</b></font>', HEADER_TEXT_STYLE),
+            Paragraph('<font color="#ffffff"><b>Qty</b></font>', HEADER_TEXT_STYLE),
+            Paragraph('<font color="#ffffff"><b>Unit</b></font>', HEADER_TEXT_STYLE),
+            Paragraph('<font color="#ffffff"><b>Challan / Ref</b></font>', HEADER_TEXT_STYLE),
+        ]
+        tx_rows = [tx_headers]
+        style_green = ParagraphStyle('green_cell', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#16a34a'))
+        style_blue = ParagraphStyle('blue_cell', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#2563eb'))
+        style_tx = ParagraphStyle('tx_cell', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#0f172a'))
+        
+        for tx in tx_list:
+            t_type = (tx.get("type") or "").upper()
+            t_style = style_green if "RETURN" in t_type or "INWARD" in t_type else style_blue
+            
+            p_display = tx.get("product", "")
+            if tx.get("size"):
+                p_display += f' ({tx.get("size")})'
+                
+            tx_rows.append([
+                Paragraph(str(tx.get("date", "") or ""), style_tx),
+                Paragraph(str(tx.get("transaction_id") or tx.get("id") or ""), style_tx),
+                Paragraph(t_type, t_style),
+                Paragraph(p_display, style_tx),
+                Paragraph(str(tx.get("quantity", 0)), style_tx),
+                Paragraph(str(tx.get("unit", "") or ""), style_tx),
+                Paragraph(str(tx.get("challan_no") or tx.get("reference") or "-"), style_tx),
+            ])
+            
+        story.append(_table(tx_rows, col_widths=[2.2 * cm, 2.5 * cm, 1.8 * cm, 5.5 * cm, 1.5 * cm, 1.2 * cm, 3.3 * cm], header_row=True))
+    
     pdf.build(story)
     return buf.getvalue()
 

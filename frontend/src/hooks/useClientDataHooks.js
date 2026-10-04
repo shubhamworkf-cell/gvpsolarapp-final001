@@ -54,7 +54,9 @@ export function useLedger(clientId, enabled = true) {
       return data;
     },
     enabled: !!clientId && enabled,
-    staleTime: 5 * 60 * 1000,
+    staleTime: STALE_TIME,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 }
 
