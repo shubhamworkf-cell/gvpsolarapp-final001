@@ -521,6 +521,7 @@ class CursorAdapter:
             elif skip > 0:
                 builder = builder.range(skip, 1000000)
 
+        data = []
         try:
             res = builder.execute()
             data = res.data or []
