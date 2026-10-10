@@ -485,7 +485,7 @@ class CursorAdapter:
                     if col in inclusions:
                         inclusions.remove(col)
             if self.collection.table_name == "inward_entries":
-                for col in ["product_id", "status"]:
+                for col in ["product_id", "status", "client_id", "client_name"]:
                     if col in inclusions:
                         inclusions.remove(col)
             if self.collection.table_name == "outward_entries":
@@ -916,7 +916,7 @@ class CollectionAdapter:
                     if col in inclusions:
                         inclusions.remove(col)
             if self.table_name == "inward_entries":
-                for col in ["product_id", "status"]:
+                for col in ["product_id", "status", "client_id", "client_name"]:
                     if col in inclusions:
                         inclusions.remove(col)
             if self.table_name == "outward_entries":
@@ -5737,7 +5737,14 @@ def norm_product_name(s: Optional[str]) -> str:
 def norm_spec(name: Optional[str], size: Optional[str] = "") -> str:
     name_str = norm_product_name(name)
     size_str = norm_str(size)
-    full = f"{name_str} {size_str}".strip()
+    name_str = re.sub(r'(\d)\s*[xX×\*]\s*(\d)', r'\1*\2', name_str)
+    size_str = re.sub(r'(\d)\s*[xX×\*]\s*(\d)', r'\1*\2', size_str)
+    if size_str and (name_str == size_str or name_str.endswith(" " + size_str)):
+        full = name_str
+    elif size_str:
+        full = f"{name_str} {size_str}"
+    else:
+        full = name_str
     full = re.sub(r'(\d)\s*[xX×\*]\s*(\d)', r'\1*\2', full)
     full = re.sub(r'(\d+)\s*(MM|SQMM|KW|W|V|A|AH|NOS|MTR)\b', r'\1 \2', full)
     return re.sub(r'\s+', ' ', full).strip()
@@ -5777,12 +5784,66 @@ def get_product_search_regex(name: Optional[str], size: Optional[str] = "") -> s
         patterns.append(re.escape(f"{name_clean} {size_clean.replace(' ', '')}"))
     return "|".join(patterns)
 
-def match_transaction_to_product(tx: Dict[str, Any], prod: Dict[str, Any]) -> bool:
+def build_product_resolution_maps(products_list: List[Dict[str, Any]]):
+    prod_id_map: Dict[str, Dict] = {}
+    prod_key_map: Dict[Tuple[str, str], Dict] = {}
+    prod_name_map: Dict[str, List[Dict]] = {}
+    prod_spec_map: Dict[str, List[Dict]] = {}
+
+    for p in products_list:
+        p_name = norm_product_name(p.get("name"))
+        p_size = norm_str(p.get("size"))
+        p_id = str(p.get("id") or "").strip()
+        if p_id:
+            prod_id_map[p_id] = p
+        if p_name:
+            key = get_canonical_key(p_name, p_size)
+            prod_key_map[key] = p
+            prod_name_map.setdefault(p_name, []).append(p)
+            spec = norm_spec(p_name, p_size)
+            if spec:
+                prod_spec_map.setdefault(spec, []).append(p)
+    return prod_id_map, prod_key_map, prod_name_map, prod_spec_map
+
+def resolve_transaction_to_canonical_key(
+    entry: Dict[str, Any],
+    prod_id_map: Dict[str, Dict],
+    prod_key_map: Dict[Tuple[str, str], Dict],
+    prod_name_map: Dict[str, List[Dict]],
+    prod_spec_map: Dict[str, List[Dict]],
+) -> Tuple[str, str]:
+    pid = str(entry.get("product_id") or "").strip()
+    if pid and pid in prod_id_map:
+        target = prod_id_map[pid]
+        return get_canonical_key(target.get("name"), target.get("size"))
+
+    raw_pn = entry.get("product") or entry.get("name") or ""
+    raw_ps = entry.get("size") or ""
+    pk = get_canonical_key(raw_pn, raw_ps)
+
+    if pk in prod_key_map:
+        return pk
+
+    spec = norm_spec(raw_pn, raw_ps)
+    if spec and spec in prod_spec_map and len(prod_spec_map[spec]) == 1:
+        target = prod_spec_map[spec][0]
+        return get_canonical_key(target.get("name"), target.get("size"))
+
+    pn_n = pk[0]
+    if pn_n in prod_name_map and len(prod_name_map[pn_n]) == 1:
+        target = prod_name_map[pn_n][0]
+        return get_canonical_key(target.get("name"), target.get("size"))
+
+    return pk
+
+def match_transaction_to_product(tx: Dict[str, Any], prod: Dict[str, Any], all_company_products: Optional[List[Dict[str, Any]]] = None) -> bool:
     """Matches a transaction (inward or outward entry) to a product using:
        1. Direct product_id match if present
        2. Direct canonical (name, size) match
        3. Combined spec match (e.g. 'DC CABLE BLACK 4 MM' vs 'DC CABLE BLACK' + '4 MM')
-       4. Exact canonical name match when target size or tx size is empty
+       4. Size variant match
+       5. Canonical inventory resolution match when all_company_products is provided
+       6. Canonical name match when target size or tx size is empty
     """
     tx_pid = str(tx.get("product_id") or "").strip()
     prod_id = str(prod.get("id") or "").strip()
@@ -5804,6 +5865,23 @@ def match_transaction_to_product(tx: Dict[str, Any], prod: Dict[str, Any]) -> bo
     tx_spec = norm_spec(tx_name, tx_size)
     prod_spec = norm_spec(target_name, target_size)
     if tx_spec and prod_spec and tx_spec == prod_spec:
+        return True
+
+    # Size variant match
+    if tx_name == target_name and target_size:
+        if tx_size in get_size_variants(target_size):
+            return True
+
+    # Canonical resolution against company products catalog if available
+    if all_company_products:
+        prod_id_map, prod_key_map, prod_name_map, prod_spec_map = build_product_resolution_maps(all_company_products)
+        res_key = resolve_transaction_to_canonical_key(tx, prod_id_map, prod_key_map, prod_name_map, prod_spec_map)
+        target_key = get_canonical_key(target_name, target_size)
+        if res_key == target_key:
+            return True
+
+    # Name match fallback if one side has blank size
+    if tx_name == target_name and (not tx_size or not target_size):
         return True
 
     return False
@@ -7930,12 +8008,22 @@ async def inv_history(
         if to_date and d > to_date: return False
         return True
 
+    now = time.monotonic()
+    if cid in _PRODUCTS_CACHE and (now - _PRODUCTS_CACHE[cid][0]) < _PRODUCTS_CACHE_TTL_S:
+        company_products = _PRODUCTS_CACHE[cid][1]
+    else:
+        company_products, _, _, _ = await _compute_inventory_balances(cid)
+        _PRODUCTS_CACHE[cid] = (now, company_products)
+
+    prod_id_map, prod_key_map, prod_name_map, prod_spec_map = build_product_resolution_maps(company_products or [])
+
     rows: List[Dict[str, Any]] = []
 
     def _search_match(rec: Dict[str, Any]) -> bool:
         if not search or not search.strip():
             return True
         clean_s = search.strip().lower()
+        clean_s = re.sub(r'(\d)\s*[xX×\*]\s*(\d)', r'\1*\2', clean_s)
         tokens = [t for t in clean_s.split() if t]
         if not tokens:
             return True
@@ -7943,6 +8031,7 @@ async def inv_history(
         prod = norm_product_name(rec.get("product")).lower()
         raw_size = (rec.get("size") or "").lower()
         sz = norm_str(rec.get("size") or "").lower()
+        sz_variants = " ".join(get_size_variants(rec.get("size"))).lower()
         u = norm_unit(rec.get("unit")).lower()
         src = (rec.get("source_name") or rec.get("client_name") or "").lower()
         proj = (rec.get("project_name") or "").lower()
@@ -7952,12 +8041,32 @@ async def inv_history(
         by = (rec.get("created_by_name") or "").lower()
         st = (rec.get("status") or "").lower()
         cid_txt = str(rec.get("client_id") or "").lower()
+        tx_type = str(rec.get("type") or "").lower()
+        d_val = str(rec.get("date") or rec.get("created_at") or "")[:10]
+        date_variants = [d_val]
+        if len(d_val) == 10 and "-" in d_val:
+            try:
+                parts = d_val.split("-")
+                if len(parts) == 3:
+                    y, m, d = parts[0], parts[1], parts[2]
+                    date_variants.extend([f"{d}-{m}-{y}", f"{d}/{m}/{y}", f"{d} {m} {y}"])
+                    month_names = ["", "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+                    month_full = ["", "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+                    m_idx = int(m)
+                    if 1 <= m_idx <= 12:
+                        date_variants.extend([month_names[m_idx], month_full[m_idx], f"{d} {month_names[m_idx]}", f"{d} {month_names[m_idx]} {y}"])
+            except Exception:
+                pass
+        date_text = " ".join(date_variants).lower()
+        serials_str = " ".join(str(s) for s in (rec.get("serial_numbers") or [])).lower()
+        qty_str = str(rec.get("quantity") or "").lower()
+        cat_str = str(rec.get("category") or "").lower()
         
-        full_text = f"{prod} {sz} {raw_size} {u} {src} {proj} {ref} {bill} {rem} {by} {st} {cid_txt}".lower()
+        full_text = f"{prod} {sz} {raw_size} {sz_variants} {u} {src} {proj} {ref} {bill} {rem} {by} {st} {cid_txt} {tx_type} {date_text} {serials_str} {qty_str} {cat_str}".lower()
         return all(t in full_text for t in tokens)
 
     size_variants = get_size_variants(size) if (size is not None and size != "") else []
-    target_prod = {"id": product_id, "name": product or "", "size": size or ""} if (product_id or product) else None
+    target_prod = {"id": product_id, "name": product or "", "size": size or ""} if product_id else None
 
     if (not type or type == "inward") and not status:
         q: Dict[str, Any] = {"company_id": cid}
@@ -7983,14 +8092,31 @@ async def inv_history(
         for r in inward_rows:
             if not _date_match(r):
                 continue
-            if target_prod and not match_transaction_to_product(r, target_prod):
+            if target_prod and not match_transaction_to_product(r, target_prod, company_products):
                 continue
+            if not product_id and product:
+                clean_prod = product.strip().lower()
+                clean_prod = re.sub(r'(\d)\s*[xX×\*]\s*(\d)', r'\1*\2', clean_prod)
+                p_tokens = [t for t in clean_prod.split() if t]
+                r_prod = norm_product_name(r.get("product") or "").lower()
+                r_size = norm_str(r.get("size") or "").lower()
+                r_spec = norm_spec(r_prod, r_size).lower()
+                r_text = f"{r_prod} {r_size} {r_spec}"
+                if p_tokens and not all(t in r_text for t in p_tokens):
+                    continue
             enriched = _enrich_inward_with_assets(parse_inward_client_info(r))
             if enriched:
+                enriched["type"] = "Inward"
+                enriched["unit"] = norm_unit(enriched.get("unit"))
+                if product_id and not enriched.get("product_id"):
+                    enriched["product_id"] = product_id
+                if not enriched.get("category") and prod_key_map:
+                    res_k = resolve_transaction_to_canonical_key(enriched, prod_id_map, prod_key_map, prod_name_map, prod_spec_map)
+                    cat_p = prod_key_map.get(res_k)
+                    if cat_p and cat_p.get("category"):
+                        enriched["category"] = cat_p["category"]
                 if _search_match(enriched):
-                    if product_id and not enriched.get("product_id"):
-                        enriched["product_id"] = product_id
-                    rows.append({**enriched, "type": "Inward", "unit": norm_unit(enriched.get("unit"))})
+                    rows.append(enriched)
 
     if (not type or type == "outward") and not bill_number:
         q = {"company_id": cid}
@@ -8010,14 +8136,31 @@ async def inv_history(
         for r in outward_rows:
             if not _date_match(r):
                 continue
-            if target_prod and not match_transaction_to_product(r, target_prod):
+            if target_prod and not match_transaction_to_product(r, target_prod, company_products):
                 continue
+            if not product_id and product:
+                clean_prod = product.strip().lower()
+                clean_prod = re.sub(r'(\d)\s*[xX×\*]\s*(\d)', r'\1*\2', clean_prod)
+                p_tokens = [t for t in clean_prod.split() if t]
+                r_prod = norm_product_name(r.get("product") or "").lower()
+                r_size = norm_str(r.get("size") or "").lower()
+                r_spec = norm_spec(r_prod, r_size).lower()
+                r_text = f"{r_prod} {r_size} {r_spec}"
+                if p_tokens and not all(t in r_text for t in p_tokens):
+                    continue
             enriched = _enrich_outward_with_assets(r)
             if enriched:
+                enriched["type"] = "Outward"
+                enriched["unit"] = norm_unit(enriched.get("unit"))
+                if product_id and not enriched.get("product_id"):
+                    enriched["product_id"] = product_id
+                if not enriched.get("category") and prod_key_map:
+                    res_k = resolve_transaction_to_canonical_key(enriched, prod_id_map, prod_key_map, prod_name_map, prod_spec_map)
+                    cat_p = prod_key_map.get(res_k)
+                    if cat_p and cat_p.get("category"):
+                        enriched["category"] = cat_p["category"]
                 if _search_match(enriched):
-                    if product_id and not enriched.get("product_id"):
-                        enriched["product_id"] = product_id
-                    rows.append({**enriched, "type": "Outward", "unit": norm_unit(enriched.get("unit"))})
+                    rows.append(enriched)
 
     rows.sort(key=lambda x: (x.get("date") or x.get("created_at") or ""), reverse=True)
     total = len(rows)
@@ -8180,8 +8323,8 @@ async def product_stats(product_id: str, user=Depends(get_current_user)):
     last_in_rows = await db.inward_entries.find({"company_id": cid}, {"_id": 0, "date": 1, "product_id": 1, "product": 1, "size": 1}).sort("date", -1).to_list(10000)
     last_out_rows = await db.outward_entries.find({"company_id": cid, "status": {"$nin": ["Cancelled", "draft_cancelled", "cancelled"]}}, {"_id": 0, "date": 1, "product_id": 1, "product": 1, "size": 1}).sort("date", -1).to_list(10000)
 
-    matched_in_rows = [r for r in last_in_rows if match_transaction_to_product(r, matched_p)]
-    matched_out_rows = [r for r in last_out_rows if match_transaction_to_product(r, matched_p)]
+    matched_in_rows = [r for r in last_in_rows if match_transaction_to_product(r, matched_p, items)]
+    matched_out_rows = [r for r in last_out_rows if match_transaction_to_product(r, matched_p, items)]
 
     in_count = len(matched_in_rows)
     out_count = len(matched_out_rows)

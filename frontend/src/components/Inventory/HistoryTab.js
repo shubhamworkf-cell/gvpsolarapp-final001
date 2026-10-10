@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Download, History, FileImage, FileText, ArrowDownToLine, ArrowUpFromLine,
-  Trash2, Pencil, ChevronLeft, ChevronRight, Filter, X, RotateCcw,
+  Trash2, Pencil, ChevronLeft, ChevronRight, Filter, X, RotateCcw, Search,
 } from "lucide-react";
 import dayjs from "dayjs";
 import { toast } from "sonner";
@@ -42,18 +42,21 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
   };
   const [confirmBulk, setConfirmBulk] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [localSearch, setLocalSearch] = useState("");
+
+  const effectiveSearch = (localSearch || globalSearch || "").trim();
 
   // Debounce text inputs only (search, product, vendor, client, etc.)
   const [debouncedFilters, setDebouncedFilters] = useState(filters);
-  const [debouncedSearch, setDebouncedSearch] = useState(globalSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(effectiveSearch);
 
   useEffect(() => {
     const t = setTimeout(() => {
       setDebouncedFilters(filters);
-      setDebouncedSearch(globalSearch);
+      setDebouncedSearch(effectiveSearch);
     }, 250);
     return () => clearTimeout(t);
-  }, [filters, globalSearch]);
+  }, [filters, effectiveSearch]);
 
   const activeParams = useMemo(() => {
     const p = { page, page_size: pageSize };
@@ -77,7 +80,7 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
 
   useEffect(() => {
     setPage(1);
-  }, [filters, globalSearch]);
+  }, [filters, effectiveSearch]);
 
   const exportCsv = async () => {
     try {
@@ -178,6 +181,7 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
   const allPageSelected = data.rows.length > 0 && data.rows.every((r) => selected.has(`${r.type}:${r.id}`));
 
   const clearFilters = () => {
+    setLocalSearch("");
     setFilters({
       type: "all", product: "", vendor: "", client: "",
       challan: "", bill_number: "", user_id: "", status: "all",
@@ -186,7 +190,7 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
     setPage(1);
   };
 
-  const hasFilters = Object.values(filters).some((v) => v && v !== "all");
+  const hasFilters = Boolean(localSearch || Object.values(filters).some((v) => v && v !== "all"));
 
   return (
     <div className="space-y-4">
@@ -194,8 +198,30 @@ export default function HistoryTab({ globalSearch, products, onChanged }) {
       <Card className="border-slate-200">
         <CardContent className="p-3">
           <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[200px] sm:min-w-[240px]">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input
+                placeholder="Search history (product, serial, challan, client, remarks…)"
+                value={localSearch}
+                onChange={(e) => setLocalSearch(e.target.value)}
+                className="pl-9 pr-8 h-9 bg-white text-xs"
+                data-testid="hist-search-input"
+              />
+              {localSearch && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-slate-400 hover:text-slate-600"
+                  onClick={() => setLocalSearch("")}
+                  title="Clear search"
+                  data-testid="hist-clear-search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              )}
+            </div>
             <Select value={filters.type} onValueChange={(v) => setFilters({ ...filters, type: v })}>
-              <SelectTrigger className="w-44" data-testid="hist-type-filter"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-40" data-testid="hist-type-filter"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Transactions</SelectItem>
                 <SelectItem value="inward">Inward only</SelectItem>

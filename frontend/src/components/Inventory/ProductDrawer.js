@@ -49,8 +49,8 @@ export default function ProductDrawer({ product, open, onClose, onChanged }) {
     try {
       const params = {};
       Object.entries(filters).forEach(([k, v]) => { if (v && v !== "all") params[k] = v; });
-      const { data } = await api.get(`/inventory/products/${product.id}/transactions`, { params });
-      setTxns(data);
+      const rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data?.items) ? data.items : [];
+      setTxns({ rows, total: data?.total ?? rows.length });
     } catch (e) { toast.error(formatApiError(e)); }
   }, [product, filters]);
 

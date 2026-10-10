@@ -204,7 +204,12 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
                     <div className="text-xs text-slate-500 mt-1">Add your first product or create an inward entry — products auto-register.</div>
                   </td></tr>
                 ) : paginated.map((p) => (
-                  <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50/60" data-testid={`product-row-${p.id}`}>
+                  <tr
+                    key={p.id}
+                    className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
+                    onClick={() => startEdit(p)}
+                    data-testid={`product-row-${p.id}`}
+                  >
                     <td className="px-4 py-2.5 text-xs">
                       <div className="font-semibold text-slate-900 flex items-center gap-1.5">
                         {p.name}
@@ -225,7 +230,7 @@ export default function ProductMasterTab({ products, onChanged, globalSearch }) 
                     <td className="px-4 py-2.5 text-center">
                       <Badge variant="outline" className={`${STATUS_STYLES[p.stock_status] || ""} text-[10px]`}>{p.stock_status}</Badge>
                     </td>
-                    <td className="px-2 py-2 text-center">
+                    <td className="px-2 py-2 text-center" onClick={(e) => e.stopPropagation()}>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => startEdit(p)} data-testid={`edit-product-${p.id}`}><Pencil className="w-3.5 h-3.5" /></Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-red-600" onClick={() => setConfirmDel(p)} data-testid={`del-product-${p.id}`}><Trash2 className="w-3.5 h-3.5" /></Button>
                     </td>
